@@ -15,8 +15,13 @@ function mapTask(t: any): Task {
   };
 }
 
-export async function getTasks(): Promise<Task[]> {
-  const data = await apiFetch("/tasks");
+export async function getTasks(options?: { assignedTo?: number }): Promise<Task[]> {
+  const params = new URLSearchParams();
+  if (options?.assignedTo !== undefined) {
+    params.append("assigned_to", options.assignedTo.toString());
+  }
+  const url = params.toString() ? `/tasks?${params.toString()}` : "/tasks";
+  const data = await apiFetch(url);
   return Array.isArray(data) ? data.map(mapTask) : [];
 }
 

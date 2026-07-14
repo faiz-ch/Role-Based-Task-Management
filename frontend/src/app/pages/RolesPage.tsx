@@ -9,6 +9,7 @@ const PERM_DESCRIPTIONS: Record<string, string> = {
   "task:create": "Create new tasks",
   "task:edit": "Edit and delete tasks",
   "task:assign": "Assign tasks to users",
+  "task:view_all": "See tasks assigned to everyone, not just yourself",
   "role:manage": "Create and configure roles",
   "user:manage": "Manage users and status",
   "dashboard:view": "View analytics dashboard",

@@ -26,13 +26,27 @@ async def list_tasks(
 ):
     """
     Any logged-in user can list tasks (no special permission needed to VIEW),
-    with optional filters. Creating/editing/assigning are the parts that
-    need permissions — enforced on those specific routes below.
+    but WHICH tasks they see depends on the "task:view_all" permission:
+
+      - doesn't have task:view_all -> ALWAYS forced to only their own tasks,
+        no matter what `assigned_to` is passed as (can't be bypassed via API).
+
+      - has task:view_all -> sees everything by default, but can optionally
+        pass `assigned_to` (e.g. their own id) to filter down to a subset,
+        such as a "My Tasks" toggle in the UI.
     """
     query = select(Task)
     if status is not None:
         query = query.where(Task.status == status)
-    if assigned_to is not None:
+
+    has_view_all = (
+        current_user.role is not None
+        and any(p.name == "task:view_all" for p in current_user.role.permissions)
+    )
+
+    if not has_view_all:
+        query = query.where(Task.assigned_to == current_user.id)
+    elif assigned_to is not None:
         query = query.where(Task.assigned_to == assigned_to)
 
     result = await db.execute(query)
@@ -85,10 +99,21 @@ async def update_task_status(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Deliberately NOT gated by task:edit — the person a task is ASSIGNED to
-    should be able to move it through To Do -> In Progress -> Review -> Done
-    even if they don't have general edit rights. We only check: are you
-    either the assignee, or do you have task:edit anyway.
+    Status changes follow a fixed workflow, and WHO can make each specific
+    transition depends on their role:
+
+      To Do -------------> In Progress   (assignee only)
+      In Progress --------> Review        (reviewer only)
+      Review --------------> Done         (reviewer only)
+      Review --------------> Rejected     (reviewer only)
+      Rejected -----------> In Progress   (assignee only, to resubmit)
+
+    "Assignee" means current_user.id == task.assigned_to.
+    "Reviewer" means the user's role has the "task:review" permission.
+    Anyone with "task:edit" bypasses all of the above (e.g. Admin).
+
+    Any transition not in this table (skipping steps, going backwards
+    outside of the Rejected case, etc.) is rejected with a 400.
     """
     task = await _get_task_or_404(db, task_id)
 
@@ -96,8 +121,33 @@ async def update_task_status(
         current_user.role is not None
         and any(p.name == "task:edit" for p in current_user.role.permissions)
     )
-    if task.assigned_to != current_user.id and not has_edit_permission:
-        raise HTTPException(status_code=403, detail="You cannot update this task's status")
+    has_review_permission = (
+        current_user.role is not None
+        and any(p.name == "task:review" for p in current_user.role.permissions)
+    )
+    is_assignee = task.assigned_to == current_user.id
+
+    if not has_edit_permission:
+        ASSIGNEE_TRANSITIONS = {
+            (TaskStatus.TODO, TaskStatus.IN_PROGRESS),
+            (TaskStatus.REJECTED, TaskStatus.IN_PROGRESS),
+        }
+        REVIEWER_TRANSITIONS = {
+            (TaskStatus.IN_PROGRESS, TaskStatus.REVIEW),
+            (TaskStatus.REVIEW, TaskStatus.DONE),
+            (TaskStatus.REVIEW, TaskStatus.REJECTED),
+        }
+        transition = (task.status, payload.status)
+
+        allowed = (
+            (transition in ASSIGNEE_TRANSITIONS and is_assignee)
+            or (transition in REVIEWER_TRANSITIONS and has_review_permission)
+        )
+        if not allowed:
+            raise HTTPException(
+                status_code=403,
+                detail="You cannot make this status change on this task.",
+            )
 
     task.status = payload.status
     await db.commit()

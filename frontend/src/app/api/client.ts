@@ -41,7 +41,25 @@ export class ApiError extends Error {
   status: number;
   data: any;
   constructor(status: number, data: any) {
-    super(data?.detail || `API request failed with status ${status}`);
+    const detail = data?.detail;
+    let message: string;
+
+    if (typeof detail === "string") {
+      message = detail;
+    } else if (Array.isArray(detail)) {
+      // FastAPI validation errors: array of objects with .msg field
+      message = detail
+        .map((item: any) => item?.msg || "")
+        .filter((msg: string) => msg)
+        .join("; ");
+    } else if (detail && typeof detail === "object" && detail.msg) {
+      // Single object with .msg field
+      message = detail.msg;
+    } else {
+      message = `API request failed with status ${status}`;
+    }
+
+    super(message);
     this.name = "ApiError";
     this.status = status;
     this.data = data;

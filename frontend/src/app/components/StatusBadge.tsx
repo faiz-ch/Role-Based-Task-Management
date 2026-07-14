@@ -29,6 +29,12 @@ export const STATUS_STYLE: Record<
     colTop: "border-t-emerald-500",
     colBg: "bg-emerald-50/20",
   },
+  Rejected: {
+    badge: "bg-red-50 text-red-700 border-red-200",
+    dot: "bg-red-500",
+    colTop: "border-t-red-500",
+    colBg: "bg-red-50/20",
+  },
 };
 
 export function StatusBadge({ status }: { status: Status }) {

@@ -17,8 +17,9 @@ router = APIRouter(prefix="/users", tags=["users"])
 @router.get("", response_model=list[UserOut])
 async def list_users(
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_permission("user:manage")),
+    _: User = Depends(get_current_user),
 ):
+    """Any logged-in user can view the user list (for assignee selection, etc.)."""
     result = await db.execute(select(User).options(selectinload(User.role)))
     return result.scalars().all()
 

@@ -15,6 +15,7 @@ class TaskStatus(str, enum.Enum):
     IN_PROGRESS = "In Progress"
     REVIEW = "Review"
     DONE = "Done"
+    REJECTED = "Rejected"
 
 
 class TaskPriority(str, enum.Enum):

@@ -1,4 +1,4 @@
-export type Status = "To Do" | "In Progress" | "Review" | "Done";
+export type Status = "To Do" | "In Progress" | "Review" | "Done" | "Rejected";
 export type Priority = "Low" | "Medium" | "High";
 export type Page = "login" | "register" | "dashboard" | "tasks" | "users" | "roles";
 
