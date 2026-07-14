@@ -1,0 +1,25 @@
+# Python (Poetry)
+backend/.venv/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+backend/.env
+
+# Node (pnpm)
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+pnpm-debug.log*
+
+# Env (any location)
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
