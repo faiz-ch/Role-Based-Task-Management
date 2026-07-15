@@ -11,6 +11,7 @@ class TaskCreate(BaseModel):
     priority: TaskPriority = TaskPriority.MEDIUM
     due_date: datetime | None = None
     assigned_to: int | None = None
+    department_id: int | None = None
 
 
 class TaskUpdate(BaseModel):
@@ -38,6 +39,7 @@ class TaskOut(BaseModel):
     created_at: datetime
     created_by: int
     assigned_to: int | None
+    department_id: int | None
 
     class Config:
         from_attributes = True

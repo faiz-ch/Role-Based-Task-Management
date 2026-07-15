@@ -4,6 +4,7 @@ import {
   CheckSquare,
   Users,
   Shield,
+  Building2,
   LogOut,
   Menu,
   Bell,
@@ -22,6 +23,7 @@ const NAV: {
   { id: "tasks", label: "Tasks", Icon: CheckSquare, perm: null },
   { id: "users", label: "Users", Icon: Users, perm: "user:manage" },
   { id: "roles", label: "Roles", Icon: Shield, perm: "role:manage" },
+  { id: "departments", label: "Departments", Icon: Building2, perm: "user:manage" },
 ];
 
 export function Shell({

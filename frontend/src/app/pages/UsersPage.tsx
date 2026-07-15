@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { Edit2, AlertTriangle, Plus, Trash2 } from "lucide-react";
-import { UserType, Role } from "../types";
-import { getUsers, updateUser, assignRole, createUser, deleteUser } from "../api/users";
+import { UserType, Role, Department } from "../types";
+import { getUsers, updateUser, assignRole, createUser, deleteUser, assignDepartment } from "../api/users";
 import { getRoles } from "../api/roles";
+import { getDepartments } from "../api/departments";
 import { Av } from "../components/Av";
 import { Dlg } from "../components/Dlg";
 import { FldInput } from "../components/FldInput";
@@ -12,6 +13,7 @@ export function UsersPage() {
   const { permissions, currentUser } = useAuth();
   const [users, setUsers] = useState<UserType[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,18 +31,21 @@ export function UsersPage() {
   const [newUserEmail, setNewUserEmail] = useState("");
   const [newUserPassword, setNewUserPassword] = useState("");
   const [newUserRole, setNewUserRole] = useState("");
+  const [newUserDepartment, setNewUserDepartment] = useState("");
 
   useEffect(() => {
     async function loadData() {
       try {
         setLoading(true);
         setError(null);
-        const [fetchedUsers, fetchedRoles] = await Promise.all([
+        const [fetchedUsers, fetchedRoles, fetchedDepartments] = await Promise.all([
           getUsers(),
           getRoles(),
+          getDepartments(),
         ]);
         setUsers(fetchedUsers);
         setRoles(fetchedRoles);
+        setDepartments(fetchedDepartments);
       } catch (err: any) {
         setError(err?.message || "Failed to load users data.");
       } finally {
@@ -58,6 +63,17 @@ export function UsersPage() {
       setUsers((prev) => prev.map((u) => (u.id === uid ? updatedUser : u)));
     } catch (err: any) {
       setError(err?.message || "Failed to assign role.");
+    }
+  }
+
+  async function handleDepartmentChange(uid: number, deptIdStr: string) {
+    try {
+      setError(null);
+      const deptId = deptIdStr === "" ? null : Number(deptIdStr);
+      const updatedUser = await assignDepartment(uid, deptId);
+      setUsers((prev) => prev.map((u) => (u.id === uid ? updatedUser : u)));
+    } catch (err: any) {
+      setError(err?.message || "Failed to assign department.");
     }
   }
 
@@ -128,11 +144,13 @@ export function UsersPage() {
     try {
       setError(null);
       const roleId = newUserRole ? Number(newUserRole) : undefined;
+      const deptId = newUserDepartment ? Number(newUserDepartment) : undefined;
       const newUser = await createUser({
         name: newUserName.trim(),
         email: newUserEmail.trim().toLowerCase(),
         password: newUserPassword,
         role_id: roleId,
+        department_id: deptId,
       });
       setUsers((prev) => [...prev, newUser]);
       setShowNewUserDialog(false);
@@ -140,6 +158,7 @@ export function UsersPage() {
       setNewUserEmail("");
       setNewUserPassword("");
       setNewUserRole("");
+      setNewUserDepartment("");
     } catch (err: any) {
       setError(err?.message || "Failed to create user.");
     }
@@ -184,7 +203,7 @@ export function UsersPage() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-border bg-muted/40">
-                {["User", "Email", "Role", "Status", "Actions"].map((h) => (
+                {["User", "Email", "Role", "Department", "Status", "Actions"].map((h) => (
                   <th
                     key={h}
                     className="text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider px-5 py-3"
@@ -220,6 +239,20 @@ export function UsersPage() {
                       {roles.map((r) => (
                         <option key={r.id} value={r.id}>
                           {r.name}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-5 py-3.5">
+                    <select
+                      value={user.department?.id ?? ""}
+                      onChange={(e) => handleDepartmentChange(user.id, e.target.value)}
+                      className="text-xs border border-border rounded-lg px-2.5 py-1.5 bg-white text-foreground focus:outline-none focus:border-blue-400 min-w-[120px]"
+                    >
+                      <option value="">No department</option>
+                      {departments.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.name}
                         </option>
                       ))}
                     </select>
@@ -360,6 +393,21 @@ export function UsersPage() {
                 {roles.map((r) => (
                   <option key={r.id} value={r.id}>
                     {r.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Department (optional)</label>
+              <select
+                value={newUserDepartment}
+                onChange={(e) => setNewUserDepartment(e.target.value)}
+                className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-white text-foreground focus:outline-none focus:border-blue-400"
+              >
+                <option value="">No department</option>
+                {departments.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
                   </option>
                 ))}
               </select>

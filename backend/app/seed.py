@@ -18,6 +18,7 @@ PERMISSIONS = [
     "task:assign",
     "task:view_all",
     "task:review",
+    "task:view_department",
     "role:manage",
     "user:manage",
     "dashboard:view",

@@ -43,10 +43,20 @@ async def list_tasks(
         current_user.role is not None
         and any(p.name == "task:view_all" for p in current_user.role.permissions)
     )
+    has_view_department = (
+        current_user.role is not None
+        and any(p.name == "task:view_department" for p in current_user.role.permissions)
+    )
 
     if not has_view_all:
-        query = query.where(Task.assigned_to == current_user.id)
+        if has_view_department and current_user.department_id is not None:
+            # User can see tasks in their department
+            query = query.where(Task.department_id == current_user.department_id)
+        else:
+            # Fallback: only see tasks assigned to them
+            query = query.where(Task.assigned_to == current_user.id)
     elif assigned_to is not None:
+        # User has task:view_all and wants to filter by assignee
         query = query.where(Task.assigned_to == assigned_to)
 
     result = await db.execute(query)
@@ -65,6 +75,7 @@ async def create_task(
         priority=payload.priority,
         due_date=payload.due_date,
         assigned_to=payload.assigned_to,
+        department_id=payload.department_id,
         created_by=current_user.id,
     )
     db.add(task)

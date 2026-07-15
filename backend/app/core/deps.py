@@ -49,7 +49,10 @@ async def get_current_user(
     # require_permission below doesn't need extra DB round-trips.
     result = await db.execute(
         select(User)
-        .options(selectinload(User.role).selectinload(Role.permissions))
+        .options(
+            selectinload(User.role).selectinload(Role.permissions),
+            selectinload(User.department),
+        )
         .where(User.id == int(user_id))
     )
     user = result.scalar_one_or_none()

@@ -31,6 +31,7 @@ export async function createTask(task: {
   priority: string;
   dueDate: string;
   assigneeId: number | null;
+  departmentId: number | null;
 }): Promise<Task> {
   const payload = {
     title: task.title,
@@ -38,6 +39,7 @@ export async function createTask(task: {
     priority: task.priority,
     due_date: task.dueDate ? new Date(task.dueDate).toISOString() : null,
     assigned_to: task.assigneeId || null,
+    department_id: task.departmentId || null,
   };
   const data = await apiFetch("/tasks", {
     method: "POST",

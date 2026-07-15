@@ -37,6 +37,8 @@ class Task(Base):
 
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     assigned_to = Column(Integer, ForeignKey("users.id"), nullable=True)
+    department_id = Column(Integer, ForeignKey("departments.id"), nullable=True)
 
     creator = relationship("User", foreign_keys=[created_by], back_populates="tasks_created")
     assignee = relationship("User", foreign_keys=[assigned_to], back_populates="tasks_assigned")
+    department = relationship("Department", back_populates="tasks")

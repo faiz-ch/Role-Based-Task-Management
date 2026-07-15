@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Plus, Edit2, Trash2, AlertTriangle, ChevronDown, ChevronRight, Search } from "lucide-react";
-import { Task, UserType, Status, Priority } from "../types";
+import { Task, UserType, Status, Priority, Department } from "../types";
 import { useAuth } from "../context/AuthContext";
 import {
   getTasks,
@@ -11,6 +11,7 @@ import {
   deleteTask,
 } from "../api/tasks";
 import { getUsers } from "../api/users";
+import { getDepartments } from "../api/departments";
 import { Av } from "../components/Av";
 import { Dlg } from "../components/Dlg";
 import { FldInput } from "../components/FldInput";
@@ -27,6 +28,7 @@ interface TForm {
   priority: Priority;
   dueDate: string;
   assigneeId: number | null;
+  departmentId: number | null;
 }
 
 function fmtDate(d: string) {
@@ -95,6 +97,7 @@ export function TasksPage() {
   const { currentUser, permissions } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [users, setUsers] = useState<UserType[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -114,6 +117,7 @@ export function TasksPage() {
     priority: "Medium",
     dueDate: "",
     assigneeId: null,
+    departmentId: null,
   });
 
   const canCreate = permissions.includes("task:create");
@@ -126,14 +130,16 @@ export function TasksPage() {
       try {
         setLoading(true);
         setError(null);
-        const [fetchedTasks, fetchedUsers] = await Promise.all([
+        const [fetchedTasks, fetchedUsers, fetchedDepartments] = await Promise.all([
           canViewAll && scope === "mine" && currentUser
             ? getTasks({ assignedTo: currentUser.id })
             : getTasks(),
           getUsers(),
+          getDepartments(),
         ]);
         setTasks(fetchedTasks);
         setUsers(fetchedUsers);
+        setDepartments(fetchedDepartments);
       } catch (err: any) {
         setError(err?.message || "Failed to load tasks data.");
       } finally {
@@ -226,6 +232,7 @@ export function TasksPage() {
       priority: "Medium",
       dueDate: "",
       assigneeId: null,
+      departmentId: null,
     });
     setShowNew(true);
   }
@@ -237,6 +244,7 @@ export function TasksPage() {
       priority: t.priority,
       dueDate: t.dueDate,
       assigneeId: t.assigneeId,
+      departmentId: null, // Tasks don't have department in the Task type yet, so default to null
     });
     setEditTask(t);
   }
@@ -251,6 +259,7 @@ export function TasksPage() {
         priority: form.priority,
         dueDate: form.dueDate,
         assigneeId: form.assigneeId,
+        departmentId: form.departmentId,
       });
       setTasks((prev) => [...prev, newTask]);
       setShowNew(false);
@@ -632,6 +641,21 @@ export function TasksPage() {
               options={[
                 { value: "", label: "Unassigned" },
                 ...users.map((u) => ({ value: u.id, label: u.name })),
+              ]}
+            />
+            <FldSelect
+              label="Department"
+              value={form.departmentId ?? ""}
+              onChange={(e) => {
+                const val = e.target.value;
+                setForm((f) => ({
+                  ...f,
+                  departmentId: val === "" ? null : Number(val),
+                }));
+              }}
+              options={[
+                { value: "", label: "No department" },
+                ...departments.map((d) => ({ value: d.id, label: d.name })),
               ]}
             />
           </div>

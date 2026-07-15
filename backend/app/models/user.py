@@ -1,7 +1,8 @@
 """
 User model. Each user has exactly ONE role (you chose this — simpler
 than many-to-many). role_id can be null temporarily (e.g. a brand new
-user before an admin assigns them a role).
+user before an admin assigns them a role). Similarly, department_id
+is optional for organizational grouping.
 """
 from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, func
 from sqlalchemy.orm import relationship
@@ -21,6 +22,9 @@ class User(Base):
 
     role_id = Column(Integer, ForeignKey("roles.id"), nullable=True)
     role = relationship("Role", back_populates="users")
+
+    department_id = Column(Integer, ForeignKey("departments.id"), nullable=True)
+    department = relationship("Department", back_populates="users")
 
     # A user can have created many tasks, and separately, been assigned many tasks.
     # foreign_keys= is needed here because Task has TWO foreign keys pointing

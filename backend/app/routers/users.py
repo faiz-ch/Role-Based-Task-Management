@@ -8,8 +8,9 @@ from app.core.security import hash_password
 from app.database import get_db
 from app.models.user import User
 from app.models.role import Role
+from app.models.department import Department
 from app.models.task import Task
-from app.schemas.user import UserOut, UserUpdate, AssignRoleRequest, UserCreate
+from app.schemas.user import UserOut, UserUpdate, AssignRoleRequest, AssignDepartmentRequest, UserCreate
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -20,7 +21,9 @@ async def list_users(
     _: User = Depends(get_current_user),
 ):
     """Any logged-in user can view the user list (for assignee selection, etc.)."""
-    result = await db.execute(select(User).options(selectinload(User.role)))
+    result = await db.execute(
+        select(User).options(selectinload(User.role), selectinload(User.department))
+    )
     return result.scalars().all()
 
 
@@ -39,17 +42,25 @@ async def create_user(
         if role_result.scalar_one_or_none() is None:
             raise HTTPException(status_code=404, detail="Role not found")
 
+    if payload.department_id is not None:
+        dept_result = await db.execute(select(Department).where(Department.id == payload.department_id))
+        if dept_result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Department not found")
+
     user = User(
         name=payload.name,
         email=payload.email,
         hashed_password=hash_password(payload.password),
         role_id=payload.role_id,
+        department_id=payload.department_id,
     )
     db.add(user)
     await db.commit()
     # Re-fetch with eager load to avoid MissingGreenlet error
     result = await db.execute(
-        select(User).options(selectinload(User.role)).where(User.id == user.id)
+        select(User)
+        .options(selectinload(User.role), selectinload(User.department))
+        .where(User.id == user.id)
     )
     return result.scalar_one()
 
@@ -75,7 +86,9 @@ async def get_user(
     _: User = Depends(require_permission("user:manage")),
 ):
     result = await db.execute(
-        select(User).options(selectinload(User.role)).where(User.id == user_id)
+        select(User)
+        .options(selectinload(User.role), selectinload(User.department))
+        .where(User.id == user_id)
     )
     user = result.scalar_one_or_none()
     if user is None:
@@ -109,10 +122,19 @@ async def update_user(
         user.hashed_password = hash_password(payload.password)
     if payload.is_active is not None:
         user.is_active = payload.is_active
+    if payload.department_id is not None:
+        # Validate department exists if not null
+        if payload.department_id != 0:  # 0 or null means unassigned
+            dept_result = await db.execute(select(Department).where(Department.id == payload.department_id))
+            if dept_result.scalar_one_or_none() is None:
+                raise HTTPException(status_code=404, detail="Department not found")
+        user.department_id = payload.department_id if payload.department_id != 0 else None
 
     await db.commit()
     result = await db.execute(
-        select(User).options(selectinload(User.role)).where(User.id == user.id)
+        select(User)
+        .options(selectinload(User.role), selectinload(User.department))
+        .where(User.id == user.id)
     )
     return result.scalar_one()
 
@@ -140,7 +162,9 @@ async def assign_role(
 
     await db.commit()
     result = await db.execute(
-        select(User).options(selectinload(User.role)).where(User.id == user.id)
+        select(User)
+        .options(selectinload(User.role), selectinload(User.department))
+        .where(User.id == user.id)
     )
     return result.scalar_one()
 
@@ -180,3 +204,38 @@ async def delete_user(
 
     await db.delete(user)
     await db.commit()
+
+
+@router.patch("/{user_id}/department", response_model=UserOut)
+async def assign_department(
+    user_id: int,
+    payload: AssignDepartmentRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_permission("user:manage")),
+):
+    """
+    Assign a user to a department. Mirrors the assign_role endpoint pattern.
+    Validates the department exists if not null, sets user.department_id,
+    and returns the user with both role and department eager-loaded.
+    """
+    user_result = await db.execute(select(User).where(User.id == user_id))
+    user = user_result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if payload.department_id is None:
+        user.department_id = None
+    else:
+        dept_result = await db.execute(select(Department).where(Department.id == payload.department_id))
+        department = dept_result.scalar_one_or_none()
+        if department is None:
+            raise HTTPException(status_code=404, detail="Department not found")
+        user.department_id = department.id
+
+    await db.commit()
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.role), selectinload(User.department))
+        .where(User.id == user.id)
+    )
+    return result.scalar_one()

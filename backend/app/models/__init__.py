@@ -7,3 +7,4 @@ every table.
 from app.models.user import User
 from app.models.role import Role, Permission, role_permission
 from app.models.task import Task, TaskStatus, TaskPriority
+from app.models.department import Department

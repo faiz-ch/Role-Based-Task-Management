@@ -9,6 +9,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { TasksPage } from "./pages/TasksPage";
 import { UsersPage } from "./pages/UsersPage";
 import { RolesPage } from "./pages/RolesPage";
+import { DepartmentsPage } from "./pages/DepartmentsPage";
 
 function AppContent() {
   const { currentUser, permissions } = useAuth();
@@ -48,6 +49,9 @@ function AppContent() {
           )}
           {page === "roles" && permissions.includes("role:manage") && (
             <RolesPage />
+          )}
+          {page === "departments" && permissions.includes("user:manage") && (
+            <DepartmentsPage />
           )}
         </>
       )}

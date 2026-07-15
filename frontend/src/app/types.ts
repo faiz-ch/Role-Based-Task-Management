@@ -1,6 +1,11 @@
 export type Status = "To Do" | "In Progress" | "Review" | "Done" | "Rejected";
 export type Priority = "Low" | "Medium" | "High";
-export type Page = "login" | "register" | "dashboard" | "tasks" | "users" | "roles";
+export type Page = "login" | "register" | "dashboard" | "tasks" | "users" | "roles" | "departments";
+
+export interface Department {
+  id: number;
+  name: string;
+}
 
 export interface UserType {
   id: number;
@@ -8,6 +13,7 @@ export interface UserType {
   email: string;
   active: boolean; // maps to backend's `is_active`
   role: { id: number; name: string } | null;
+  department: Department | null;
 }
 
 export interface Task {
