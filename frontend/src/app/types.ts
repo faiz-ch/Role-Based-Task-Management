@@ -26,6 +26,7 @@ export interface Task {
   createdAt: string;
   creatorId: number;
   assigneeId: number | null;
+  departmentId: number | null;
 }
 
 export interface Role {

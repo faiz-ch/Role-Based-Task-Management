@@ -12,6 +12,7 @@ function mapTask(t: any): Task {
     createdAt: t.created_at ? t.created_at.slice(0, 10) : "",
     creatorId: t.created_by,
     assigneeId: t.assigned_to,
+    departmentId: t.department_id,
   };
 }
 

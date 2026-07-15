@@ -244,7 +244,7 @@ export function TasksPage() {
       priority: t.priority,
       dueDate: t.dueDate,
       assigneeId: t.assigneeId,
-      departmentId: null, // Tasks don't have department in the Task type yet, so default to null
+      departmentId: t.departmentId, // Tasks don't have department in the Task type yet, so default to null
     });
     setEditTask(t);
   }

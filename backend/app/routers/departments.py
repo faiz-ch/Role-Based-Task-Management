@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import require_permission
+from app.core.deps import require_permission, get_current_user
 from app.database import get_db
 from app.models.department import Department
 from app.models.user import User
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/departments", tags=["departments"])
 @router.get("", response_model=list[DepartmentOut])
 async def list_departments(
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_permission("user:manage")),
+    _: User = Depends(get_current_user),
 ):
     """List all departments. Requires user:manage permission."""
     result = await db.execute(select(Department))
