@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.deps import require_permission
+from app.core.deps import require_permission, get_current_user
 from app.database import get_db
 from app.models.role import Role, Permission
 from app.models.user import User
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/roles", tags=["roles"])
 @router.get("", response_model=list[RoleOut])
 async def list_roles(
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_permission("role:manage")),
+    _: User = Depends(get_current_user),
 ):
     result = await db.execute(select(Role).options(selectinload(Role.permissions)))
     return result.scalars().all()
@@ -72,7 +72,7 @@ async def set_role_permissions(
 @router.get("/permissions/all", response_model=list[PermissionOut])
 async def list_all_permissions(
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_permission("role:manage")),
+    _: User = Depends(get_current_user),
 ):
     """Returns the fixed system permission list — used to build the checkbox UI."""
     result = await db.execute(select(Permission))

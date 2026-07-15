@@ -13,15 +13,26 @@ from app.database import AsyncSessionLocal
 from app.models.role import Permission
 
 PERMISSIONS = [
+    # Task permissions
     "task:create",
     "task:edit",
-    "task:assign",
-    "task:view_all",
+    "task:delete",
     "task:review",
+    "task:view_all",
     "task:view_department",
+    "task:assign_all",
+    "task:assign_department",
+    # User permissions
+    "user:view_all",
+    "user:view_department",
+    "user:manage_all",
+    "user:manage_department",
+    # Role & Department permissions
     "role:manage",
-    "user:manage",
-    "dashboard:view",
+    "department:manage",
+    # Dashboard permissions
+    "dashboard:view_all",
+    "dashboard:view_department",
 ]
 
 

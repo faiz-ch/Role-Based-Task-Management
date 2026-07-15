@@ -17,13 +17,13 @@ const NAV: {
   id: Page;
   label: string;
   Icon: React.ElementType;
-  perm: string | null;
+  perm: string | string[] | null;
 }[] = [
-  { id: "dashboard", label: "Dashboard", Icon: LayoutDashboard, perm: "dashboard:view" },
+  { id: "dashboard", label: "Dashboard", Icon: LayoutDashboard, perm: ["dashboard:view_all", "dashboard:view_department"] },
   { id: "tasks", label: "Tasks", Icon: CheckSquare, perm: null },
-  { id: "users", label: "Users", Icon: Users, perm: "user:manage" },
+  { id: "users", label: "Users", Icon: Users, perm: ["user:manage_all", "user:manage_department"] },
   { id: "roles", label: "Roles", Icon: Shield, perm: "role:manage" },
-  { id: "departments", label: "Departments", Icon: Building2, perm: "user:manage" },
+  { id: "departments", label: "Departments", Icon: Building2, perm: "department:manage" },
 ];
 
 export function Shell({
@@ -41,7 +41,7 @@ export function Shell({
   if (!currentUser) return <>{children}</>;
 
   const visNav = NAV.filter(
-    (n) => n.perm === null || permissions.includes(n.perm)
+    (n) => n.perm === null || (Array.isArray(n.perm) ? n.perm.some(p => permissions.includes(p)) : permissions.includes(n.perm))
   );
 
   return (

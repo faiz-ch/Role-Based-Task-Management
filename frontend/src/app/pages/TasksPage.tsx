@@ -28,7 +28,6 @@ interface TForm {
   priority: Priority;
   dueDate: string;
   assigneeId: number | null;
-  departmentId: number | null;
 }
 
 function fmtDate(d: string) {
@@ -117,13 +116,15 @@ export function TasksPage() {
     priority: "Medium",
     dueDate: "",
     assigneeId: null,
-    departmentId: null,
   });
 
   const canCreate = permissions.includes("task:create");
   const canEdit = permissions.includes("task:edit");
-  const canAssign = permissions.includes("task:assign");
+  const canAssignAll = permissions.includes("task:assign_all");
+  const canAssignDepartment = permissions.includes("task:assign_department");
   const canViewAll = permissions.includes("task:view_all");
+  const canViewDepartment = permissions.includes("task:view_department");
+  const canAssign = canAssignAll || canAssignDepartment;
 
   useEffect(() => {
     async function loadData() {
@@ -232,7 +233,6 @@ export function TasksPage() {
       priority: "Medium",
       dueDate: "",
       assigneeId: null,
-      departmentId: null,
     });
     setShowNew(true);
   }
@@ -244,7 +244,6 @@ export function TasksPage() {
       priority: t.priority,
       dueDate: t.dueDate,
       assigneeId: t.assigneeId,
-      departmentId: t.departmentId, // Tasks don't have department in the Task type yet, so default to null
     });
     setEditTask(t);
   }
@@ -253,14 +252,17 @@ export function TasksPage() {
     if (!form.title.trim()) return;
     try {
       setError(null);
-      const newTask = await createTask({
+      const taskData: any = {
         title: form.title.trim(),
         description: form.description,
         priority: form.priority,
         dueDate: form.dueDate,
-        assigneeId: form.assigneeId,
-        departmentId: form.departmentId,
-      });
+      };
+      // Only include assigneeId if user has assign permissions
+      if (canAssign) {
+        taskData.assigneeId = form.assigneeId;
+      }
+      const newTask = await createTask(taskData);
       setTasks((prev) => [...prev, newTask]);
       setShowNew(false);
     } catch (err: any) {
@@ -628,36 +630,28 @@ export function TasksPage() {
                 }
               />
             </div>
-            <FldSelect
-              label="Assignee"
-              value={form.assigneeId ?? ""}
-              onChange={(e) => {
-                const val = e.target.value;
-                setForm((f) => ({
-                  ...f,
-                  assigneeId: val === "" ? null : Number(val),
-                }));
-              }}
-              options={[
-                { value: "", label: "Unassigned" },
-                ...users.map((u) => ({ value: u.id, label: u.name })),
-              ]}
-            />
-            <FldSelect
-              label="Department"
-              value={form.departmentId ?? ""}
-              onChange={(e) => {
-                const val = e.target.value;
-                setForm((f) => ({
-                  ...f,
-                  departmentId: val === "" ? null : Number(val),
-                }));
-              }}
-              options={[
-                { value: "", label: "No department" },
-                ...departments.map((d) => ({ value: d.id, label: d.name })),
-              ]}
-            />
+            {canAssign && (
+              <FldSelect
+                label="Assignee"
+                value={form.assigneeId ?? ""}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setForm((f) => ({
+                    ...f,
+                    assigneeId: val === "" ? null : Number(val),
+                  }));
+                }}
+                options={[
+                  { value: "", label: "Select assignee" },
+                  ...users.map((u) => ({ value: u.id, label: u.name })),
+                ]}
+              />
+            )}
+            {!canAssign && (
+              <div className="text-xs text-muted-foreground">
+                Task will be auto-assigned to you
+              </div>
+            )}
           </div>
           <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-border">
             <button

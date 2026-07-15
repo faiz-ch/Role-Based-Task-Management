@@ -6,13 +6,26 @@ import { Dlg } from "../components/Dlg";
 import { FldInput } from "../components/FldInput";
 
 const PERM_DESCRIPTIONS: Record<string, string> = {
+  // Task permissions
   "task:create": "Create new tasks",
-  "task:edit": "Edit and delete tasks",
-  "task:assign": "Assign tasks to users",
-  "task:view_all": "See tasks assigned to everyone, not just yourself",
+  "task:edit": "Edit task details",
+  "task:delete": "Delete tasks",
+  "task:review": "Review and approve/reject tasks",
+  "task:view_all": "View all tasks across the system",
+  "task:view_department": "View tasks in your department",
+  "task:assign_all": "Assign tasks to any user",
+  "task:assign_department": "Assign tasks within your department",
+  // User permissions
+  "user:view_all": "View all users in the system",
+  "user:view_department": "View users in your department",
+  "user:manage_all": "Manage all users and their settings",
+  "user:manage_department": "Manage users within your department",
+  // Role & Department permissions
   "role:manage": "Create and configure roles",
-  "user:manage": "Manage users and status",
-  "dashboard:view": "View analytics dashboard",
+  "department:manage": "Manage departments",
+  // Dashboard permissions
+  "dashboard:view_all": "View dashboard for all tasks",
+  "dashboard:view_department": "View dashboard for your department",
 };
 
 export function RolesPage() {
@@ -177,37 +190,154 @@ export function RolesPage() {
                   {selected.permissionIds.length} of {allPermissions.length} granted
                 </p>
               </div>
-              <div className="p-5 space-y-2">
-                {allPermissions.map((perm) => {
-                  const on = selected.permissionIds.includes(perm.id);
-                  const desc = PERM_DESCRIPTIONS[perm.name] || "System permission";
-                  return (
-                    <label
-                      key={perm.id}
-                      className={`flex items-center gap-3.5 p-3.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
-                        on ? "border-blue-200 bg-blue-50" : "border-border hover:bg-muted/30"
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={on}
-                        onChange={() => togglePerm(perm.id)}
-                        className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <p
-                          className={`text-sm font-mono font-semibold ${
-                            on ? "text-blue-700" : "text-foreground"
+              <div className="p-5 space-y-6">
+                {/* Task permissions */}
+                <div>
+                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Task</h4>
+                  <div className="space-y-2">
+                    {allPermissions.filter(p => p.name.startsWith("task:")).map((perm) => {
+                      const on = selected.permissionIds.includes(perm.id);
+                      const desc = PERM_DESCRIPTIONS[perm.name] || "System permission";
+                      return (
+                        <label
+                          key={perm.id}
+                          className={`flex items-center gap-3.5 p-3.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
+                            on ? "border-blue-200 bg-blue-50" : "border-border hover:bg-muted/30"
                           }`}
                         >
-                          {perm.name}
-                        </p>
-                        <p className="text-xs text-muted-foreground">{desc}</p>
-                      </div>
-                      {on && <CheckCircle2 size={15} className="text-blue-500 flex-shrink-0" />}
-                    </label>
-                  );
-                })}
+                          <input
+                            type="checkbox"
+                            checked={on}
+                            onChange={() => togglePerm(perm.id)}
+                            className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p
+                              className={`text-sm font-mono font-semibold ${
+                                on ? "text-blue-700" : "text-foreground"
+                              }`}
+                            >
+                              {perm.name}
+                            </p>
+                            <p className="text-xs text-muted-foreground">{desc}</p>
+                          </div>
+                          {on && <CheckCircle2 size={15} className="text-blue-500 flex-shrink-0" />}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+                
+                {/* User permissions */}
+                <div>
+                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">User</h4>
+                  <div className="space-y-2">
+                    {allPermissions.filter(p => p.name.startsWith("user:")).map((perm) => {
+                      const on = selected.permissionIds.includes(perm.id);
+                      const desc = PERM_DESCRIPTIONS[perm.name] || "System permission";
+                      return (
+                        <label
+                          key={perm.id}
+                          className={`flex items-center gap-3.5 p-3.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
+                            on ? "border-blue-200 bg-blue-50" : "border-border hover:bg-muted/30"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={on}
+                            onChange={() => togglePerm(perm.id)}
+                            className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p
+                              className={`text-sm font-mono font-semibold ${
+                                on ? "text-blue-700" : "text-foreground"
+                              }`}
+                            >
+                              {perm.name}
+                            </p>
+                            <p className="text-xs text-muted-foreground">{desc}</p>
+                          </div>
+                          {on && <CheckCircle2 size={15} className="text-blue-500 flex-shrink-0" />}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+                
+                {/* Role & Department permissions */}
+                <div>
+                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Role & Department</h4>
+                  <div className="space-y-2">
+                    {allPermissions.filter(p => p.name.startsWith("role:") || p.name.startsWith("department:")).map((perm) => {
+                      const on = selected.permissionIds.includes(perm.id);
+                      const desc = PERM_DESCRIPTIONS[perm.name] || "System permission";
+                      return (
+                        <label
+                          key={perm.id}
+                          className={`flex items-center gap-3.5 p-3.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
+                            on ? "border-blue-200 bg-blue-50" : "border-border hover:bg-muted/30"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={on}
+                            onChange={() => togglePerm(perm.id)}
+                            className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p
+                              className={`text-sm font-mono font-semibold ${
+                                on ? "text-blue-700" : "text-foreground"
+                              }`}
+                            >
+                              {perm.name}
+                            </p>
+                            <p className="text-xs text-muted-foreground">{desc}</p>
+                          </div>
+                          {on && <CheckCircle2 size={15} className="text-blue-500 flex-shrink-0" />}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+                
+                {/* Dashboard permissions */}
+                <div>
+                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Dashboard</h4>
+                  <div className="space-y-2">
+                    {allPermissions.filter(p => p.name.startsWith("dashboard:")).map((perm) => {
+                      const on = selected.permissionIds.includes(perm.id);
+                      const desc = PERM_DESCRIPTIONS[perm.name] || "System permission";
+                      return (
+                        <label
+                          key={perm.id}
+                          className={`flex items-center gap-3.5 p-3.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
+                            on ? "border-blue-200 bg-blue-50" : "border-border hover:bg-muted/30"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={on}
+                            onChange={() => togglePerm(perm.id)}
+                            className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p
+                              className={`text-sm font-mono font-semibold ${
+                                on ? "text-blue-700" : "text-foreground"
+                              }`}
+                            >
+                              {perm.name}
+                            </p>
+                            <p className="text-xs text-muted-foreground">{desc}</p>
+                          </div>
+                          {on && <CheckCircle2 size={15} className="text-blue-500 flex-shrink-0" />}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             </>
           ) : (

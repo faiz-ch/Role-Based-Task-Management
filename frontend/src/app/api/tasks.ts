@@ -31,17 +31,18 @@ export async function createTask(task: {
   description: string;
   priority: string;
   dueDate: string;
-  assigneeId: number | null;
-  departmentId: number | null;
+  assigneeId?: number;
 }): Promise<Task> {
-  const payload = {
+  const payload: any = {
     title: task.title,
     description: task.description || null,
     priority: task.priority,
     due_date: task.dueDate ? new Date(task.dueDate).toISOString() : null,
-    assigned_to: task.assigneeId || null,
-    department_id: task.departmentId || null,
   };
+  // Only include assigned_to if provided (backend auto-assigns if omitted)
+  if (task.assigneeId !== undefined) {
+    payload.assigned_to = task.assigneeId;
+  }
   const data = await apiFetch("/tasks", {
     method: "POST",
     body: JSON.stringify(payload),

@@ -26,7 +26,7 @@ async def list_departments(
 async def create_department(
     payload: DepartmentCreate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_permission("user:manage")),
+    _: User = Depends(require_permission("department:manage")),
 ):
     """Create a new department. Requires user:manage permission."""
     existing = await db.execute(select(Department).where(Department.name == payload.name))
@@ -44,7 +44,7 @@ async def create_department(
 async def delete_department(
     department_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_permission("user:manage")),
+    _: User = Depends(require_permission("department:manage")),
 ):
     """
     Delete a department. Requires user:manage permission.

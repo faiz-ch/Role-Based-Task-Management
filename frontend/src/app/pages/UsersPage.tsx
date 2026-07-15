@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Edit2, AlertTriangle, Plus, Trash2 } from "lucide-react";
 import { UserType, Role, Department } from "../types";
 import { getUsers, updateUser, assignRole, createUser, deleteUser, assignDepartment } from "../api/users";
-import { getRoles } from "../api/roles";
+import { getRoles, getAllPermissions } from "../api/roles";
 import { getDepartments } from "../api/departments";
 import { Av } from "../components/Av";
 import { Dlg } from "../components/Dlg";
@@ -13,9 +13,14 @@ export function UsersPage() {
   const { permissions, currentUser } = useAuth();
   const [users, setUsers] = useState<UserType[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
+  const [allPermissions, setAllPermissions] = useState<any[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
+  const canManageAll = permissions.includes("user:manage_all");
+  const canManageDepartment = permissions.includes("user:manage_department");
+  const canManage = canManageAll || canManageDepartment;
 
   const [editUser, setEditUser] = useState<UserType | null>(null);
   const [editName, setEditName] = useState("");
@@ -38,13 +43,15 @@ export function UsersPage() {
       try {
         setLoading(true);
         setError(null);
-        const [fetchedUsers, fetchedRoles, fetchedDepartments] = await Promise.all([
+        const [fetchedUsers, fetchedRoles, fetchedPermissions, fetchedDepartments] = await Promise.all([
           getUsers(),
           getRoles(),
+          getAllPermissions(),
           getDepartments(),
         ]);
         setUsers(fetchedUsers);
         setRoles(fetchedRoles);
+        setAllPermissions(fetchedPermissions);
         setDepartments(fetchedDepartments);
       } catch (err: any) {
         setError(err?.message || "Failed to load users data.");
@@ -54,6 +61,19 @@ export function UsersPage() {
     }
     loadData();
   }, []);
+  
+  // Filter roles for department-tier managers (exclude globally-scoped permissions)
+  const globallyScopedPerms = new Set([
+    "role:manage", "department:manage", "user:manage_all",
+    "task:view_all", "task:assign_all", "dashboard:view_all"
+  ]);
+  
+  const filteredRoles = canManageDepartment && !canManageAll
+    ? roles.filter(role => {
+        const rolePerms = allPermissions.filter((p: any) => role.permissionIds.includes(p.id));
+        return !rolePerms.some((p: any) => globallyScopedPerms.has(p.name));
+      })
+    : roles;
 
   async function handleRoleChange(uid: number, roleIdStr: string) {
     try {
@@ -180,7 +200,7 @@ export function UsersPage() {
           <h1 className="text-xl font-bold text-foreground">Users</h1>
           <p className="text-sm text-muted-foreground">{users.length} registered accounts</p>
         </div>
-        {permissions.includes("user:manage") && (
+        {canManage && (
           <button
             onClick={() => setShowNewUserDialog(true)}
             className="flex items-center gap-2 px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
@@ -236,7 +256,7 @@ export function UsersPage() {
                       className="text-xs border border-border rounded-lg px-2.5 py-1.5 bg-white text-foreground focus:outline-none focus:border-blue-400 min-w-[120px]"
                     >
                       <option value="">No role</option>
-                      {roles.map((r) => (
+                      {filteredRoles.map((r) => (
                         <option key={r.id} value={r.id}>
                           {r.name}
                         </option>
@@ -244,18 +264,24 @@ export function UsersPage() {
                     </select>
                   </td>
                   <td className="px-5 py-3.5">
-                    <select
-                      value={user.department?.id ?? ""}
-                      onChange={(e) => handleDepartmentChange(user.id, e.target.value)}
-                      className="text-xs border border-border rounded-lg px-2.5 py-1.5 bg-white text-foreground focus:outline-none focus:border-blue-400 min-w-[120px]"
-                    >
-                      <option value="">No department</option>
-                      {departments.map((d) => (
-                        <option key={d.id} value={d.id}>
-                          {d.name}
-                        </option>
-                      ))}
-                    </select>
+                    {canManageAll ? (
+                      <select
+                        value={user.department?.id ?? ""}
+                        onChange={(e) => handleDepartmentChange(user.id, e.target.value)}
+                        className="text-xs border border-border rounded-lg px-2.5 py-1.5 bg-white text-foreground focus:outline-none focus:border-blue-400 min-w-[120px]"
+                      >
+                        <option value="">No department</option>
+                        {departments.map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">
+                        {user.department?.name || "No department"}
+                      </span>
+                    )}
                   </td>
                   <td className="px-5 py-3.5">
                     <span
@@ -390,28 +416,40 @@ export function UsersPage() {
                 className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-white text-foreground focus:outline-none focus:border-blue-400"
               >
                 <option value="">No role</option>
-                {roles.map((r) => (
+                {filteredRoles.map((r) => (
                   <option key={r.id} value={r.id}>
                     {r.name}
                   </option>
                 ))}
               </select>
             </div>
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Department (optional)</label>
-              <select
-                value={newUserDepartment}
-                onChange={(e) => setNewUserDepartment(e.target.value)}
-                className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-white text-foreground focus:outline-none focus:border-blue-400"
-              >
-                <option value="">No department</option>
-                {departments.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {canManageAll ? (
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Department (optional)</label>
+                <select
+                  value={newUserDepartment}
+                  onChange={(e) => setNewUserDepartment(e.target.value)}
+                  className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-white text-foreground focus:outline-none focus:border-blue-400"
+                >
+                  <option value="">No department</option>
+                  {departments.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Department</label>
+                <div className="text-sm text-foreground">
+                  {currentUser?.department?.name || "No department"}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Users will be assigned to your department
+                </p>
+              </div>
+            )}
             <div className="flex justify-end gap-2 pt-2">
               <button
                 onClick={() => setShowNewUserDialog(false)}

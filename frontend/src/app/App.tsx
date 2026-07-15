@@ -18,7 +18,7 @@ function AppContent() {
   // Sync page routing on login/logout
   useEffect(() => {
     if (currentUser) {
-      setPage(permissions.includes("dashboard:view") ? "dashboard" : "tasks");
+      setPage((permissions.includes("dashboard:view_all") || permissions.includes("dashboard:view_department")) ? "dashboard" : "tasks");
     } else {
       setPage("login");
     }
@@ -29,7 +29,7 @@ function AppContent() {
     if (page === "register") {
       return <RegisterPage onGoLogin={() => setPage("login")} />;
     }
-    return <LoginPage onGoLogin={() => setPage("login")} onGoRegister={() => setPage("register")} />;
+    return <LoginPage onGoRegister={() => setPage("register")} />;
   }
 
   const noRole = !currentUser.role;
@@ -40,17 +40,17 @@ function AppContent() {
         <NoRoleView />
       ) : (
         <>
-          {page === "dashboard" && permissions.includes("dashboard:view") && (
+          {page === "dashboard" && (permissions.includes("dashboard:view_all") || permissions.includes("dashboard:view_department")) && (
             <DashboardPage />
           )}
           {page === "tasks" && <TasksPage />}
-          {page === "users" && permissions.includes("user:manage") && (
+          {page === "users" && (permissions.includes("user:manage_all") || permissions.includes("user:manage_department")) && (
             <UsersPage />
           )}
           {page === "roles" && permissions.includes("role:manage") && (
             <RolesPage />
           )}
-          {page === "departments" && permissions.includes("user:manage") && (
+          {page === "departments" && permissions.includes("department:manage") && (
             <DepartmentsPage />
           )}
         </>

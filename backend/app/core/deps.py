@@ -83,3 +83,21 @@ def require_permission(permission_name: str):
         return current_user
 
     return checker
+
+
+def get_permission_tier(current_user: User, all_perm: str, department_perm: str) -> str:
+    """
+    Returns 'all', 'department', or 'none' based on which of the two scoped
+    permissions the user's role has. Used for task view/assign, user view/manage,
+    and dashboard scoping — anywhere we have an all/department permission pair.
+    """
+    if current_user.role is None:
+        return "none"
+    
+    user_permissions = {p.name for p in current_user.role.permissions}
+    
+    if all_perm in user_permissions:
+        return "all"
+    if department_perm in user_permissions:
+        return "department"
+    return "none"
