@@ -6,8 +6,9 @@ from sqlalchemy.orm import selectinload
 from app.core.deps import require_permission, get_current_user
 from app.database import get_db
 from app.models.role import Role, Permission
+from app.models.category import Category
 from app.models.user import User
-from app.schemas.role import RoleCreate, RoleOut, SetRolePermissionsRequest, PermissionOut
+from app.schemas.role import RoleCreate, RoleOut, SetRoleCategoryRequest, PermissionOut
 
 router = APIRouter(prefix="/roles", tags=["roles"])
 
@@ -17,7 +18,13 @@ async def list_roles(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Role).options(selectinload(Role.permissions)))
+    result = await db.execute(
+        select(Role).options(
+            selectinload(Role.category)
+            .selectinload(Category.permissions)
+            .selectinload(Category.departments)
+        )
+    )
     return result.scalars().all()
 
 
@@ -31,40 +38,55 @@ async def create_role(
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=400, detail="Role name already exists")
 
-    role = Role(name=payload.name)
+    role = Role(name=payload.name, category_id=payload.category_id)
     db.add(role)
     await db.commit()
-    return RoleOut(id=role.id, name=role.name, permissions=[])
+    await db.refresh(role)
+    # Re-fetch with category loaded
+    result = await db.execute(
+        select(Role).options(
+            selectinload(Role.category)
+            .selectinload(Category.permissions)
+            .selectinload(Category.departments)
+        ).where(Role.id == role.id)
+    )
+    return result.scalar_one()
 
 
-@router.patch("/{role_id}/permissions", response_model=RoleOut)
-async def set_role_permissions(
+@router.patch("/{role_id}/category", response_model=RoleOut)
+async def set_role_category(
     role_id: int,
-    payload: SetRolePermissionsRequest,
+    payload: SetRoleCategoryRequest,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_permission("role:manage")),
 ):
     result = await db.execute(
-        select(Role).options(selectinload(Role.permissions)).where(Role.id == role_id)
+        select(Role).options(
+            selectinload(Role.category)
+            .selectinload(Category.permissions)
+            .selectinload(Category.departments)
+        ).where(Role.id == role_id)
     )
     role = result.scalar_one_or_none()
     if role is None:
         raise HTTPException(status_code=404, detail="Role not found")
 
-    perms_result = await db.execute(
-        select(Permission).where(Permission.id.in_(payload.permission_ids))
-    )
-    permissions = perms_result.scalars().all()
-
-    # This REPLACES the whole permission set for the role (not additive) —
-    # simplest mental model for an admin UI with checkboxes: "here's the
-    # full list of what should be checked now."
-    role.permissions = permissions
+    if payload.category_id is not None:
+        category_result = await db.execute(select(Category).where(Category.id == payload.category_id))
+        category = category_result.scalar_one_or_none()
+        if category is None:
+            raise HTTPException(status_code=404, detail="Category not found")
+    
+    role.category_id = payload.category_id
 
     await db.commit()
-    # Re-fetch to ensure permissions are loaded for response serialization
+    # Re-fetch to ensure category is loaded for response serialization
     result = await db.execute(
-        select(Role).options(selectinload(Role.permissions)).where(Role.id == role.id)
+        select(Role).options(
+            selectinload(Role.category)
+            .selectinload(Category.permissions)
+            .selectinload(Category.departments)
+        ).where(Role.id == role_id)
     )
     return result.scalar_one()
 

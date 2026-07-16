@@ -9,6 +9,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { TasksPage } from "./pages/TasksPage";
 import { UsersPage } from "./pages/UsersPage";
 import { RolesPage } from "./pages/RolesPage";
+import { CategoriesPage } from "./pages/CategoriesPage";
 import { DepartmentsPage } from "./pages/DepartmentsPage";
 
 function AppContent() {
@@ -49,6 +50,9 @@ function AppContent() {
           )}
           {page === "roles" && permissions.includes("role:manage") && (
             <RolesPage />
+          )}
+          {page === "categories" && permissions.includes("role:manage") && (
+            <CategoriesPage />
           )}
           {page === "departments" && permissions.includes("department:manage") && (
             <DepartmentsPage />

@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.models  # noqa: F401 — registers all models with Base.metadata
 from app.database import engine, Base, get_db
 from app.seed import seed_permissions
-from app.routers import auth, users, roles, tasks, dashboard, departments
+from app.routers import auth, users, roles, tasks, dashboard, departments, categories
 
 
 @asynccontextmanager
@@ -49,6 +49,7 @@ app.include_router(roles.router)
 app.include_router(tasks.router)
 app.include_router(dashboard.router)
 app.include_router(departments.router)
+app.include_router(categories.router)
 
 
 @app.get("/health")

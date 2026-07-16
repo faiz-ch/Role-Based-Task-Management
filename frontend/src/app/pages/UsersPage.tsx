@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { Edit2, AlertTriangle, Plus, Trash2 } from "lucide-react";
-import { UserType, Role, Department } from "../types";
+import { UserType, Role, Department, Category } from "../types";
 import { getUsers, updateUser, assignRole, createUser, deleteUser, assignDepartment } from "../api/users";
-import { getRoles, getAllPermissions } from "../api/roles";
+import { getRoles } from "../api/roles";
+import { getCategories } from "../api/categories";
 import { getDepartments } from "../api/departments";
 import { Av } from "../components/Av";
 import { Dlg } from "../components/Dlg";
@@ -13,7 +14,7 @@ export function UsersPage() {
   const { permissions, currentUser } = useAuth();
   const [users, setUsers] = useState<UserType[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
-  const [allPermissions, setAllPermissions] = useState<any[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -43,15 +44,15 @@ export function UsersPage() {
       try {
         setLoading(true);
         setError(null);
-        const [fetchedUsers, fetchedRoles, fetchedPermissions, fetchedDepartments] = await Promise.all([
+        const [fetchedUsers, fetchedRoles, fetchedCategories, fetchedDepartments] = await Promise.all([
           getUsers(),
           getRoles(),
-          getAllPermissions(),
+          getCategories(),
           getDepartments(),
         ]);
         setUsers(fetchedUsers);
         setRoles(fetchedRoles);
-        setAllPermissions(fetchedPermissions);
+        setCategories(fetchedCategories);
         setDepartments(fetchedDepartments);
       } catch (err: any) {
         setError(err?.message || "Failed to load users data.");
@@ -62,16 +63,15 @@ export function UsersPage() {
     loadData();
   }, []);
   
-  // Filter roles for department-tier managers (exclude globally-scoped permissions)
-  const globallyScopedPerms = new Set([
-    "role:manage", "department:manage", "user:manage_all",
-    "task:view_all", "task:assign_all", "dashboard:view_all"
-  ]);
+  // Filter roles based on current user's category's assignable_categories
+  const currentUserCategoryId = currentUser?.role?.category?.id ?? null;
+  const currentUserCategory = categories.find(c => c.id === currentUserCategoryId);
+  const assignableCategoryIds = currentUserCategory?.assignableCategoryIds ?? [];
   
   const filteredRoles = canManageDepartment && !canManageAll
     ? roles.filter(role => {
-        const rolePerms = allPermissions.filter((p: any) => role.permissionIds.includes(p.id));
-        return !rolePerms.some((p: any) => globallyScopedPerms.has(p.name));
+        const roleCategoryId = role.category?.id;
+        return roleCategoryId !== undefined && roleCategoryId !== null && assignableCategoryIds.includes(roleCategoryId);
       })
     : roles;
 

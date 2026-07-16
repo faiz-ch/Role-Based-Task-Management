@@ -44,13 +44,17 @@ async def get_current_user(
     if user_id is None:
         raise credentials_error
 
-    # selectinload(User.role).selectinload(Role.permissions) pre-loads the
-    # user's role AND that role's permissions in the same query, so
-    # require_permission below doesn't need extra DB round-trips.
+    # selectinload(User.role).selectinload(Role.category).selectinload(Category.permissions)
+    # pre-loads the user's role, its category, and the category's permissions in the same query,
+    # so require_permission below doesn't need extra DB round-trips.
+    from app.models.category import Category
     result = await db.execute(
         select(User)
         .options(
-            selectinload(User.role).selectinload(Role.permissions),
+            selectinload(User.role)
+            .selectinload(Role.category)
+            .selectinload(Category.permissions)
+            .selectinload(Category.departments),
             selectinload(User.department),
         )
         .where(User.id == int(user_id))
@@ -71,10 +75,10 @@ def require_permission(permission_name: str):
     """
 
     async def checker(current_user: User = Depends(get_current_user)) -> User:
-        if current_user.role is None:
-            raise HTTPException(status_code=403, detail="User has no role assigned")
+        if current_user.role is None or current_user.role.category is None:
+            raise HTTPException(status_code=403, detail="User has no role or category assigned")
 
-        user_permissions = {p.name for p in current_user.role.permissions}
+        user_permissions = {p.name for p in current_user.role.category.permissions}
         if permission_name not in user_permissions:
             raise HTTPException(
                 status_code=403,
@@ -88,16 +92,25 @@ def require_permission(permission_name: str):
 def get_permission_tier(current_user: User, all_perm: str, department_perm: str) -> str:
     """
     Returns 'all', 'department', or 'none' based on which of the two scoped
-    permissions the user's role has. Used for task view/assign, user view/manage,
+    permissions the user's role's category has. Used for task view/assign, user view/manage,
     and dashboard scoping — anywhere we have an all/department permission pair.
     """
-    if current_user.role is None:
+    if current_user.role is None or current_user.role.category is None:
         return "none"
     
-    user_permissions = {p.name for p in current_user.role.permissions}
+    user_permissions = {p.name for p in current_user.role.category.permissions}
     
     if all_perm in user_permissions:
         return "all"
     if department_perm in user_permissions:
         return "department"
     return "none"
+
+
+def get_scoped_department_ids(current_user: User) -> set[int]:
+    """Returns the set of department IDs the user's Category is scoped to,
+    for use in all five department-scoped permission checks. Empty set if
+    the user has no role/category or the category has no departments attached."""
+    if current_user.role is None or current_user.role.category is None:
+        return set()
+    return {d.id for d in current_user.role.category.departments}

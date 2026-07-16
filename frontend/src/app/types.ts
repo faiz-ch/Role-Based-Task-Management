@@ -1,6 +1,6 @@
 export type Status = "To Do" | "In Progress" | "Review" | "Done" | "Rejected";
 export type Priority = "Low" | "Medium" | "High";
-export type Page = "login" | "register" | "dashboard" | "tasks" | "users" | "roles" | "departments";
+export type Page = "login" | "register" | "dashboard" | "tasks" | "users" | "roles" | "departments" | "categories";
 
 export interface Department {
   id: number;
@@ -12,7 +12,7 @@ export interface UserType {
   name: string;
   email: string;
   active: boolean; // maps to backend's `is_active`
-  role: { id: number; name: string } | null;
+  role: { id: number; name: string; category: Category | null } | null;
   department: Department | null;
 }
 
@@ -29,10 +29,18 @@ export interface Task {
   departmentId: number | null;
 }
 
+export interface Category {
+  id: number;
+  name: string;
+  permissions: string[];
+  departmentIds: number[];
+  assignableCategoryIds: number[];
+}
+
 export interface Role {
   id: number;
   name: string;
-  permissionIds: number[];
+  category: Category | null;
 }
 
 export interface PermDef {

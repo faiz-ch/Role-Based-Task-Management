@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import require_permission, get_current_user, get_permission_tier
+from app.core.deps import require_permission, get_current_user, get_permission_tier, get_scoped_department_ids
 from app.database import get_db
 from app.models.task import Task, TaskStatus
 from app.models.user import User
@@ -27,7 +27,8 @@ def _is_task_in_scope(task: Task, current_user: User) -> bool:
     if view_tier == "all":
         return True
     if view_tier == "department":
-        return task.department_id == current_user.department_id
+        scoped_dept_ids = get_scoped_department_ids(current_user)
+        return task.department_id in scoped_dept_ids
     # 'none' tier - only see own tasks
     return task.assigned_to == current_user.id
 
@@ -59,7 +60,10 @@ async def list_tasks(
             query = query.where(Task.assigned_to == assigned_to)
     elif view_tier == "department":
         # Filter by department
-        query = query.where(Task.department_id == current_user.department_id)
+        scoped_dept_ids = get_scoped_department_ids(current_user)
+        if not scoped_dept_ids:
+            return []  # Empty scope = no tasks visible
+        query = query.where(Task.department_id.in_(scoped_dept_ids))
     else:
         # 'none' tier - only see own tasks
         query = query.where(Task.assigned_to == current_user.id)
@@ -86,20 +90,21 @@ async def create_task(
             raise HTTPException(status_code=404, detail="Assignee user not found")
         final_assignee_id = assignee.id
     elif assign_tier == "department":
-        # Can only assign to users in own department
-        if current_user.department_id is None:
+        # Can only assign to users in scoped departments
+        scoped_dept_ids = get_scoped_department_ids(current_user)
+        if not scoped_dept_ids:
             raise HTTPException(
                 status_code=403,
-                detail="You cannot assign tasks because you are not assigned to a department"
+                detail="You cannot assign tasks because your category has no departments assigned"
             )
         assignee_result = await db.execute(select(User).where(User.id == payload.assigned_to))
         assignee = assignee_result.scalar_one_or_none()
         if assignee is None:
             raise HTTPException(status_code=404, detail="Assignee user not found")
-        if assignee.department_id != current_user.department_id:
+        if assignee.department_id not in scoped_dept_ids:
             raise HTTPException(
                 status_code=403,
-                detail="You can only assign tasks within your own department"
+                detail="You can only assign tasks within your category's departments"
             )
         final_assignee_id = assignee.id
     else:
@@ -178,11 +183,13 @@ async def update_task_status(
 
     has_edit_permission = (
         current_user.role is not None
-        and any(p.name == "task:edit" for p in current_user.role.permissions)
+        and current_user.role.category is not None
+        and any(p.name == "task:edit" for p in current_user.role.category.permissions)
     )
     has_review_permission = (
         current_user.role is not None
-        and any(p.name == "task:review" for p in current_user.role.permissions)
+        and current_user.role.category is not None
+        and any(p.name == "task:review" for p in current_user.role.category.permissions)
     )
     is_assignee = task.assigned_to == current_user.id
 
@@ -252,15 +259,16 @@ async def assign_task(
     
     # Validate department scope for department-tier users
     if assign_tier == "department":
-        if current_user.department_id is None:
+        scoped_dept_ids = get_scoped_department_ids(current_user)
+        if not scoped_dept_ids:
             raise HTTPException(
                 status_code=403,
-                detail="You cannot assign tasks because you are not assigned to a department"
+                detail="You cannot assign tasks because your category has no departments assigned"
             )
-        if assignee.department_id != current_user.department_id:
+        if assignee.department_id not in scoped_dept_ids:
             raise HTTPException(
                 status_code=403,
-                detail="You can only assign tasks within your own department"
+                detail="You can only assign tasks within your category's departments"
             )
     
     task.assigned_to = assignee.id

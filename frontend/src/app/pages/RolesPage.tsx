@@ -1,59 +1,38 @@
 import React, { useState, useEffect } from "react";
-import { Plus, CheckCircle2, AlertTriangle, Trash2 } from "lucide-react";
-import { Role, PermDef } from "../types";
-import { getRoles, createRole, setRolePermissions, getAllPermissions, deleteRole } from "../api/roles";
+import { Plus, AlertTriangle, Trash2 } from "lucide-react";
+import { Role, Category } from "../types";
+import { getRoles, createRole, setRoleCategory, deleteRole } from "../api/roles";
+import { getCategories } from "../api/categories";
 import { Dlg } from "../components/Dlg";
 import { FldInput } from "../components/FldInput";
 
-const PERM_DESCRIPTIONS: Record<string, string> = {
-  // Task permissions
-  "task:create": "Create new tasks",
-  "task:edit": "Edit task details",
-  "task:delete": "Delete tasks",
-  "task:review": "Review and approve/reject tasks",
-  "task:view_all": "View all tasks across the system",
-  "task:view_department": "View tasks in your department",
-  "task:assign_all": "Assign tasks to any user",
-  "task:assign_department": "Assign tasks within your department",
-  // User permissions
-  "user:view_all": "View all users in the system",
-  "user:view_department": "View users in your department",
-  "user:manage_all": "Manage all users and their settings",
-  "user:manage_department": "Manage users within your department",
-  // Role & Department permissions
-  "role:manage": "Create and configure roles",
-  "department:manage": "Manage departments",
-  // Dashboard permissions
-  "dashboard:view_all": "View dashboard for all tasks",
-  "dashboard:view_department": "View dashboard for your department",
-};
-
 export function RolesPage() {
   const [roles, setRoles] = useState<Role[]>([]);
-  const [allPermissions, setAllPermissions] = useState<PermDef[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [selectedId, setSelectedId] = useState<number | "">("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [showNew, setShowNew] = useState(false);
   const [newName, setNewName] = useState("");
+  const [newCategoryId, setNewCategoryId] = useState<number | "">("");
 
   useEffect(() => {
     async function loadData() {
       try {
         setLoading(true);
         setError(null);
-        const [fetchedRoles, fetchedPerms] = await Promise.all([
+        const [fetchedRoles, fetchedCategories] = await Promise.all([
           getRoles(),
-          getAllPermissions(),
+          getCategories(),
         ]);
         setRoles(fetchedRoles);
-        setAllPermissions(fetchedPerms);
+        setCategories(fetchedCategories);
         if (fetchedRoles.length > 0) {
           setSelectedId(fetchedRoles[0].id);
         }
       } catch (err: any) {
-        setError(err?.message || "Failed to load roles and permissions data.");
+        setError(err?.message || "Failed to load roles data.");
       } finally {
         setLoading(false);
       }
@@ -63,20 +42,14 @@ export function RolesPage() {
 
   const selected = roles.find((r) => r.id === selectedId);
 
-  async function togglePerm(permId: number) {
-    if (!selected) return;
+  async function handleCategoryChange(roleId: number, categoryIdStr: string) {
     try {
       setError(null);
-      const has = selected.permissionIds.includes(permId);
-      const newIds = has
-        ? selected.permissionIds.filter((id) => id !== permId)
-        : [...selected.permissionIds, permId];
-      const updatedRole = await setRolePermissions(selected.id, newIds);
-      setRoles((prev) =>
-        prev.map((r) => (r.id === selected.id ? updatedRole : r))
-      );
+      const categoryId = categoryIdStr === "" ? null : Number(categoryIdStr);
+      const updatedRole = await setRoleCategory(roleId, categoryId);
+      setRoles((prev) => prev.map((r) => (r.id === roleId ? updatedRole : r)));
     } catch (err: any) {
-      setError(err?.message || "Failed to update permissions.");
+      setError(err?.message || "Failed to update role category.");
     }
   }
 
@@ -84,10 +57,12 @@ export function RolesPage() {
     if (!newName.trim()) return;
     try {
       setError(null);
-      const nr = await createRole(newName.trim());
+      const categoryId = newCategoryId === "" ? null : Number(newCategoryId);
+      const nr = await createRole(newName.trim(), categoryId);
       setRoles((prev) => [...prev, nr]);
       setSelectedId(nr.id);
       setNewName("");
+      setNewCategoryId("");
       setShowNew(false);
     } catch (err: any) {
       setError(err?.message || "Failed to create role.");
@@ -119,8 +94,8 @@ export function RolesPage() {
   return (
     <div className="p-6">
       <div className="mb-6">
-        <h1 className="text-xl font-bold text-foreground">Roles & Permissions</h1>
-        <p className="text-sm text-muted-foreground">Define what each role can do in the system</p>
+        <h1 className="text-xl font-bold text-foreground">Roles</h1>
+        <p className="text-sm text-muted-foreground">Define role names and assign them to categories</p>
       </div>
 
       {error && (
@@ -130,7 +105,7 @@ export function RolesPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Role list */}
         <div className="bg-white rounded-xl border border-border overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3.5 border-b border-border">
@@ -159,8 +134,8 @@ export function RolesPage() {
                   {role.name}
                 </button>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-mono text-muted-foreground">
-                    {role.permissionIds.length}/{allPermissions.length}
+                  <span className="text-xs text-muted-foreground">
+                    {role.category?.name || "No category"}
                   </span>
                   <button
                     onClick={(e) => {
@@ -178,171 +153,43 @@ export function RolesPage() {
           </div>
         </div>
 
-        {/* Permission checkboxes */}
-        <div className="lg:col-span-2 bg-white rounded-xl border border-border overflow-hidden">
+        {/* Role details */}
+        <div className="bg-white rounded-xl border border-border overflow-hidden">
           {selected ? (
             <>
               <div className="px-5 py-4 border-b border-border">
                 <h3 className="text-sm font-semibold text-foreground">
-                  Permissions — <span className="text-blue-600">{selected.name}</span>
+                  {selected.name}
                 </h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {selected.permissionIds.length} of {allPermissions.length} granted
+                  Category: {selected.category?.name || "No category assigned"}
                 </p>
               </div>
-              <div className="p-5 space-y-6">
-                {/* Task permissions */}
+              <div className="p-5">
                 <div>
-                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Task</h4>
-                  <div className="space-y-2">
-                    {allPermissions.filter(p => p.name.startsWith("task:")).map((perm) => {
-                      const on = selected.permissionIds.includes(perm.id);
-                      const desc = PERM_DESCRIPTIONS[perm.name] || "System permission";
-                      return (
-                        <label
-                          key={perm.id}
-                          className={`flex items-center gap-3.5 p-3.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
-                            on ? "border-blue-200 bg-blue-50" : "border-border hover:bg-muted/30"
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={on}
-                            onChange={() => togglePerm(perm.id)}
-                            className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p
-                              className={`text-sm font-mono font-semibold ${
-                                on ? "text-blue-700" : "text-foreground"
-                              }`}
-                            >
-                              {perm.name}
-                            </p>
-                            <p className="text-xs text-muted-foreground">{desc}</p>
-                          </div>
-                          {on && <CheckCircle2 size={15} className="text-blue-500 flex-shrink-0" />}
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-                
-                {/* User permissions */}
-                <div>
-                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">User</h4>
-                  <div className="space-y-2">
-                    {allPermissions.filter(p => p.name.startsWith("user:")).map((perm) => {
-                      const on = selected.permissionIds.includes(perm.id);
-                      const desc = PERM_DESCRIPTIONS[perm.name] || "System permission";
-                      return (
-                        <label
-                          key={perm.id}
-                          className={`flex items-center gap-3.5 p-3.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
-                            on ? "border-blue-200 bg-blue-50" : "border-border hover:bg-muted/30"
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={on}
-                            onChange={() => togglePerm(perm.id)}
-                            className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p
-                              className={`text-sm font-mono font-semibold ${
-                                on ? "text-blue-700" : "text-foreground"
-                              }`}
-                            >
-                              {perm.name}
-                            </p>
-                            <p className="text-xs text-muted-foreground">{desc}</p>
-                          </div>
-                          {on && <CheckCircle2 size={15} className="text-blue-500 flex-shrink-0" />}
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-                
-                {/* Role & Department permissions */}
-                <div>
-                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Role & Department</h4>
-                  <div className="space-y-2">
-                    {allPermissions.filter(p => p.name.startsWith("role:") || p.name.startsWith("department:")).map((perm) => {
-                      const on = selected.permissionIds.includes(perm.id);
-                      const desc = PERM_DESCRIPTIONS[perm.name] || "System permission";
-                      return (
-                        <label
-                          key={perm.id}
-                          className={`flex items-center gap-3.5 p-3.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
-                            on ? "border-blue-200 bg-blue-50" : "border-border hover:bg-muted/30"
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={on}
-                            onChange={() => togglePerm(perm.id)}
-                            className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p
-                              className={`text-sm font-mono font-semibold ${
-                                on ? "text-blue-700" : "text-foreground"
-                              }`}
-                            >
-                              {perm.name}
-                            </p>
-                            <p className="text-xs text-muted-foreground">{desc}</p>
-                          </div>
-                          {on && <CheckCircle2 size={15} className="text-blue-500 flex-shrink-0" />}
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-                
-                {/* Dashboard permissions */}
-                <div>
-                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Dashboard</h4>
-                  <div className="space-y-2">
-                    {allPermissions.filter(p => p.name.startsWith("dashboard:")).map((perm) => {
-                      const on = selected.permissionIds.includes(perm.id);
-                      const desc = PERM_DESCRIPTIONS[perm.name] || "System permission";
-                      return (
-                        <label
-                          key={perm.id}
-                          className={`flex items-center gap-3.5 p-3.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
-                            on ? "border-blue-200 bg-blue-50" : "border-border hover:bg-muted/30"
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={on}
-                            onChange={() => togglePerm(perm.id)}
-                            className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p
-                              className={`text-sm font-mono font-semibold ${
-                                on ? "text-blue-700" : "text-foreground"
-                              }`}
-                            >
-                              {perm.name}
-                            </p>
-                            <p className="text-xs text-muted-foreground">{desc}</p>
-                          </div>
-                          {on && <CheckCircle2 size={15} className="text-blue-500 flex-shrink-0" />}
-                        </label>
-                      );
-                    })}
-                  </div>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">Category</label>
+                  <select
+                    value={selected.category?.id ?? ""}
+                    onChange={(e) => handleCategoryChange(selected.id, e.target.value)}
+                    className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-white text-foreground focus:outline-none focus:border-blue-400"
+                  >
+                    <option value="">No category</option>
+                    {categories.map((cat) => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Roles inherit all permissions and department scopes from their category. 
+                    Configure permissions and departments in the Categories page.
+                  </p>
                 </div>
               </div>
             </>
           ) : (
             <div className="flex items-center justify-center h-52 text-sm text-muted-foreground">
-              Select a role to manage its permissions
+              Select a role to manage its category
             </div>
           )}
         </div>
@@ -358,9 +205,24 @@ export function RolesPage() {
               onChange={(e) => setNewName(e.target.value)}
               autoFocus
             />
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Category (optional)</label>
+              <select
+                value={newCategoryId}
+                onChange={(e) => setNewCategoryId(e.target.value === "" ? "" : Number(e.target.value))}
+                className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-white text-foreground focus:outline-none focus:border-blue-400"
+              >
+                <option value="">No category</option>
+                {categories.map((cat) => (
+                  <option key={cat.id} value={cat.id}>
+                    {cat.name}
+                  </option>
+                ))}
+              </select>
+            </div>
             <p className="text-xs text-muted-foreground leading-relaxed">
-              The new role starts with no permissions. Select it after creation to assign what it
-              can do.
+              The new role will inherit all permissions and department scopes from its category. 
+              Configure categories in the Categories page.
             </p>
             <div className="flex justify-end gap-2 pt-2">
               <button

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import require_permission, get_current_user, get_permission_tier
+from app.core.deps import require_permission, get_current_user, get_permission_tier, get_scoped_department_ids
 from app.database import get_db
 from app.models.task import Task, TaskStatus
 from app.models.user import User
@@ -25,7 +25,11 @@ async def get_summary(
     # Apply department filter for department-tier users
     dept_filter = None
     if view_tier == "department":
-        dept_filter = Task.department_id == current_user.department_id
+        scoped_dept_ids = get_scoped_department_ids(current_user)
+        if not scoped_dept_ids:
+            dept_filter = Task.department_id == -1  # No departments = no results
+        else:
+            dept_filter = Task.department_id.in_(scoped_dept_ids)
     
     # One query: count of tasks grouped by status, e.g. {"To Do": 5, "Done": 12}
     status_query = select(Task.status, func.count(Task.id)).group_by(Task.status)

@@ -3,13 +3,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.deps import require_permission, get_current_user, get_permission_tier
+from app.core.deps import require_permission, get_current_user, get_permission_tier, get_scoped_department_ids
 from app.core.security import hash_password
 from app.database import get_db
 from app.models.user import User
 from app.models.role import Role
 from app.models.department import Department
 from app.models.task import Task
+from app.models.category import Category
 from app.schemas.user import UserOut, UserUpdate, AssignRoleRequest, AssignDepartmentRequest, UserCreate
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -29,7 +30,10 @@ async def list_users(
     query = select(User).options(selectinload(User.role), selectinload(User.department))
     
     if view_tier == "department":
-        query = query.where(User.department_id == current_user.department_id)
+        scoped_dept_ids = get_scoped_department_ids(current_user)
+        if not scoped_dept_ids:
+            return []  # Empty scope = no users visible
+        query = query.where(User.department_id.in_(scoped_dept_ids))
     
     result = await db.execute(query)
     return result.scalars().all()
@@ -52,32 +56,39 @@ async def create_user(
 
     # Apply department-tier guardrails
     if manage_tier == "department":
-        # Force department to match current user's department
-        if current_user.department_id is None:
+        scoped_dept_ids = get_scoped_department_ids(current_user)
+        if not scoped_dept_ids:
             raise HTTPException(
                 status_code=403,
-                detail="You cannot create users because you are not assigned to a department"
+                detail="You cannot create users because your category has no departments assigned"
             )
-        final_department_id = current_user.department_id
+        final_department_id = payload.department_id if payload.department_id in scoped_dept_ids else list(scoped_dept_ids)[0]
         
-        # Validate role doesn't contain globally-scoped permissions
+        # Validate role is assignable based on category's assignable_categories
         if payload.role_id is not None:
             role_result = await db.execute(
-                select(Role).options(selectinload(Role.permissions)).where(Role.id == payload.role_id)
+                select(Role).options(selectinload(Role.category)).where(Role.id == payload.role_id)
             )
             role = role_result.scalar_one_or_none()
             if role is None:
                 raise HTTPException(status_code=404, detail="Role not found")
-            
-            globally_scoped_perms = {
-                "role:manage", "department:manage", "user:manage_all",
-                "task:view_all", "task:assign_all", "dashboard:view_all"
-            }
-            role_permissions = {p.name for p in role.permissions}
-            if globally_scoped_perms & role_permissions:
+            if role.category is None:
                 raise HTTPException(
                     status_code=403,
-                    detail="You cannot assign a role with globally-scoped permissions"
+                    detail="You cannot assign a role without a category"
+                )
+            
+            # Check if the role's category is in the current user's category's assignable list
+            if current_user.role is None or current_user.role.category is None:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You cannot assign roles because you have no category"
+                )
+            assignable_category_ids = {c.id for c in current_user.role.category.assignable_categories}
+            if role.category_id not in assignable_category_ids:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You are not allowed to assign this role"
                 )
     else:
         final_department_id = payload.department_id
@@ -119,9 +130,9 @@ async def get_me(current_user: User = Depends(get_current_user)):
 @router.get("/me/permissions", response_model=list[str])
 async def get_me_permissions(current_user: User = Depends(get_current_user)):
     """Any logged-in user can see their own permissions list."""
-    if current_user.role is None:
+    if current_user.role is None or current_user.role.category is None:
         return []
-    return [p.name for p in current_user.role.permissions]
+    return [p.name for p in current_user.role.category.permissions]
 
 
 @router.get("/{user_id}", response_model=UserOut)
@@ -144,9 +155,11 @@ async def get_user(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Department-tier users can only view users in their own department
-    if manage_tier == "department" and user.department_id != current_user.department_id:
-        raise HTTPException(status_code=404, detail="User not found")
+    # Department-tier users can only view users in their scoped departments
+    if manage_tier == "department":
+        scoped_dept_ids = get_scoped_department_ids(current_user)
+        if user.department_id not in scoped_dept_ids:
+            raise HTTPException(status_code=404, detail="User not found")
     
     return user
 
@@ -168,9 +181,11 @@ async def update_user(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Department-tier users can only edit users in their own department
-    if manage_tier == "department" and user.department_id != current_user.department_id:
-        raise HTTPException(status_code=404, detail="User not found")
+    # Department-tier users can only edit users in their scoped departments
+    if manage_tier == "department":
+        scoped_dept_ids = get_scoped_department_ids(current_user)
+        if user.department_id not in scoped_dept_ids:
+            raise HTTPException(status_code=404, detail="User not found")
 
     if payload.name is not None:
         user.name = payload.name
@@ -189,16 +204,16 @@ async def update_user(
     if payload.department_id is not None:
         # Apply department-tier guardrail
         if manage_tier == "department":
-            # Force department to match current user's department
-            if current_user.department_id is None:
+            scoped_dept_ids = get_scoped_department_ids(current_user)
+            if not scoped_dept_ids:
                 raise HTTPException(
                     status_code=403,
-                    detail="You cannot change department because you are not assigned to a department"
+                    detail="You cannot change department because your category has no departments assigned"
                 )
-            if payload.department_id != 0 and payload.department_id != current_user.department_id:
+            if payload.department_id != 0 and payload.department_id not in scoped_dept_ids:
                 raise HTTPException(
                     status_code=403,
-                    detail="You can only assign users to your own department"
+                    detail="You can only assign users to your category's departments"
                 )
         # Validate department exists if not null
         if payload.department_id != 0:  # 0 or null means unassigned
@@ -233,32 +248,39 @@ async def assign_role(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Department-tier users can only edit users in their own department
-    if manage_tier == "department" and user.department_id != current_user.department_id:
-        raise HTTPException(status_code=404, detail="User not found")
+    # Department-tier users can only edit users in their scoped departments
+    if manage_tier == "department":
+        scoped_dept_ids = get_scoped_department_ids(current_user)
+        if user.department_id not in scoped_dept_ids:
+            raise HTTPException(status_code=404, detail="User not found")
 
     if payload.role_id is None:
         user.role_id = None
     else:
         role_result = await db.execute(
-            select(Role).options(selectinload(Role.permissions)).where(Role.id == payload.role_id)
+            select(Role).options(selectinload(Role.category)).where(Role.id == payload.role_id)
         )
         role = role_result.scalar_one_or_none()
         if role is None:
             raise HTTPException(status_code=404, detail="Role not found")
+        if role.category is None:
+            raise HTTPException(
+                status_code=403,
+                detail="You cannot assign a role without a category"
+            )
         
-        # Apply department-tier guardrail - block globally-scoped permissions
-        if manage_tier == "department":
-            globally_scoped_perms = {
-                "role:manage", "department:manage", "user:manage_all",
-                "task:view_all", "task:assign_all", "dashboard:view_all"
-            }
-            role_permissions = {p.name for p in role.permissions}
-            if globally_scoped_perms & role_permissions:
-                raise HTTPException(
-                    status_code=403,
-                    detail="You cannot assign a role with globally-scoped permissions"
-                )
+        # Apply category-based guardrail - check assignable_categories
+        if current_user.role is None or current_user.role.category is None:
+            raise HTTPException(
+                status_code=403,
+                detail="You cannot assign roles because you have no category"
+            )
+        assignable_category_ids = {c.id for c in current_user.role.category.assignable_categories}
+        if role.category_id not in assignable_category_ids:
+            raise HTTPException(
+                status_code=403,
+                detail="You are not allowed to assign this role"
+            )
         
         user.role_id = role.id
 
@@ -287,9 +309,11 @@ async def delete_user(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Department-tier users can only delete users in their own department
-    if manage_tier == "department" and user.department_id != current_user.department_id:
-        raise HTTPException(status_code=404, detail="User not found")
+    # Department-tier users can only delete users in their scoped departments
+    if manage_tier == "department":
+        scoped_dept_ids = get_scoped_department_ids(current_user)
+        if user.department_id not in scoped_dept_ids:
+            raise HTTPException(status_code=404, detail="User not found")
 
     # Prevent self-deletion
     if user.id == current_user.id:
@@ -339,24 +363,27 @@ async def assign_department(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Department-tier users can only edit users in their own department
-    if manage_tier == "department" and user.department_id != current_user.department_id:
-        raise HTTPException(status_code=404, detail="User not found")
+    # Department-tier users can only edit users in their scoped departments
+    if manage_tier == "department":
+        scoped_dept_ids = get_scoped_department_ids(current_user)
+        if user.department_id not in scoped_dept_ids:
+            raise HTTPException(status_code=404, detail="User not found")
 
     if payload.department_id is None:
         user.department_id = None
     else:
         # Apply department-tier guardrail
         if manage_tier == "department":
-            if current_user.department_id is None:
+            scoped_dept_ids = get_scoped_department_ids(current_user)
+            if not scoped_dept_ids:
                 raise HTTPException(
                     status_code=403,
-                    detail="You cannot assign departments because you are not assigned to a department"
+                    detail="You cannot assign departments because your category has no departments assigned"
                 )
-            if payload.department_id != current_user.department_id:
+            if payload.department_id not in scoped_dept_ids:
                 raise HTTPException(
                     status_code=403,
-                    detail="You can only assign users to your own department"
+                    detail="You can only assign users to your category's departments"
                 )
         
         dept_result = await db.execute(select(Department).where(Department.id == payload.department_id))

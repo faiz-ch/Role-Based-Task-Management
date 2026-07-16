@@ -8,6 +8,7 @@ import {
   LogOut,
   Menu,
   Bell,
+  Layers,
 } from "lucide-react";
 import { Page } from "../types";
 import { useAuth } from "../context/AuthContext";
@@ -23,6 +24,7 @@ const NAV: {
   { id: "tasks", label: "Tasks", Icon: CheckSquare, perm: null },
   { id: "users", label: "Users", Icon: Users, perm: ["user:manage_all", "user:manage_department"] },
   { id: "roles", label: "Roles", Icon: Shield, perm: "role:manage" },
+  { id: "categories", label: "Categories", Icon: Layers, perm: "role:manage" },
   { id: "departments", label: "Departments", Icon: Building2, perm: "department:manage" },
 ];
 
