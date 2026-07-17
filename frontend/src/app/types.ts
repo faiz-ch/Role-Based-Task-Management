@@ -33,14 +33,15 @@ export interface Category {
   id: number;
   name: string;
   permissions: string[];
-  departmentIds: number[];
-  assignableCategoryIds: number[];
 }
 
 export interface Role {
   id: number;
   name: string;
   category: Category | null;
+  allDepartments: boolean;
+  departments: Department[];
+  assignableCategories: Category[];
 }
 
 export interface PermDef {

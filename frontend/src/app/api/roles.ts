@@ -6,8 +6,6 @@ function mapCategory(c: any): Category {
     id: c.id,
     name: c.name,
     permissions: Array.isArray(c.permissions) ? c.permissions.map((p: any) => p.name) : [],
-    departmentIds: Array.isArray(c.departments) ? c.departments.map((d: any) => d.id) : [],
-    assignableCategoryIds: Array.isArray(c.assignable_category_ids) ? c.assignable_category_ids : [],
   };
 }
 
@@ -16,6 +14,9 @@ function mapRole(r: any): Role {
     id: r.id,
     name: r.name,
     category: r.category ? mapCategory(r.category) : null,
+    allDepartments: r.all_departments || false,
+    departments: Array.isArray(r.departments) ? r.departments.map((d: any) => ({ id: d.id, name: d.name })) : [],
+    assignableCategories: Array.isArray(r.assignable_categories) ? r.assignable_categories.map(mapCategory) : [],
   };
 }
 
@@ -24,8 +25,14 @@ export async function getRoles(): Promise<Role[]> {
   return Array.isArray(data) ? data.map(mapRole) : [];
 }
 
-export async function createRole(name: string, categoryId: number | null): Promise<Role> {
-  const body: any = { name };
+export async function createRole(
+  name: string,
+  categoryId: number | null,
+  allDepartments: boolean,
+  departmentIds: number[],
+  assignableCategoryIds: number[]
+): Promise<Role> {
+  const body: any = { name, all_departments: allDepartments, department_ids: departmentIds, assignable_category_ids: assignableCategoryIds };
   if (categoryId !== null) body.category_id = categoryId;
   
   const data = await apiFetch("/roles", {
@@ -46,6 +53,29 @@ export async function setRoleCategory(roleId: number, categoryId: number | null)
 export async function getAllPermissions(): Promise<PermDef[]> {
   const data = await apiFetch("/roles/permissions/all");
   return Array.isArray(data) ? data : [];
+}
+
+export async function setRoleDepartments(
+  roleId: number,
+  allDepartments: boolean,
+  departmentIds: number[]
+): Promise<Role> {
+  const data = await apiFetch(`/roles/${roleId}/departments`, {
+    method: "PATCH",
+    body: JSON.stringify({ all_departments: allDepartments, department_ids: departmentIds }),
+  });
+  return mapRole(data);
+}
+
+export async function setRoleAssignableCategories(
+  roleId: number,
+  assignableCategoryIds: number[]
+): Promise<Role> {
+  const data = await apiFetch(`/roles/${roleId}/assignable-categories`, {
+    method: "PATCH",
+    body: JSON.stringify({ assignable_category_ids: assignableCategoryIds }),
+  });
+  return mapRole(data);
 }
 
 export async function deleteRole(roleId: number): Promise<void> {

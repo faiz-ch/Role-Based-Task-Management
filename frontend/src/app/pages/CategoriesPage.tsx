@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { Plus, CheckCircle2, AlertTriangle, Trash2 } from "lucide-react";
-import { Category, PermDef, Department } from "../types";
+import { Category, PermDef } from "../types";
 import { getCategories, createCategory, updateCategory, deleteCategory } from "../api/categories";
 import { getAllPermissions } from "../api/roles";
-import { getDepartments } from "../api/departments";
 import { Dlg } from "../components/Dlg";
 import { FldInput } from "../components/FldInput";
 
@@ -13,35 +12,21 @@ const PERM_DESCRIPTIONS: Record<string, string> = {
   "task:edit": "Edit task details",
   "task:delete": "Delete tasks",
   "task:review": "Review and approve/reject tasks",
-  "task:view_all": "View all tasks across the system",
-  "task:view_department": "View tasks in your department",
-  "task:assign_all": "Assign tasks to any user",
-  "task:assign_department": "Assign tasks within your department",
+  "task:view": "View tasks",
+  "task:assign": "Assign tasks to users",
   // User permissions
-  "user:view_all": "View all users in the system",
-  "user:view_department": "View users in your department",
-  "user:manage_all": "Manage all users and their settings",
-  "user:manage_department": "Manage users within your department",
+  "user:view": "View users",
+  "user:manage": "Manage users and their settings",
   // Role & Department permissions
   "role:manage": "Create and configure roles",
   "department:manage": "Manage departments",
   // Dashboard permissions
-  "dashboard:view_all": "View dashboard for all tasks",
-  "dashboard:view_department": "View dashboard for your department",
+  "dashboard:view": "View dashboard",
 };
-
-const DEPARTMENT_SCOPED_PERMISSIONS = new Set([
-  "task:view_department",
-  "task:assign_department",
-  "user:view_department",
-  "user:manage_department",
-  "dashboard:view_department",
-]);
 
 export function CategoriesPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [allPermissions, setAllPermissions] = useState<PermDef[]>([]);
-  const [departments, setDepartments] = useState<Department[]>([]);
   const [selectedId, setSelectedId] = useState<number | "">("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -54,14 +39,12 @@ export function CategoriesPage() {
       try {
         setLoading(true);
         setError(null);
-        const [fetchedCategories, fetchedPerms, fetchedDepartments] = await Promise.all([
+        const [fetchedCategories, fetchedPerms] = await Promise.all([
           getCategories(),
           getAllPermissions(),
-          getDepartments(),
         ]);
         setCategories(fetchedCategories);
         setAllPermissions(fetchedPerms);
-        setDepartments(fetchedDepartments);
         if (fetchedCategories.length > 0) {
           setSelectedId(fetchedCategories[0].id);
         }
@@ -95,9 +78,7 @@ export function CategoriesPage() {
       const updatedCategory = await updateCategory(
         selected.id,
         null,
-        permIds,
-        null,
-        null
+        permIds
       );
       setCategories((prev) =>
         prev.map((c) => (c.id === selected.id ? updatedCategory : c))
@@ -107,59 +88,12 @@ export function CategoriesPage() {
     }
   }
 
-  async function toggleDepartment(deptId: number) {
-    if (!selected) return;
-    try {
-      setError(null);
-      const has = selected.departmentIds.includes(deptId);
-      const newDeptIds = has
-        ? selected.departmentIds.filter((id) => id !== deptId)
-        : [...selected.departmentIds, deptId];
-      
-      const updatedCategory = await updateCategory(
-        selected.id,
-        null,
-        null,
-        newDeptIds,
-        null
-      );
-      setCategories((prev) =>
-        prev.map((c) => (c.id === selected.id ? updatedCategory : c))
-      );
-    } catch (err: any) {
-      setError(err?.message || "Failed to update departments.");
-    }
-  }
-
-  async function toggleAssignableCategory(catId: number) {
-    if (!selected) return;
-    try {
-      setError(null);
-      const has = selected.assignableCategoryIds.includes(catId);
-      const newAssignableIds = has
-        ? selected.assignableCategoryIds.filter((id) => id !== catId)
-        : [...selected.assignableCategoryIds, catId];
-      
-      const updatedCategory = await updateCategory(
-        selected.id,
-        null,
-        null,
-        null,
-        newAssignableIds
-      );
-      setCategories((prev) =>
-        prev.map((c) => (c.id === selected.id ? updatedCategory : c))
-      );
-    } catch (err: any) {
-      setError(err?.message || "Failed to update assignable categories.");
-    }
-  }
 
   async function handleCreateCategory() {
     if (!newName.trim()) return;
     try {
       setError(null);
-      const nc = await createCategory(newName.trim(), [], [], []);
+      const nc = await createCategory(newName.trim(), []);
       setCategories((prev) => [...prev, nc]);
       setSelectedId(nc.id);
       setNewName("");
@@ -182,9 +116,6 @@ export function CategoriesPage() {
     }
   }
 
-  const hasDepartmentScopedPerms = selected?.permissions.some((p) =>
-    DEPARTMENT_SCOPED_PERMISSIONS.has(p)
-  );
 
   if (loading) {
     return (
@@ -307,77 +238,6 @@ export function CategoriesPage() {
                   </div>
                 </div>
                 
-                {/* Departments - only show if has department-scoped permissions */}
-                {hasDepartmentScopedPerms && (
-                  <div>
-                    <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Departments</h4>
-                    <div className="space-y-2">
-                      {departments.map((dept) => {
-                        const on = selected.departmentIds.includes(dept.id);
-                        return (
-                          <label
-                            key={dept.id}
-                            className={`flex items-center gap-3.5 p-3.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
-                              on ? "border-blue-200 bg-blue-50" : "border-border hover:bg-muted/30"
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={on}
-                              onChange={() => toggleDepartment(dept.id)}
-                              className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
-                            />
-                            <div className="flex-1 min-w-0">
-                              <p
-                                className={`text-sm font-semibold ${
-                                  on ? "text-blue-700" : "text-foreground"
-                                }`}
-                              >
-                                {dept.name}
-                              </p>
-                            </div>
-                            {on && <CheckCircle2 size={15} className="text-blue-500 flex-shrink-0" />}
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-                
-                {/* Can Assign */}
-                <div>
-                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Can Assign (when creating/editing users)</h4>
-                  <div className="space-y-2">
-                    {categories.map((cat) => {
-                      const on = selected.assignableCategoryIds.includes(cat.id);
-                      return (
-                        <label
-                          key={cat.id}
-                          className={`flex items-center gap-3.5 p-3.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
-                            on ? "border-blue-200 bg-blue-50" : "border-border hover:bg-muted/30"
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={on}
-                            onChange={() => toggleAssignableCategory(cat.id)}
-                            className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p
-                              className={`text-sm font-semibold ${
-                                on ? "text-blue-700" : "text-foreground"
-                              }`}
-                            >
-                              {cat.name} {cat.id === selected.id && "(self)"}
-                            </p>
-                          </div>
-                          {on && <CheckCircle2 size={15} className="text-blue-500 flex-shrink-0" />}
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
               </div>
             </>
           ) : (
@@ -399,7 +259,7 @@ export function CategoriesPage() {
               autoFocus
             />
             <p className="text-xs text-muted-foreground leading-relaxed">
-              The new category starts with no permissions or departments. Select it after creation to configure what it can do and which departments it can access.
+              The new category starts with no permissions. Select it after creation to configure what it can do.
             </p>
             <div className="flex justify-end gap-2 pt-2">
               <button

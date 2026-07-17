@@ -20,9 +20,9 @@ const NAV: {
   Icon: React.ElementType;
   perm: string | string[] | null;
 }[] = [
-  { id: "dashboard", label: "Dashboard", Icon: LayoutDashboard, perm: ["dashboard:view_all", "dashboard:view_department"] },
+  { id: "dashboard", label: "Dashboard", Icon: LayoutDashboard, perm: "dashboard:view" },
   { id: "tasks", label: "Tasks", Icon: CheckSquare, perm: null },
-  { id: "users", label: "Users", Icon: Users, perm: ["user:manage_all", "user:manage_department"] },
+  { id: "users", label: "Users", Icon: Users, perm: "user:manage" },
   { id: "roles", label: "Roles", Icon: Shield, perm: "role:manage" },
   { id: "categories", label: "Categories", Icon: Layers, perm: "role:manage" },
   { id: "departments", label: "Departments", Icon: Building2, perm: "department:manage" },
