@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import require_permission, get_current_user, get_permission_tier, get_scoped_department_ids
+from app.core.deps import require_permission, get_current_user, has_permission, get_scoped_department_ids
 from app.database import get_db
 from app.models.task import Task, TaskStatus
 from app.models.user import User
@@ -17,15 +17,13 @@ async def get_summary(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    view_tier = get_permission_tier(current_user, "dashboard:view_all", "dashboard:view_department")
-    
-    if view_tier == "none":
+    if not has_permission(current_user, "dashboard:view"):
         raise HTTPException(status_code=403, detail="You do not have permission to view the dashboard")
     
-    # Apply department filter for department-tier users
+    # Apply department filter for users with specific departments
     dept_filter = None
-    if view_tier == "department":
-        scoped_dept_ids = get_scoped_department_ids(current_user)
+    scoped_dept_ids = get_scoped_department_ids(current_user)
+    if scoped_dept_ids is not None:
         if not scoped_dept_ids:
             dept_filter = Task.department_id == -1  # No departments = no results
         else:

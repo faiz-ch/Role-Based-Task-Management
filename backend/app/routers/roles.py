@@ -20,9 +20,9 @@ async def list_roles(
 ):
     result = await db.execute(
         select(Role).options(
-            selectinload(Role.category)
-            .selectinload(Category.permissions)
-            .selectinload(Category.departments)
+            selectinload(Role.category).selectinload(Category.permissions),
+            selectinload(Role.departments),
+            selectinload(Role.assignable_categories)
         )
     )
     return result.scalars().all()
@@ -38,16 +38,34 @@ async def create_role(
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=400, detail="Role name already exists")
 
-    role = Role(name=payload.name, category_id=payload.category_id)
+    role = Role(
+        name=payload.name, 
+        category_id=payload.category_id,
+        all_departments=payload.all_departments
+    )
     db.add(role)
     await db.commit()
     await db.refresh(role)
+    
+    # Handle departments if provided
+    if payload.department_ids:
+        from app.models.role import role_department
+        for dept_id in payload.department_ids:
+            db.execute(role_department.insert().values(role_id=role.id, department_id=dept_id))
+    
+    # Handle assignable categories if provided
+    if payload.assignable_category_ids:
+        from app.models.role import role_assignable_category
+        for cat_id in payload.assignable_category_ids:
+            db.execute(role_assignable_category.insert().values(role_id=role.id, category_id=cat_id))
+    
+    await db.commit()
     # Re-fetch with category loaded
     result = await db.execute(
         select(Role).options(
-            selectinload(Role.category)
-            .selectinload(Category.permissions)
-            .selectinload(Category.departments)
+            selectinload(Role.category).selectinload(Category.permissions),
+            selectinload(Role.departments),
+            selectinload(Role.assignable_categories)
         ).where(Role.id == role.id)
     )
     return result.scalar_one()
@@ -62,9 +80,9 @@ async def set_role_category(
 ):
     result = await db.execute(
         select(Role).options(
-            selectinload(Role.category)
-            .selectinload(Category.permissions)
-            .selectinload(Category.departments)
+            selectinload(Role.category).selectinload(Category.permissions),
+            selectinload(Role.departments),
+            selectinload(Role.assignable_categories)
         ).where(Role.id == role_id)
     )
     role = result.scalar_one_or_none()
@@ -83,9 +101,92 @@ async def set_role_category(
     # Re-fetch to ensure category is loaded for response serialization
     result = await db.execute(
         select(Role).options(
-            selectinload(Role.category)
-            .selectinload(Category.permissions)
-            .selectinload(Category.departments)
+            selectinload(Role.category).selectinload(Category.permissions),
+            selectinload(Role.departments),
+            selectinload(Role.assignable_categories)
+        ).where(Role.id == role_id)
+    )
+    return result.scalar_one()
+
+
+@router.patch("/{role_id}/departments", response_model=RoleOut)
+async def set_role_departments(
+    role_id: int,
+    payload: dict,  # {"department_ids": list[int], "all_departments": bool}
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_permission("role:manage")),
+):
+    result = await db.execute(
+        select(Role).options(
+            selectinload(Role.category).selectinload(Category.permissions),
+            selectinload(Role.departments),
+            selectinload(Role.assignable_categories)
+        ).where(Role.id == role_id)
+    )
+    role = result.scalar_one_or_none()
+    if role is None:
+        raise HTTPException(status_code=404, detail="Role not found")
+
+    from app.models.role import role_department
+    
+    # Update all_departments flag
+    role.all_departments = payload.get("all_departments", False)
+    
+    # Clear existing department associations
+    await db.execute(role_department.delete().where(role_department.c.role_id == role_id))
+    
+    # Add new department associations if not all_departments
+    if not role.all_departments and payload.get("department_ids"):
+        for dept_id in payload["department_ids"]:
+            await db.execute(role_department.insert().values(role_id=role_id, department_id=dept_id))
+
+    await db.commit()
+    # Re-fetch to ensure relationships are loaded
+    result = await db.execute(
+        select(Role).options(
+            selectinload(Role.category).selectinload(Category.permissions),
+            selectinload(Role.departments),
+            selectinload(Role.assignable_categories)
+        ).where(Role.id == role_id)
+    )
+    return result.scalar_one()
+
+
+@router.patch("/{role_id}/assignable-categories", response_model=RoleOut)
+async def set_role_assignable_categories(
+    role_id: int,
+    payload: dict,  # {"assignable_category_ids": list[int]}
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_permission("role:manage")),
+):
+    result = await db.execute(
+        select(Role).options(
+            selectinload(Role.category).selectinload(Category.permissions),
+            selectinload(Role.departments),
+            selectinload(Role.assignable_categories)
+        ).where(Role.id == role_id)
+    )
+    role = result.scalar_one_or_none()
+    if role is None:
+        raise HTTPException(status_code=404, detail="Role not found")
+
+    from app.models.role import role_assignable_category
+    
+    # Clear existing assignable category associations
+    await db.execute(role_assignable_category.delete().where(role_assignable_category.c.role_id == role_id))
+    
+    # Add new assignable category associations
+    if payload.get("assignable_category_ids"):
+        for cat_id in payload["assignable_category_ids"]:
+            await db.execute(role_assignable_category.insert().values(role_id=role_id, category_id=cat_id))
+
+    await db.commit()
+    # Re-fetch to ensure relationships are loaded
+    result = await db.execute(
+        select(Role).options(
+            selectinload(Role.category).selectinload(Category.permissions),
+            selectinload(Role.departments),
+            selectinload(Role.assignable_categories)
         ).where(Role.id == role_id)
     )
     return result.scalar_one()

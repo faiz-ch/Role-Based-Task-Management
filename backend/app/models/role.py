@@ -1,13 +1,27 @@
 """
 Role and Permission models.
 
-Role now inherits permissions from its Category. The role_permission join table
-has been removed in favor of the category-based permission system.
+Role inherits permissions from its Category and has its own department scope
+and assignable categories.
 """
-from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, Table, false
 from sqlalchemy.orm import relationship
 
 from app.database import Base
+
+role_department = Table(
+    "role_department",
+    Base.metadata,
+    Column("role_id", Integer, ForeignKey("roles.id"), primary_key=True),
+    Column("department_id", ForeignKey("departments.id"), primary_key=True),
+)
+
+role_assignable_category = Table(
+    "role_assignable_category",
+    Base.metadata,
+    Column("role_id", Integer, ForeignKey("roles.id"), primary_key=True),
+    Column("category_id", Integer, ForeignKey("categories.id"), primary_key=True),
+)
 
 
 class Role(Base):
@@ -16,8 +30,11 @@ class Role(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, nullable=False)  # e.g. "Team Lead" — custom, admin-created
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
+    all_departments = Column(Boolean, nullable=False, default=False, server_default=false())
 
     category = relationship("Category", back_populates="roles")
+    departments = relationship("Department", secondary=role_department)
+    assignable_categories = relationship("Category", secondary=role_assignable_category)
     users = relationship("User", back_populates="role")
 
 

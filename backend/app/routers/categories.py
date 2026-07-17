@@ -7,9 +7,8 @@ from app.core.deps import require_permission, get_current_user
 from app.database import get_db
 from app.models.category import Category
 from app.models.role import Role
-from app.models.department import Department
 from app.models.user import User
-from app.schemas.category import CategoryCreate, CategoryUpdate, CategoryOut, PermissionOut, DepartmentOut
+from app.schemas.category import CategoryCreate, CategoryUpdate, CategoryOut, PermissionOut
 
 router = APIRouter(prefix="/categories", tags=["categories"])
 
@@ -21,9 +20,7 @@ async def list_categories(
 ):
     result = await db.execute(
         select(Category).options(
-            selectinload(Category.permissions),
-            selectinload(Category.departments),
-            selectinload(Category.assignable_categories)
+            selectinload(Category.permissions)
         )
     )
     return result.scalars().all()
@@ -53,29 +50,11 @@ async def create_category(
         permissions = perms_result.scalars().all()
         category.permissions = permissions
 
-    # Set departments
-    if payload.department_ids:
-        depts_result = await db.execute(
-            select(Department).where(Department.id.in_(payload.department_ids))
-        )
-        departments = depts_result.scalars().all()
-        category.departments = departments
-
-    # Set assignable categories
-    if payload.assignable_category_ids:
-        cats_result = await db.execute(
-            select(Category).where(Category.id.in_(payload.assignable_category_ids))
-        )
-        assignable_categories = cats_result.scalars().all()
-        category.assignable_categories = assignable_categories
-
     await db.commit()
     # Re-fetch with all relationships loaded
     result = await db.execute(
         select(Category).options(
-            selectinload(Category.permissions),
-            selectinload(Category.departments),
-            selectinload(Category.assignable_categories)
+            selectinload(Category.permissions)
         ).where(Category.id == category.id)
     )
     return result.scalar_one()
@@ -90,9 +69,7 @@ async def update_category(
 ):
     result = await db.execute(
         select(Category).options(
-            selectinload(Category.permissions),
-            selectinload(Category.departments),
-            selectinload(Category.assignable_categories)
+            selectinload(Category.permissions)
         ).where(Category.id == category_id)
     )
     category = result.scalar_one_or_none()
@@ -110,27 +87,11 @@ async def update_category(
         permissions = perms_result.scalars().all()
         category.permissions = permissions
 
-    if payload.department_ids is not None:
-        depts_result = await db.execute(
-            select(Department).where(Department.id.in_(payload.department_ids))
-        )
-        departments = depts_result.scalars().all()
-        category.departments = departments
-
-    if payload.assignable_category_ids is not None:
-        cats_result = await db.execute(
-            select(Category).where(Category.id.in_(payload.assignable_category_ids))
-        )
-        assignable_categories = cats_result.scalars().all()
-        category.assignable_categories = assignable_categories
-
     await db.commit()
     # Re-fetch to ensure relationships are loaded for response serialization
     result = await db.execute(
         select(Category).options(
-            selectinload(Category.permissions),
-            selectinload(Category.departments),
-            selectinload(Category.assignable_categories)
+            selectinload(Category.permissions)
         ).where(Category.id == category_id)
     )
     return result.scalar_one()

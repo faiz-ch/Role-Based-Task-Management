@@ -44,17 +44,15 @@ async def get_current_user(
     if user_id is None:
         raise credentials_error
 
-    # selectinload(User.role).selectinload(Role.category).selectinload(Category.permissions)
-    # pre-loads the user's role, its category, and the category's permissions in the same query,
-    # so require_permission below doesn't need extra DB round-trips.
+    # Eager load all relationships needed for permission checks and scoping.
+    # Separate selectinload branches from shared parent to avoid chaining issues.
     from app.models.category import Category
     result = await db.execute(
         select(User)
         .options(
-            selectinload(User.role)
-            .selectinload(Role.category)
-            .selectinload(Category.permissions)
-            .selectinload(Category.departments),
+            selectinload(User.role).selectinload(Role.category).selectinload(Category.permissions),
+            selectinload(User.role).selectinload(Role.departments),
+            selectinload(User.role).selectinload(Role.assignable_categories),
             selectinload(User.department),
         )
         .where(User.id == int(user_id))
@@ -89,28 +87,21 @@ def require_permission(permission_name: str):
     return checker
 
 
-def get_permission_tier(current_user: User, all_perm: str, department_perm: str) -> str:
-    """
-    Returns 'all', 'department', or 'none' based on which of the two scoped
-    permissions the user's role's category has. Used for task view/assign, user view/manage,
-    and dashboard scoping — anywhere we have an all/department permission pair.
-    """
-    if current_user.role is None or current_user.role.category is None:
-        return "none"
-    
-    user_permissions = {p.name for p in current_user.role.category.permissions}
-    
-    if all_perm in user_permissions:
-        return "all"
-    if department_perm in user_permissions:
-        return "department"
-    return "none"
+def has_permission(user: User, permission_name: str) -> bool:
+    """Check if a user has a specific permission."""
+    if user.role is None or user.role.category is None:
+        return False
+    return any(p.name == permission_name for p in user.role.category.permissions)
 
 
-def get_scoped_department_ids(current_user: User) -> set[int]:
-    """Returns the set of department IDs the user's Category is scoped to,
-    for use in all five department-scoped permission checks. Empty set if
-    the user has no role/category or the category has no departments attached."""
-    if current_user.role is None or current_user.role.category is None:
+def get_scoped_department_ids(user: User) -> set[int] | None:
+    """
+    Returns None if the role has global (all_departments=True) scope —
+    caller should skip department filtering entirely in that case.
+    Returns a (possibly empty) set of department ids otherwise.
+    """
+    if user.role is None:
         return set()
-    return {d.id for d in current_user.role.category.departments}
+    if user.role.all_departments:
+        return None
+    return {d.id for d in user.role.departments}

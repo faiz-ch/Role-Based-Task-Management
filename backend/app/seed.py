@@ -18,21 +18,16 @@ PERMISSIONS = [
     "task:edit",
     "task:delete",
     "task:review",
-    "task:view_all",
-    "task:view_department",
-    "task:assign_all",
-    "task:assign_department",
+    "task:view",
+    "task:assign",
     # User permissions
-    "user:view_all",
-    "user:view_department",
-    "user:manage_all",
-    "user:manage_department",
+    "user:view",
+    "user:manage",
     # Role & Department permissions
     "role:manage",
     "department:manage",
     # Dashboard permissions
-    "dashboard:view_all",
-    "dashboard:view_department",
+    "dashboard:view",
 ]
 
 

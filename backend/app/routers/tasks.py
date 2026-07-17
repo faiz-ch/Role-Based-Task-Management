@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import require_permission, get_current_user, get_permission_tier, get_scoped_department_ids
+from app.core.deps import require_permission, get_current_user, has_permission, get_scoped_department_ids
 from app.database import get_db
 from app.models.task import Task, TaskStatus
 from app.models.user import User
@@ -22,15 +22,16 @@ def _is_task_in_scope(task: Task, current_user: User) -> bool:
     Check if a task is within the current user's view scope.
     Used by task:edit, task:delete, and task:review to inherit view scope.
     """
-    view_tier = get_permission_tier(current_user, "task:view_all", "task:view_department")
+    if not has_permission(current_user, "task:view"):
+        # No view permission - only see own tasks
+        return task.assigned_to == current_user.id
     
-    if view_tier == "all":
+    scoped_dept_ids = get_scoped_department_ids(current_user)
+    if scoped_dept_ids is None:
+        # Global scope - can see all tasks
         return True
-    if view_tier == "department":
-        scoped_dept_ids = get_scoped_department_ids(current_user)
-        return task.department_id in scoped_dept_ids
-    # 'none' tier - only see own tasks
-    return task.assigned_to == current_user.id
+    # Department scope - check if task is in scoped departments
+    return task.department_id in scoped_dept_ids
 
 
 @router.get("", response_model=list[TaskOut])
@@ -42,31 +43,30 @@ async def list_tasks(
 ):
     """
     Any logged-in user can list tasks (no special permission needed to VIEW),
-    but WHICH tasks they see depends on their view scope tier:
+    but WHICH tasks they see depends on their view scope:
 
-      - task:view_all -> sees all tasks
-      - task:view_department -> sees only tasks in their department
-      - neither -> sees only tasks assigned to them
+      - task:view permission + all_departments=True -> sees all tasks
+      - task:view permission + specific departments -> sees only tasks in those departments
+      - no task:view permission -> sees only tasks assigned to them
     """
     query = select(Task)
     if status is not None:
         query = query.where(Task.status == status)
 
-    view_tier = get_permission_tier(current_user, "task:view_all", "task:view_department")
-    
-    if view_tier == "all":
-        # No filter - sees everything
-        if assigned_to is not None:
-            query = query.where(Task.assigned_to == assigned_to)
-    elif view_tier == "department":
-        # Filter by department
-        scoped_dept_ids = get_scoped_department_ids(current_user)
-        if not scoped_dept_ids:
-            return []  # Empty scope = no tasks visible
-        query = query.where(Task.department_id.in_(scoped_dept_ids))
-    else:
-        # 'none' tier - only see own tasks
+    if not has_permission(current_user, "task:view"):
+        # No view permission - only see own tasks
         query = query.where(Task.assigned_to == current_user.id)
+    else:
+        scoped_dept_ids = get_scoped_department_ids(current_user)
+        if scoped_dept_ids is None:
+            # Global scope - sees everything
+            if assigned_to is not None:
+                query = query.where(Task.assigned_to == assigned_to)
+        else:
+            # Department scope
+            if not scoped_dept_ids:
+                return []  # Empty scope = no tasks visible
+            query = query.where(Task.department_id.in_(scoped_dept_ids))
 
     result = await db.execute(query)
     return result.scalars().all()
@@ -78,38 +78,36 @@ async def create_task(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission("task:create")),
 ):
-    # Determine assign scope tier
-    assign_tier = get_permission_tier(current_user, "task:assign_all", "task:assign_department")
-    
     # Resolve assignee based on permissions
-    if assign_tier == "all":
-        # Can assign to anyone - validate user exists
-        assignee_result = await db.execute(select(User).where(User.id == payload.assigned_to))
-        assignee = assignee_result.scalar_one_or_none()
-        if assignee is None:
-            raise HTTPException(status_code=404, detail="Assignee user not found")
-        final_assignee_id = assignee.id
-    elif assign_tier == "department":
-        # Can only assign to users in scoped departments
-        scoped_dept_ids = get_scoped_department_ids(current_user)
-        if not scoped_dept_ids:
-            raise HTTPException(
-                status_code=403,
-                detail="You cannot assign tasks because your category has no departments assigned"
-            )
-        assignee_result = await db.execute(select(User).where(User.id == payload.assigned_to))
-        assignee = assignee_result.scalar_one_or_none()
-        if assignee is None:
-            raise HTTPException(status_code=404, detail="Assignee user not found")
-        if assignee.department_id not in scoped_dept_ids:
-            raise HTTPException(
-                status_code=403,
-                detail="You can only assign tasks within your category's departments"
-            )
-        final_assignee_id = assignee.id
-    else:
-        # 'none' tier - auto-assign to self
+    if not has_permission(current_user, "task:assign"):
+        # No assign permission - auto-assign to self
         final_assignee_id = current_user.id
+    else:
+        scoped_dept_ids = get_scoped_department_ids(current_user)
+        if scoped_dept_ids is None:
+            # Global assign scope - can assign to anyone
+            assignee_result = await db.execute(select(User).where(User.id == payload.assigned_to))
+            assignee = assignee_result.scalar_one_or_none()
+            if assignee is None:
+                raise HTTPException(status_code=404, detail="Assignee user not found")
+            final_assignee_id = assignee.id
+        else:
+            # Department assign scope - can only assign to users in scoped departments
+            if not scoped_dept_ids:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You cannot assign tasks because your role has no departments assigned"
+                )
+            assignee_result = await db.execute(select(User).where(User.id == payload.assigned_to))
+            assignee = assignee_result.scalar_one_or_none()
+            if assignee is None:
+                raise HTTPException(status_code=404, detail="Assignee user not found")
+            if assignee.department_id not in scoped_dept_ids:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You can only assign tasks within your role's departments"
+                )
+            final_assignee_id = assignee.id
     
     # Fetch assignee to get department_id
     assignee_result = await db.execute(select(User).where(User.id == final_assignee_id))
@@ -181,16 +179,8 @@ async def update_task_status(
     """
     task = await _get_task_or_404(db, task_id)
 
-    has_edit_permission = (
-        current_user.role is not None
-        and current_user.role.category is not None
-        and any(p.name == "task:edit" for p in current_user.role.category.permissions)
-    )
-    has_review_permission = (
-        current_user.role is not None
-        and current_user.role.category is not None
-        and any(p.name == "task:review" for p in current_user.role.category.permissions)
-    )
+    has_edit_permission = has_permission(current_user, "task:edit")
+    has_review_permission = has_permission(current_user, "task:review")
     is_assignee = task.assigned_to == current_user.id
 
     if not has_edit_permission:
@@ -236,9 +226,8 @@ async def assign_task(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Check assign permissions using tier system
-    assign_tier = get_permission_tier(current_user, "task:assign_all", "task:assign_department")
-    if assign_tier == "none":
+    # Check assign permissions
+    if not has_permission(current_user, "task:assign"):
         raise HTTPException(
             status_code=403,
             detail="You do not have permission to assign tasks"
@@ -257,18 +246,18 @@ async def assign_task(
     if assignee is None:
         raise HTTPException(status_code=404, detail="Assignee user not found")
     
-    # Validate department scope for department-tier users
-    if assign_tier == "department":
-        scoped_dept_ids = get_scoped_department_ids(current_user)
+    # Validate department scope for users with specific departments
+    scoped_dept_ids = get_scoped_department_ids(current_user)
+    if scoped_dept_ids is not None:
         if not scoped_dept_ids:
             raise HTTPException(
                 status_code=403,
-                detail="You cannot assign tasks because your category has no departments assigned"
+                detail="You cannot assign tasks because your role has no departments assigned"
             )
         if assignee.department_id not in scoped_dept_ids:
             raise HTTPException(
                 status_code=403,
-                detail="You can only assign tasks within your category's departments"
+                detail="You can only assign tasks within your role's departments"
             )
     
     task.assigned_to = assignee.id

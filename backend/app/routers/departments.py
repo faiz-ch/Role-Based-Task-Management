@@ -7,6 +7,7 @@ from app.database import get_db
 from app.models.department import Department
 from app.models.user import User
 from app.models.task import Task
+from app.models.role import role_department
 from app.schemas.department import DepartmentCreate, DepartmentOut
 
 router = APIRouter(prefix="/departments", tags=["departments"])
@@ -67,6 +68,9 @@ async def delete_department(
     tasks = tasks_result.scalars().all()
     for task in tasks:
         task.department_id = None
+
+    # Clear role_department associations for this department
+    await db.execute(role_department.delete().where(role_department.c.department_id == department_id))
 
     await db.delete(department)
     await db.commit()
