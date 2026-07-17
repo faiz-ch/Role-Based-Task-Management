@@ -1,5 +1,24 @@
 import { apiFetch } from "./client";
-import { UserType } from "../types";
+import { UserType, Role, Category } from "../types";
+
+function mapCategory(c: any): Category {
+  return {
+    id: c.id,
+    name: c.name,
+    permissions: Array.isArray(c.permissions) ? c.permissions.map((p: any) => p.name) : [],
+  };
+}
+
+function mapRole(r: any): Role {
+  return {
+    id: r.id,
+    name: r.name,
+    category: r.category ? mapCategory(r.category) : null,
+    allDepartments: r.all_departments || false,
+    departments: Array.isArray(r.departments) ? r.departments.map((d: any) => ({ id: d.id, name: d.name })) : [],
+    assignableCategories: Array.isArray(r.assignable_categories) ? r.assignable_categories.map(mapCategory) : [],
+  };
+}
 
 function mapUser(u: any): UserType {
   return {
@@ -7,7 +26,7 @@ function mapUser(u: any): UserType {
     name: u.name,
     email: u.email,
     active: u.is_active,
-    role: u.role ? { id: u.role.id, name: u.role.name } : null,
+    role: u.role ? mapRole(u.role) : null,
     department: u.department ? { id: u.department.id, name: u.department.name } : null,
   };
 }

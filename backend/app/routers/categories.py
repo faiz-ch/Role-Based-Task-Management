@@ -114,5 +114,16 @@ async def delete_category(
     for role in roles:
         role.category_id = None
 
+    # Clear any role_assignable_category rows referencing this category
+    # (a role can list this category in its "can assign" list even if this
+    # isn't the role's own category) — otherwise the delete below violates
+    # the foreign key on role_assignable_category.category_id.
+    from app.models.role import role_assignable_category
+    await db.execute(
+        role_assignable_category.delete().where(
+            role_assignable_category.c.category_id == category_id
+        )
+    )
+
     await db.delete(category)
     await db.commit()

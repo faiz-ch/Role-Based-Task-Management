@@ -19,7 +19,7 @@ function AppContent() {
   // Sync page routing on login/logout
   useEffect(() => {
     if (currentUser) {
-      setPage((permissions.includes("dashboard:view_all") || permissions.includes("dashboard:view_department")) ? "dashboard" : "tasks");
+      setPage(permissions.includes("dashboard:view") ? "dashboard" : "tasks");
     } else {
       setPage("login");
     }
@@ -41,11 +41,11 @@ function AppContent() {
         <NoRoleView />
       ) : (
         <>
-          {page === "dashboard" && (permissions.includes("dashboard:view_all") || permissions.includes("dashboard:view_department")) && (
+          {page === "dashboard" && permissions.includes("dashboard:view") && (
             <DashboardPage />
           )}
           {page === "tasks" && <TasksPage />}
-          {page === "users" && (permissions.includes("user:manage_all") || permissions.includes("user:manage_department")) && (
+          {page === "users" && permissions.includes("user:manage") && (
             <UsersPage />
           )}
           {page === "roles" && permissions.includes("role:manage") && (

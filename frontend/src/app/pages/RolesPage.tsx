@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Plus, AlertTriangle, Trash2, CheckCircle2 } from "lucide-react";
 import { Role, Category, Department } from "../types";
 import { getRoles, createRole, setRoleCategory, deleteRole, setRoleDepartments, setRoleAssignableCategories } from "../api/roles";
@@ -15,6 +15,72 @@ const DEPARTMENT_SCOPED_PERMISSIONS = new Set([
   "dashboard:view",
 ]);
 
+const SAVE_DEBOUNCE_MS = 500;
+
+// A plain checklist with a "Select All" row at the top. Used for both the
+// department scope and the assignable-categories sections, since both are
+// really "which of these things apply" pickers.
+function SelectAllChecklist<T extends { id: number; name: string }>({
+  items,
+  selectedIds,
+  onToggleAll,
+  onToggleOne,
+}: {
+  items: T[];
+  selectedIds: number[];
+  onToggleAll: (selectAll: boolean) => void;
+  onToggleOne: (id: number) => void;
+}) {
+  const allSelected = items.length > 0 && selectedIds.length === items.length;
+
+  return (
+    <div className="space-y-2">
+      <label
+        className={`flex items-center gap-3.5 p-3.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
+          allSelected ? "border-blue-200 bg-blue-50" : "border-border hover:bg-muted/30"
+        }`}
+      >
+        <input
+          type="checkbox"
+          checked={allSelected}
+          onChange={() => onToggleAll(!allSelected)}
+          className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
+        />
+        <div className="flex-1 min-w-0">
+          <p className={`text-sm font-semibold ${allSelected ? "text-blue-700" : "text-foreground"}`}>
+            Select All
+          </p>
+        </div>
+        {allSelected && <CheckCircle2 size={15} className="text-blue-500 flex-shrink-0" />}
+      </label>
+      {items.map((item) => {
+        const on = selectedIds.includes(item.id);
+        return (
+          <label
+            key={item.id}
+            className={`flex items-center gap-3.5 p-3.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
+              on ? "border-blue-200 bg-blue-50" : "border-border hover:bg-muted/30"
+            }`}
+          >
+            <input
+              type="checkbox"
+              checked={on}
+              onChange={() => onToggleOne(item.id)}
+              className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
+            />
+            <div className="flex-1 min-w-0">
+              <p className={`text-sm font-semibold ${on ? "text-blue-700" : "text-foreground"}`}>
+                {item.name}
+              </p>
+            </div>
+            {on && <CheckCircle2 size={15} className="text-blue-500 flex-shrink-0" />}
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
 export function RolesPage() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -29,6 +95,19 @@ export function RolesPage() {
   const [newAllDepartments, setNewAllDepartments] = useState(false);
   const [newDepartmentIds, setNewDepartmentIds] = useState<number[]>([]);
   const [newAssignableCategoryIds, setNewAssignableCategoryIds] = useState<number[]>([]);
+
+  // Local drafts for the selected role's editable sections. These update
+  // instantly on click (no waiting on the network), and are the single
+  // source of truth for what's checked — the actual save is debounced and
+  // never derives its payload from a possibly-stale server response, which
+  // is what caused the "click twice, other box unchecks" race before.
+  const [deptDraft, setDeptDraft] = useState<{ allDepartments: boolean; departmentIds: number[] }>({
+    allDepartments: false,
+    departmentIds: [],
+  });
+  const [assignableDraft, setAssignableDraft] = useState<number[]>([]);
+  const deptSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const assignableSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     async function loadData() {
@@ -56,11 +135,26 @@ export function RolesPage() {
   }, []);
 
   const selected = roles.find((r) => r.id === selectedId);
-  
+
+  // Re-sync the drafts whenever the selected role changes (switching roles,
+  // or the initial load). We deliberately do NOT re-sync on every `roles`
+  // change, so a save-in-flight for the currently selected role doesn't
+  // reset what the user is actively clicking.
+  useEffect(() => {
+    if (selected) {
+      setDeptDraft({
+        allDepartments: selected.allDepartments,
+        departmentIds: selected.departments.map((d) => d.id),
+      });
+      setAssignableDraft(selected.assignableCategories.map((c) => c.id));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
+
   const selectedCategory = selected?.category;
   const hasDeptScopedPerms = selectedCategory?.permissions.some((p) => DEPARTMENT_SCOPED_PERMISSIONS.has(p));
   const hasUserManagePerm = selectedCategory?.permissions.includes("user:manage");
-  
+
   const newCategory = categories.find((c) => c.id === (newCategoryId === "" ? null : Number(newCategoryId)));
   const newHasDeptScopedPerms = newCategory?.permissions.some((p) => DEPARTMENT_SCOPED_PERMISSIONS.has(p));
   const newHasUserManagePerm = newCategory?.permissions.includes("user:manage");
@@ -76,28 +170,85 @@ export function RolesPage() {
     }
   }
 
-  async function handleDepartmentScopeChange(roleId: number, allDepartments: boolean, departmentIds: number[]) {
-    try {
-      setError(null);
-      if (!allDepartments && departmentIds.length === 0) {
-        setError("At least one department must be selected when not using 'All Departments'.");
-        return;
-      }
-      const updatedRole = await setRoleDepartments(roleId, allDepartments, departmentIds);
-      setRoles((prev) => prev.map((r) => (r.id === roleId ? updatedRole : r)));
-    } catch (err: any) {
-      setError(err?.message || "Failed to update department scope.");
+  // Debounced department save — only fires SAVE_DEBOUNCE_MS after the last
+  // click, and always uses whatever is in the draft AT THAT MOMENT (read via
+  // the functional form / ref pattern), never a value captured earlier.
+  const scheduleDeptSave = useCallback((roleId: number, draft: { allDepartments: boolean; departmentIds: number[] }) => {
+    if (deptSaveTimer.current) clearTimeout(deptSaveTimer.current);
+    // Don't save an invalid intermediate state (switched off "all" but
+    // hasn't picked anything yet) — just let the draft sit until valid.
+    if (!draft.allDepartments && draft.departmentIds.length === 0) {
+      return;
     }
+    deptSaveTimer.current = setTimeout(async () => {
+      try {
+        setError(null);
+        const updatedRole = await setRoleDepartments(roleId, draft.allDepartments, draft.departmentIds);
+        setRoles((prev) => prev.map((r) => (r.id === roleId ? updatedRole : r)));
+      } catch (err: any) {
+        setError(err?.message || "Failed to update department scope.");
+      }
+    }, SAVE_DEBOUNCE_MS);
+  }, []);
+
+  const scheduleAssignableSave = useCallback((roleId: number, ids: number[]) => {
+    if (assignableSaveTimer.current) clearTimeout(assignableSaveTimer.current);
+    assignableSaveTimer.current = setTimeout(async () => {
+      try {
+        setError(null);
+        const updatedRole = await setRoleAssignableCategories(roleId, ids);
+        setRoles((prev) => prev.map((r) => (r.id === roleId ? updatedRole : r)));
+      } catch (err: any) {
+        setError(err?.message || "Failed to update assignable categories.");
+      }
+    }, SAVE_DEBOUNCE_MS);
+  }, []);
+
+  function handleDeptToggleAll(selectAll: boolean) {
+    if (!selected) return;
+    const next = {
+      allDepartments: selectAll,
+      departmentIds: selectAll ? departments.map((d) => d.id) : [],
+    };
+    setDeptDraft(next);
+    scheduleDeptSave(selected.id, next);
   }
 
-  async function handleAssignableCategoriesChange(roleId: number, assignableCategoryIds: number[]) {
-    try {
-      setError(null);
-      const updatedRole = await setRoleAssignableCategories(roleId, assignableCategoryIds);
-      setRoles((prev) => prev.map((r) => (r.id === roleId ? updatedRole : r)));
-    } catch (err: any) {
-      setError(err?.message || "Failed to update assignable categories.");
-    }
+  function handleDeptToggleOne(deptId: number) {
+    if (!selected) return;
+    setDeptDraft((prev) => {
+      const currentlyOn = prev.allDepartments || prev.departmentIds.includes(deptId);
+      // If "all" was on, treat every department as individually checked
+      // right now, then apply this one toggle on top of that full set.
+      const baseline = prev.allDepartments ? departments.map((d) => d.id) : prev.departmentIds;
+      const nextIds = currentlyOn
+        ? baseline.filter((id) => id !== deptId)
+        : [...baseline, deptId];
+      const next = {
+        allDepartments: nextIds.length === departments.length && departments.length > 0,
+        departmentIds: nextIds,
+      };
+      scheduleDeptSave(selected.id, next);
+      return next;
+    });
+  }
+
+  function handleAssignableToggleAll(selectAll: boolean) {
+    if (!selected) return;
+    const next = selectAll ? categories.map((c) => c.id) : [];
+    setAssignableDraft(next);
+    scheduleAssignableSave(selected.id, next);
+  }
+
+  function handleAssignableToggleOne(categoryId: number) {
+    if (!selected) return;
+    setAssignableDraft((prev) => {
+      const next = prev.includes(categoryId)
+        ? prev.filter((id) => id !== categoryId)
+        : [...prev, categoryId];
+      scheduleAssignableSave(selected.id, next);
+      return next;
+    });
   }
 
   async function handleCreateRole() {
@@ -105,21 +256,21 @@ export function RolesPage() {
     try {
       setError(null);
       const categoryId = newCategoryId === "" ? null : Number(newCategoryId);
-      const selectedCategory = categories.find((c) => c.id === categoryId);
-      const hasDeptScopedPerms = selectedCategory?.permissions.some((p) => DEPARTMENT_SCOPED_PERMISSIONS.has(p));
-      const hasUserManagePerm = selectedCategory?.permissions.includes("user:manage");
-      
-      if (hasDeptScopedPerms && !newAllDepartments && newDepartmentIds.length === 0) {
-        setError("At least one department must be selected when not using 'All Departments'.");
+      const selectedCat = categories.find((c) => c.id === categoryId);
+      const hasDept = selectedCat?.permissions.some((p) => DEPARTMENT_SCOPED_PERMISSIONS.has(p));
+      const hasUM = selectedCat?.permissions.includes("user:manage");
+
+      if (hasDept && !newAllDepartments && newDepartmentIds.length === 0) {
+        setError("Select at least one department, or use Select All.");
         return;
       }
-      
+
       const nr = await createRole(
         newName.trim(),
         categoryId,
-        hasDeptScopedPerms ? newAllDepartments : false,
-        hasDeptScopedPerms ? newDepartmentIds : [],
-        hasUserManagePerm ? newAssignableCategoryIds : []
+        hasDept ? newAllDepartments : false,
+        hasDept ? newDepartmentIds : [],
+        hasUM ? newAssignableCategoryIds : []
       );
       setRoles((prev) => [...prev, nr]);
       setSelectedId(nr.id);
@@ -254,106 +405,30 @@ export function RolesPage() {
                     Roles inherit permissions from their category. Department scope and assignable categories are configured per role.
                   </p>
                 </div>
-                
+
                 {/* Departments section - only show if category has department-scoped permissions */}
                 {hasDeptScopedPerms && (
                   <div>
                     <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Departments</h4>
-                    <div className="space-y-3">
-                      <div className="flex items-center gap-4">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="radio"
-                            name={`dept-scope-${selected.id}`}
-                            checked={selected.allDepartments}
-                            onChange={() => handleDepartmentScopeChange(selected.id, true, [])}
-                            className="w-4 h-4 accent-blue-600 cursor-pointer"
-                          />
-                          <span className="text-sm font-medium">All Departments</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="radio"
-                            name={`dept-scope-${selected.id}`}
-                            checked={!selected.allDepartments}
-                            onChange={() => handleDepartmentScopeChange(selected.id, false, selected.departments.map((d) => d.id))}
-                            className="w-4 h-4 accent-blue-600 cursor-pointer"
-                          />
-                          <span className="text-sm font-medium">Specific Departments</span>
-                        </label>
-                      </div>
-                      {!selected.allDepartments && (
-                        <div className="space-y-2">
-                          {departments.map((dept) => {
-                            const on = selected.departments.some((d) => d.id === dept.id);
-                            return (
-                              <label
-                                key={dept.id}
-                                className={`flex items-center gap-3.5 p-3.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
-                                  on ? "border-blue-200 bg-blue-50" : "border-border hover:bg-muted/30"
-                                }`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={on}
-                                  onChange={() => {
-                                    const newIds = on
-                                      ? selected.departments.filter((d) => d.id !== dept.id).map((d) => d.id)
-                                      : [...selected.departments.map((d) => d.id), dept.id];
-                                    handleDepartmentScopeChange(selected.id, false, newIds);
-                                  }}
-                                  className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
-                                />
-                                <div className="flex-1 min-w-0">
-                                  <p className={`text-sm font-semibold ${on ? "text-blue-700" : "text-foreground"}`}>
-                                    {dept.name}
-                                  </p>
-                                </div>
-                                {on && <CheckCircle2 size={15} className="text-blue-500 flex-shrink-0" />}
-                              </label>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
+                    <SelectAllChecklist
+                      items={departments}
+                      selectedIds={deptDraft.allDepartments ? departments.map((d) => d.id) : deptDraft.departmentIds}
+                      onToggleAll={handleDeptToggleAll}
+                      onToggleOne={handleDeptToggleOne}
+                    />
                   </div>
                 )}
-                
+
                 {/* Can Assign section - only show if category has user:manage permission */}
                 {hasUserManagePerm && (
                   <div>
                     <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Can Assign (when creating/editing users)</h4>
-                    <div className="space-y-2">
-                      {categories.map((cat) => {
-                        const on = selected.assignableCategories.some((c) => c.id === cat.id);
-                        return (
-                          <label
-                            key={cat.id}
-                            className={`flex items-center gap-3.5 p-3.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
-                              on ? "border-blue-200 bg-blue-50" : "border-border hover:bg-muted/30"
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={on}
-                              onChange={() => {
-                                const newIds = on
-                                  ? selected.assignableCategories.filter((c) => c.id !== cat.id).map((c) => c.id)
-                                  : [...selected.assignableCategories.map((c) => c.id), cat.id];
-                                handleAssignableCategoriesChange(selected.id, newIds);
-                              }}
-                              className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
-                            />
-                            <div className="flex-1 min-w-0">
-                              <p className={`text-sm font-semibold ${on ? "text-blue-700" : "text-foreground"}`}>
-                                {cat.name}
-                              </p>
-                            </div>
-                            {on && <CheckCircle2 size={15} className="text-blue-500 flex-shrink-0" />}
-                          </label>
-                        );
-                      })}
-                    </div>
+                    <SelectAllChecklist
+                      items={categories}
+                      selectedIds={assignableDraft}
+                      onToggleAll={handleAssignableToggleAll}
+                      onToggleOne={handleAssignableToggleOne}
+                    />
                   </div>
                 )}
               </div>
@@ -395,106 +470,41 @@ export function RolesPage() {
             {newHasDeptScopedPerms && (
               <div>
                 <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Departments</h4>
-                <div className="space-y-3">
-                  <div className="flex items-center gap-4">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="new-dept-scope"
-                        checked={newAllDepartments}
-                        onChange={() => setNewAllDepartments(true)}
-                        className="w-4 h-4 accent-blue-600 cursor-pointer"
-                      />
-                      <span className="text-sm font-medium">All Departments</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="new-dept-scope"
-                        checked={!newAllDepartments}
-                        onChange={() => setNewAllDepartments(false)}
-                        className="w-4 h-4 accent-blue-600 cursor-pointer"
-                      />
-                      <span className="text-sm font-medium">Specific Departments</span>
-                    </label>
-                  </div>
-                  {!newAllDepartments && (
-                    <div className="space-y-2">
-                      {departments.map((dept) => {
-                        const on = newDepartmentIds.includes(dept.id);
-                        return (
-                          <label
-                            key={dept.id}
-                            className={`flex items-center gap-3.5 p-3.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
-                              on ? "border-blue-200 bg-blue-50" : "border-border hover:bg-muted/30"
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={on}
-                              onChange={() => {
-                                setNewDepartmentIds(
-                                  on
-                                    ? newDepartmentIds.filter((id) => id !== dept.id)
-                                    : [...newDepartmentIds, dept.id]
-                                );
-                              }}
-                              className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
-                            />
-                            <div className="flex-1 min-w-0">
-                              <p className={`text-sm font-semibold ${on ? "text-blue-700" : "text-foreground"}`}>
-                                {dept.name}
-                              </p>
-                            </div>
-                            {on && <CheckCircle2 size={15} className="text-blue-500 flex-shrink-0" />}
-                          </label>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
+                <SelectAllChecklist
+                  items={departments}
+                  selectedIds={newAllDepartments ? departments.map((d) => d.id) : newDepartmentIds}
+                  onToggleAll={(selectAll) => {
+                    setNewAllDepartments(selectAll);
+                    setNewDepartmentIds(selectAll ? departments.map((d) => d.id) : []);
+                  }}
+                  onToggleOne={(deptId) => {
+                    const baseline = newAllDepartments ? departments.map((d) => d.id) : newDepartmentIds;
+                    const currentlyOn = baseline.includes(deptId);
+                    const nextIds = currentlyOn ? baseline.filter((id) => id !== deptId) : [...baseline, deptId];
+                    setNewDepartmentIds(nextIds);
+                    setNewAllDepartments(nextIds.length === departments.length && departments.length > 0);
+                  }}
+                />
               </div>
             )}
-            
+
             {/* Can Assign section - only show if category has user:manage permission */}
             {newHasUserManagePerm && (
               <div>
                 <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Can Assign (when creating/editing users)</h4>
-                <div className="space-y-2">
-                  {categories.map((cat) => {
-                    const on = newAssignableCategoryIds.includes(cat.id);
-                    return (
-                      <label
-                        key={cat.id}
-                        className={`flex items-center gap-3.5 p-3.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
-                          on ? "border-blue-200 bg-blue-50" : "border-border hover:bg-muted/30"
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={on}
-                          onChange={() => {
-                            setNewAssignableCategoryIds(
-                              on
-                                ? newAssignableCategoryIds.filter((id) => id !== cat.id)
-                                : [...newAssignableCategoryIds, cat.id]
-                            );
-                          }}
-                          className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
-                        />
-                        <div className="flex-1 min-w-0">
-                          <p className={`text-sm font-semibold ${on ? "text-blue-700" : "text-foreground"}`}>
-                            {cat.name}
-                          </p>
-                        </div>
-                        {on && <CheckCircle2 size={15} className="text-blue-500 flex-shrink-0" />}
-                      </label>
+                <SelectAllChecklist
+                  items={categories}
+                  selectedIds={newAssignableCategoryIds}
+                  onToggleAll={(selectAll) => setNewAssignableCategoryIds(selectAll ? categories.map((c) => c.id) : [])}
+                  onToggleOne={(catId) => {
+                    setNewAssignableCategoryIds((prev) =>
+                      prev.includes(catId) ? prev.filter((id) => id !== catId) : [...prev, catId]
                     );
-                  })}
-                </div>
+                  }}
+                />
               </div>
             )}
-            
+
             <p className="text-xs text-muted-foreground leading-relaxed">
               The new role will inherit permissions from its category. Department scope and assignable categories are configured per role.
             </p>

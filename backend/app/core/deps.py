@@ -52,7 +52,7 @@ async def get_current_user(
         .options(
             selectinload(User.role).selectinload(Role.category).selectinload(Category.permissions),
             selectinload(User.role).selectinload(Role.departments),
-            selectinload(User.role).selectinload(Role.assignable_categories),
+            selectinload(User.role).selectinload(Role.assignable_categories).selectinload(Category.permissions),
             selectinload(User.department),
         )
         .where(User.id == int(user_id))

@@ -19,9 +19,12 @@ export function UsersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
-  const canManageAll = permissions.includes("user:manage_all");
-  const canManageDepartment = permissions.includes("user:manage_department");
-  const canManage = canManageAll || canManageDepartment;
+  const canManage = permissions.includes("user:manage");
+  const canManageAllDepartments = currentUser?.role?.allDepartments ?? false;
+  const scopedDepartmentIds = new Set((currentUser?.role?.departments ?? []).map((d) => d.id));
+  const availableDepartmentsForAssignment = canManageAllDepartments
+    ? departments
+    : departments.filter((d) => scopedDepartmentIds.has(d.id));
 
   const [editUser, setEditUser] = useState<UserType | null>(null);
   const [editName, setEditName] = useState("");
@@ -63,17 +66,16 @@ export function UsersPage() {
     loadData();
   }, []);
   
-  // Filter roles based on current user's category's assignable_categories
-  const currentUserCategoryId = currentUser?.role?.category?.id ?? null;
-  const currentUserCategory = categories.find(c => c.id === currentUserCategoryId);
-  const assignableCategoryIds = currentUserCategory?.assignableCategoryIds ?? [];
-  
-  const filteredRoles = canManageDepartment && !canManageAll
-    ? roles.filter(role => {
-        const roleCategoryId = role.category?.id;
-        return roleCategoryId !== undefined && roleCategoryId !== null && assignableCategoryIds.includes(roleCategoryId);
-      })
-    : roles;
+  // Filter roles based on the current user's role's assignable_categories.
+  // (This list lives on Role now, not Category — a role with no restriction
+  // set will simply have an empty assignableCategories list, meaning it
+  // can't assign anyone; the Admin role gets every category via bootstrap.)
+  const assignableCategoryIds = (currentUser?.role?.assignableCategories ?? []).map((c) => c.id);
+
+  const filteredRoles = roles.filter((role) => {
+    const roleCategoryId = role.category?.id;
+    return roleCategoryId !== undefined && roleCategoryId !== null && assignableCategoryIds.includes(roleCategoryId);
+  });
 
   async function handleRoleChange(uid: number, roleIdStr: string) {
     try {
@@ -264,14 +266,14 @@ export function UsersPage() {
                     </select>
                   </td>
                   <td className="px-5 py-3.5">
-                    {canManageAll ? (
+                    {canManage && (canManageAllDepartments || availableDepartmentsForAssignment.length > 0) ? (
                       <select
                         value={user.department?.id ?? ""}
                         onChange={(e) => handleDepartmentChange(user.id, e.target.value)}
                         className="text-xs border border-border rounded-lg px-2.5 py-1.5 bg-white text-foreground focus:outline-none focus:border-blue-400 min-w-[120px]"
                       >
                         <option value="">No department</option>
-                        {departments.map((d) => (
+                        {availableDepartmentsForAssignment.map((d) => (
                           <option key={d.id} value={d.id}>
                             {d.name}
                           </option>
@@ -423,7 +425,7 @@ export function UsersPage() {
                 ))}
               </select>
             </div>
-            {canManageAll ? (
+            {canManageAllDepartments || availableDepartmentsForAssignment.length > 0 ? (
               <div>
                 <label className="block text-xs font-medium text-muted-foreground mb-1.5">Department (optional)</label>
                 <select
@@ -432,7 +434,7 @@ export function UsersPage() {
                   className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-white text-foreground focus:outline-none focus:border-blue-400"
                 >
                   <option value="">No department</option>
-                  {departments.map((d) => (
+                  {availableDepartmentsForAssignment.map((d) => (
                     <option key={d.id} value={d.id}>
                       {d.name}
                     </option>

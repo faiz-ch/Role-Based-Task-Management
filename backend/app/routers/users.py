@@ -25,7 +25,10 @@ async def list_users(
     if not has_permission(current_user, "user:view"):
         raise HTTPException(status_code=403, detail="You do not have permission to view users")
     
-    query = select(User).options(selectinload(User.role), selectinload(User.department))
+    query = select(User).options(selectinload(User.role).selectinload(Role.category).selectinload(Category.permissions),
+        selectinload(User.role).selectinload(Role.departments),
+        selectinload(User.role).selectinload(Role.assignable_categories).selectinload(Category.permissions),
+        selectinload(User.department))
     
     scoped_dept_ids = get_scoped_department_ids(current_user)
     if scoped_dept_ids is not None:
@@ -107,7 +110,10 @@ async def create_user(
     # Re-fetch with eager load to avoid MissingGreenlet error
     result = await db.execute(
         select(User)
-        .options(selectinload(User.role), selectinload(User.department))
+        .options(selectinload(User.role).selectinload(Role.category).selectinload(Category.permissions),
+        selectinload(User.role).selectinload(Role.departments),
+        selectinload(User.role).selectinload(Role.assignable_categories).selectinload(Category.permissions),
+        selectinload(User.department))
         .where(User.id == user.id)
     )
     return result.scalar_one()
@@ -138,7 +144,10 @@ async def get_user(
     
     result = await db.execute(
         select(User)
-        .options(selectinload(User.role), selectinload(User.department))
+        .options(selectinload(User.role).selectinload(Role.category).selectinload(Category.permissions),
+        selectinload(User.role).selectinload(Role.departments),
+        selectinload(User.role).selectinload(Role.assignable_categories).selectinload(Category.permissions),
+        selectinload(User.department))
         .where(User.id == user_id)
     )
     user = result.scalar_one_or_none()
@@ -212,7 +221,10 @@ async def update_user(
     await db.commit()
     result = await db.execute(
         select(User)
-        .options(selectinload(User.role), selectinload(User.department))
+        .options(selectinload(User.role).selectinload(Role.category).selectinload(Category.permissions),
+        selectinload(User.role).selectinload(Role.departments),
+        selectinload(User.role).selectinload(Role.assignable_categories).selectinload(Category.permissions),
+        selectinload(User.department))
         .where(User.id == user.id)
     )
     return result.scalar_one()
@@ -272,7 +284,10 @@ async def assign_role(
     await db.commit()
     result = await db.execute(
         select(User)
-        .options(selectinload(User.role), selectinload(User.department))
+        .options(selectinload(User.role).selectinload(Role.category).selectinload(Category.permissions),
+        selectinload(User.role).selectinload(Role.departments),
+        selectinload(User.role).selectinload(Role.assignable_categories).selectinload(Category.permissions),
+        selectinload(User.department))
         .where(User.id == user.id)
     )
     return result.scalar_one()
@@ -375,7 +390,10 @@ async def assign_department(
     await db.commit()
     result = await db.execute(
         select(User)
-        .options(selectinload(User.role), selectinload(User.department))
+        .options(selectinload(User.role).selectinload(Role.category).selectinload(Category.permissions),
+        selectinload(User.role).selectinload(Role.departments),
+        selectinload(User.role).selectinload(Role.assignable_categories).selectinload(Category.permissions),
+        selectinload(User.department))
         .where(User.id == user.id)
     )
     return result.scalar_one()

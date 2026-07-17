@@ -1,14 +1,7 @@
 from pydantic import BaseModel, EmailStr, field_validator
 
 from app.schemas.department import DepartmentOut
-
-
-class RoleOut(BaseModel):
-    id: int
-    name: str
-
-    class Config:
-        from_attributes = True  # lets Pydantic read this straight from a SQLAlchemy object
+from app.schemas.role import RoleOut
 
 
 class UserOut(BaseModel):

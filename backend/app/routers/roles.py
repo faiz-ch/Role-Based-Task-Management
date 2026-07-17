@@ -22,7 +22,7 @@ async def list_roles(
         select(Role).options(
             selectinload(Role.category).selectinload(Category.permissions),
             selectinload(Role.departments),
-            selectinload(Role.assignable_categories)
+            selectinload(Role.assignable_categories).selectinload(Category.permissions)
         )
     )
     return result.scalars().all()
@@ -51,13 +51,13 @@ async def create_role(
     if payload.department_ids:
         from app.models.role import role_department
         for dept_id in payload.department_ids:
-            db.execute(role_department.insert().values(role_id=role.id, department_id=dept_id))
+            await db.execute(role_department.insert().values(role_id=role.id, department_id=dept_id))
     
     # Handle assignable categories if provided
     if payload.assignable_category_ids:
         from app.models.role import role_assignable_category
         for cat_id in payload.assignable_category_ids:
-            db.execute(role_assignable_category.insert().values(role_id=role.id, category_id=cat_id))
+            await db.execute(role_assignable_category.insert().values(role_id=role.id, category_id=cat_id))
     
     await db.commit()
     # Re-fetch with category loaded
@@ -65,7 +65,7 @@ async def create_role(
         select(Role).options(
             selectinload(Role.category).selectinload(Category.permissions),
             selectinload(Role.departments),
-            selectinload(Role.assignable_categories)
+            selectinload(Role.assignable_categories).selectinload(Category.permissions)
         ).where(Role.id == role.id)
     )
     return result.scalar_one()
@@ -82,7 +82,7 @@ async def set_role_category(
         select(Role).options(
             selectinload(Role.category).selectinload(Category.permissions),
             selectinload(Role.departments),
-            selectinload(Role.assignable_categories)
+            selectinload(Role.assignable_categories).selectinload(Category.permissions)
         ).where(Role.id == role_id)
     )
     role = result.scalar_one_or_none()
@@ -103,7 +103,7 @@ async def set_role_category(
         select(Role).options(
             selectinload(Role.category).selectinload(Category.permissions),
             selectinload(Role.departments),
-            selectinload(Role.assignable_categories)
+            selectinload(Role.assignable_categories).selectinload(Category.permissions)
         ).where(Role.id == role_id)
     )
     return result.scalar_one()
@@ -120,7 +120,7 @@ async def set_role_departments(
         select(Role).options(
             selectinload(Role.category).selectinload(Category.permissions),
             selectinload(Role.departments),
-            selectinload(Role.assignable_categories)
+            selectinload(Role.assignable_categories).selectinload(Category.permissions)
         ).where(Role.id == role_id)
     )
     role = result.scalar_one_or_none()
@@ -146,7 +146,7 @@ async def set_role_departments(
         select(Role).options(
             selectinload(Role.category).selectinload(Category.permissions),
             selectinload(Role.departments),
-            selectinload(Role.assignable_categories)
+            selectinload(Role.assignable_categories).selectinload(Category.permissions)
         ).where(Role.id == role_id)
     )
     return result.scalar_one()
@@ -163,7 +163,7 @@ async def set_role_assignable_categories(
         select(Role).options(
             selectinload(Role.category).selectinload(Category.permissions),
             selectinload(Role.departments),
-            selectinload(Role.assignable_categories)
+            selectinload(Role.assignable_categories).selectinload(Category.permissions)
         ).where(Role.id == role_id)
     )
     role = result.scalar_one_or_none()
@@ -186,7 +186,7 @@ async def set_role_assignable_categories(
         select(Role).options(
             selectinload(Role.category).selectinload(Category.permissions),
             selectinload(Role.departments),
-            selectinload(Role.assignable_categories)
+            selectinload(Role.assignable_categories).selectinload(Category.permissions)
         ).where(Role.id == role_id)
     )
     return result.scalar_one()
