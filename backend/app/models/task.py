@@ -12,10 +12,9 @@ from app.database import Base
 
 class TaskStatus(str, enum.Enum):
     TODO = "To Do"
-    IN_PROGRESS = "In Progress"
     REVIEW = "Review"
     DONE = "Done"
-    REJECTED = "Rejected"
+    RESCHEDULE = "Reschedule"
 
 
 class TaskPriority(str, enum.Enum):
@@ -42,3 +41,4 @@ class Task(Base):
     creator = relationship("User", foreign_keys=[created_by], back_populates="tasks_created")
     assignee = relationship("User", foreign_keys=[assigned_to], back_populates="tasks_assigned")
     department = relationship("Department", back_populates="tasks")
+    attachments = relationship("Attachment", back_populates="task", cascade="all, delete-orphan")

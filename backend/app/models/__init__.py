@@ -9,3 +9,4 @@ from app.models.role import Role, Permission, role_department, role_assignable_c
 from app.models.task import Task, TaskStatus, TaskPriority
 from app.models.department import Department
 from app.models.category import Category, category_permission
+from app.models.attachment import Attachment

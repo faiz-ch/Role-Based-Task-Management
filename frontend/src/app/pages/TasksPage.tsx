@@ -19,7 +19,7 @@ import { FldSelect } from "../components/FldSelect";
 import { StatusBadge, STATUS_STYLE } from "../components/StatusBadge";
 import { PriBadge } from "../components/PriBadge";
 
-const STATUSES: Status[] = ["To Do", "In Progress", "Review", "Done", "Rejected"];
+const STATUSES: Status[] = ["To Do", "Review", "Done", "Reschedule"];
 const PRIORITIES: Priority[] = ["Low", "Medium", "High"];
 
 interface TForm {
@@ -32,8 +32,13 @@ interface TForm {
 
 function fmtDate(d: string) {
   if (!d) return "—";
-  const dt = new Date(d + "T12:00:00");
-  return dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const dt = new Date(d);
+  return dt.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function fmtMonthYear(d: string) {
@@ -46,7 +51,7 @@ function isOverdue(dueDate: string, status: Status) {
   return (
     status !== "Done" &&
     !!dueDate &&
-    new Date(dueDate + "T23:59:59") < new Date()
+    new Date(dueDate) < new Date()
   );
 }
 
@@ -69,22 +74,21 @@ function getValidTransitions(
 
   if (isAssignee) {
     if (task.status === "To Do") {
-      return [{ label: "Move to In Progress", status: "In Progress" }];
+      return [{ label: "Submit for review", status: "Review" }];
     }
-    if (task.status === "Rejected") {
-      return [{ label: "Resubmit to In Progress", status: "In Progress" }];
+    if (task.status === "Reschedule") {
+      return [{ label: "Resubmit for review", status: "Review" }];
     }
   }
 
   if (canReview) {
-    if (task.status === "In Progress") {
-      return [{ label: "Send to Review", status: "Review" }];
-    }
     if (task.status === "Review") {
-      return [
-        { label: "Approve (Done)", status: "Done" },
-        { label: "Reject", status: "Rejected" },
-      ];
+      // Approve is a simple status flip (fits this dropdown). Reschedule is
+      // deliberately NOT offered here — it requires picking a new due
+      // date/time, which doesn't fit a plain dropdown. That action lives on
+      // the Task Detail page instead (a later step), which calls the
+      // dedicated /reschedule endpoint with the date the reviewer picks.
+      return [{ label: "Approve (Done)", status: "Done" }];
     }
   }
 
@@ -92,7 +96,11 @@ function getValidTransitions(
 }
 
 // Main page component
-export function TasksPage() {
+interface TasksPageProps {
+  onOpenTask?: (id: number) => void;
+}
+
+export function TasksPage({ onOpenTask }: TasksPageProps = {}) {
   const { currentUser, permissions } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [users, setUsers] = useState<UserType[]>([]);
@@ -491,7 +499,12 @@ export function TasksPage() {
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-2">
-                              <h3 className="text-sm font-medium text-foreground">{task.title}</h3>
+                              <h3 
+                                className="text-sm font-medium text-foreground cursor-pointer hover:text-blue-600 transition-colors"
+                                onClick={() => onOpenTask?.(task.id)}
+                              >
+                                {task.title}
+                              </h3>
                               <StatusBadge status={task.status} />
                             </div>
                             {task.description && (
@@ -517,6 +530,7 @@ export function TasksPage() {
                               <select
                                 value={task.assigneeId ?? ""}
                                 onChange={(e) => {
+                                  e.stopPropagation();
                                   const val = e.target.value;
                                   handleAssign(task, val === "" ? null : Number(val));
                                 }}
@@ -532,7 +546,10 @@ export function TasksPage() {
                             )}
                             {canEdit && (
                               <button
-                                onClick={() => openEdit(task)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openEdit(task);
+                                }}
                                 className="p-1.5 hover:bg-muted rounded transition-colors cursor-pointer"
                                 title="Edit task"
                               >
@@ -541,7 +558,10 @@ export function TasksPage() {
                             )}
                             {canEdit && (
                               <button
-                                onClick={() => handleDelete(task.id)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDelete(task.id);
+                                }}
                                 className="p-1.5 hover:bg-red-50 rounded transition-colors cursor-pointer"
                                 title="Delete task"
                               >
@@ -554,14 +574,20 @@ export function TasksPage() {
                           <div className="mt-3 pt-3 border-t border-border">
                             {transitions.length === 1 ? (
                               <button
-                                onClick={() => handleStatusTransition(task, transitions[0].status)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleStatusTransition(task, transitions[0].status);
+                                }}
                                 className="text-xs font-medium text-blue-600 hover:text-blue-800 transition-colors cursor-pointer"
                               >
                                 {transitions[0].label}
                               </button>
                             ) : (
                               <select
-                                onChange={(e) => handleStatusTransition(task, e.target.value as Status)}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  handleStatusTransition(task, e.target.value as Status);
+                                }}
                                 className="text-xs border border-border rounded px-2 py-1 bg-white text-muted-foreground focus:outline-none focus:border-blue-400 cursor-pointer"
                                 defaultValue=""
                               >
@@ -625,7 +651,7 @@ export function TasksPage() {
               />
               <FldInput
                 label="Due Date"
-                type="date"
+                type="datetime-local"
                 value={form.dueDate}
                 onChange={(e) =>
                   setForm((f) => ({ ...f, dueDate: e.target.value }))
@@ -707,7 +733,7 @@ export function TasksPage() {
               />
               <FldInput
                 label="Due Date"
-                type="date"
+                type="datetime-local"
                 value={form.dueDate}
                 onChange={(e) =>
                   setForm((f) => ({ ...f, dueDate: e.target.value }))

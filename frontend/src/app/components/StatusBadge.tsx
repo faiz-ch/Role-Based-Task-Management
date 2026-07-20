@@ -11,12 +11,6 @@ export const STATUS_STYLE: Record<
     colTop: "border-t-slate-400",
     colBg: "",
   },
-  "In Progress": {
-    badge: "bg-blue-50 text-blue-700 border-blue-200",
-    dot: "bg-blue-500",
-    colTop: "border-t-blue-500",
-    colBg: "bg-blue-50/20",
-  },
   Review: {
     badge: "bg-amber-50 text-amber-700 border-amber-200",
     dot: "bg-amber-500",
@@ -29,7 +23,7 @@ export const STATUS_STYLE: Record<
     colTop: "border-t-emerald-500",
     colBg: "bg-emerald-50/20",
   },
-  Rejected: {
+  Reschedule: {
     badge: "bg-red-50 text-red-700 border-red-200",
     dot: "bg-red-500",
     colTop: "border-t-red-500",

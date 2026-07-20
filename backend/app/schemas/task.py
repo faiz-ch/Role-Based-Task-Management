@@ -27,6 +27,21 @@ class TaskStatusUpdate(BaseModel):
 class TaskAssignRequest(BaseModel):
     assigned_to: int | None = None
 
+class RescheduleRequest(BaseModel):
+    new_due_date: datetime
+
+
+class AttachmentOut(BaseModel):
+    id: int
+    filename: str
+    content_type: str
+    size_bytes: int
+    uploaded_by: int
+    uploaded_at: datetime
+
+    class Config:
+        from_attributes = True
+
 
 class TaskOut(BaseModel):
     id: int
@@ -39,6 +54,7 @@ class TaskOut(BaseModel):
     created_by: int
     assigned_to: int | None
     department_id: int | None
+    attachments: list[AttachmentOut] = []
 
     class Config:
         from_attributes = True

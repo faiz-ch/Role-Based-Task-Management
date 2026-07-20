@@ -11,10 +11,12 @@ import { UsersPage } from "./pages/UsersPage";
 import { RolesPage } from "./pages/RolesPage";
 import { CategoriesPage } from "./pages/CategoriesPage";
 import { DepartmentsPage } from "./pages/DepartmentsPage";
+import { TaskDetailPage } from "./pages/TaskDetailPage";
 
 function AppContent() {
   const { currentUser, permissions } = useAuth();
   const [page, setPage] = useState<Page>("login");
+  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
 
   // Sync page routing on login/logout
   useEffect(() => {
@@ -44,7 +46,14 @@ function AppContent() {
           {page === "dashboard" && permissions.includes("dashboard:view") && (
             <DashboardPage />
           )}
-          {page === "tasks" && <TasksPage />}
+          {page === "tasks" && (
+            <TasksPage
+              onOpenTask={(id: number) => {
+                setSelectedTaskId(id);
+                setPage("taskDetail");
+              }}
+            />
+          )}
           {page === "users" && permissions.includes("user:manage") && (
             <UsersPage />
           )}
@@ -56,6 +65,12 @@ function AppContent() {
           )}
           {page === "departments" && permissions.includes("department:manage") && (
             <DepartmentsPage />
+          )}
+          {page === "taskDetail" && selectedTaskId !== null && (
+            <TaskDetailPage
+              taskId={selectedTaskId}
+              onBack={() => setPage("tasks")}
+            />
           )}
         </>
       )}

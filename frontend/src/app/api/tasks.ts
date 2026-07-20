@@ -1,6 +1,12 @@
 import { apiFetch } from "./client";
 import { Task } from "../types";
 
+function toDatetimeLocalValue(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function mapTask(t: any): Task {
   return {
     id: t.id,
@@ -8,7 +14,7 @@ function mapTask(t: any): Task {
     description: t.description || "",
     status: t.status,
     priority: t.priority,
-    dueDate: t.due_date ? t.due_date.slice(0, 10) : "",
+    dueDate: t.due_date ? toDatetimeLocalValue(t.due_date) : "",
     createdAt: t.created_at ? t.created_at.slice(0, 10) : "",
     creatorId: t.created_by,
     assigneeId: t.assigned_to,
@@ -24,6 +30,11 @@ export async function getTasks(options?: { assignedTo?: number }): Promise<Task[
   const url = params.toString() ? `/tasks?${params.toString()}` : "/tasks";
   const data = await apiFetch(url);
   return Array.isArray(data) ? data.map(mapTask) : [];
+}
+
+export async function getTask(id: number): Promise<Task> {
+  const res = await apiFetch(`/tasks/${id}`);
+  return mapTask(res);
 }
 
 export async function createTask(task: {
@@ -92,4 +103,15 @@ export async function deleteTask(id: number): Promise<void> {
   await apiFetch(`/tasks/${id}`, {
     method: "DELETE",
   });
+}
+
+export async function rescheduleTask(id: number, newDueDate: string): Promise<Task> {
+  const payload = {
+    new_due_date: newDueDate,
+  };
+  const data = await apiFetch(`/tasks/${id}/reschedule`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return mapTask(data);
 }

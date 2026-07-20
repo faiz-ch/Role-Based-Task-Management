@@ -1,6 +1,6 @@
 // const API_BASE_URL = "http://localhost:8000";
 
-const API_BASE_URL = window.location.hostname === "localhost"
+export const API_BASE_URL = window.location.hostname === "localhost"
   ? "http://localhost:8000"
   : "https://fhk9c4kk-8000.inc1.devtunnels.ms";
 

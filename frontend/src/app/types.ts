@@ -1,6 +1,6 @@
-export type Status = "To Do" | "In Progress" | "Review" | "Done" | "Rejected";
+export type Status = "To Do" | "Review" | "Done" | "Reschedule";
 export type Priority = "Low" | "Medium" | "High";
-export type Page = "login" | "register" | "dashboard" | "tasks" | "users" | "roles" | "departments" | "categories";
+export type Page = "login" | "register" | "dashboard" | "tasks" | "taskDetail" | "users" | "roles" | "departments" | "categories";
 
 export interface Department {
   id: number;

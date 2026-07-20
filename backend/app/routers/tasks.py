@@ -1,10 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException
+import os
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import require_permission, get_current_user, has_permission, get_scoped_department_ids
 from app.database import get_db
 from app.models.task import Task, TaskStatus
+from app.models.attachment import Attachment
 from app.models.user import User
 from app.schemas.task import (
     TaskCreate,
@@ -12,10 +17,12 @@ from app.schemas.task import (
     TaskOut,
     TaskStatusUpdate,
     TaskAssignRequest,
+    RescheduleRequest,
+    AttachmentOut,
 )
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
-
+UPLOAD_DIR = "uploads"  # relative to backend/ — where uploaded files actually live on disk
 
 def _is_task_in_scope(task: Task, current_user: User) -> bool:
     """
@@ -70,6 +77,18 @@ async def list_tasks(
 
     result = await db.execute(query)
     return result.scalars().all()
+
+
+@router.get("/{task_id}", response_model=TaskOut)
+async def get_task(
+    task_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    task = await _get_task_or_404(db, task_id)
+    if not _is_task_in_scope(task, current_user):
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
 
 
 @router.post("", response_model=TaskOut, status_code=201)
@@ -164,18 +183,20 @@ async def update_task_status(
     Status changes follow a fixed workflow, and WHO can make each specific
     transition depends on their role:
 
-      To Do -------------> In Progress   (assignee only)
-      In Progress --------> Review        (reviewer only)
-      Review --------------> Done         (reviewer only)
-      Review --------------> Rejected     (reviewer only)
-      Rejected -----------> In Progress   (assignee only, to resubmit)
+      To Do -------------> Review        (assignee only, submits their work)
+      Reschedule ---------> Review        (assignee only, resubmits)
+      Review --------------> Done         (reviewer only, approves)
+
+    Review -> Reschedule is NOT handled here — it requires a new due date,
+    so it goes through the dedicated /{task_id}/reschedule endpoint instead.
 
     "Assignee" means current_user.id == task.assigned_to.
     "Reviewer" means the user's role has the "task:review" permission.
     Anyone with "task:edit" bypasses all of the above (e.g. Admin).
 
     Any transition not in this table (skipping steps, going backwards
-    outside of the Rejected case, etc.) is rejected with a 400.
+    outside of the Reschedule case, or trying to jump straight to
+    Reschedule through this endpoint) is rejected with a 400/403.
     """
     task = await _get_task_or_404(db, task_id)
 
@@ -185,13 +206,11 @@ async def update_task_status(
 
     if not has_edit_permission:
         ASSIGNEE_TRANSITIONS = {
-            (TaskStatus.TODO, TaskStatus.IN_PROGRESS),
-            (TaskStatus.REJECTED, TaskStatus.IN_PROGRESS),
+            (TaskStatus.TODO, TaskStatus.REVIEW),
+            (TaskStatus.RESCHEDULE, TaskStatus.REVIEW),
         }
         REVIEWER_TRANSITIONS = {
-            (TaskStatus.IN_PROGRESS, TaskStatus.REVIEW),
             (TaskStatus.REVIEW, TaskStatus.DONE),
-            (TaskStatus.REVIEW, TaskStatus.REJECTED),
         }
         transition = (task.status, payload.status)
 
@@ -218,6 +237,40 @@ async def update_task_status(
     await db.refresh(task)
     return task
 
+@router.patch("/{task_id}/reschedule", response_model=TaskOut)
+async def reschedule_task(
+    task_id: int,
+    payload: RescheduleRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    The one and only way a task moves Review -> Reschedule. Separate from
+    update_task_status because this transition requires extra data (the new
+    due date) that the generic status endpoint has no way to carry.
+    """
+    task = await _get_task_or_404(db, task_id)
+
+    if not _is_task_in_scope(task, current_user):
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if not has_permission(current_user, "task:review"):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to reschedule this task.",
+        )
+
+    if task.status != TaskStatus.REVIEW:
+        raise HTTPException(
+            status_code=400,
+            detail="Only tasks currently in Review can be rescheduled.",
+        )
+
+    task.status = TaskStatus.RESCHEDULE
+    task.due_date = payload.new_due_date
+    await db.commit()
+    await db.refresh(task)
+    return task
 
 @router.patch("/{task_id}/assign", response_model=TaskOut)
 async def assign_task(
@@ -294,3 +347,79 @@ async def _get_task_or_404(db: AsyncSession, task_id: int) -> Task:
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
+
+@router.post("/{task_id}/attachments", response_model=AttachmentOut, status_code=201)
+async def upload_attachment(
+    task_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Saves the uploaded file to disk under uploads/{task_id}/, and creates a
+    matching Attachment row pointing to it. Gated by the same task-visibility
+    scope as everything else — if you can't see a task, you can't attach
+    files to it either.
+    """
+    task = await _get_task_or_404(db, task_id)
+
+    if not _is_task_in_scope(task, current_user):
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task_dir = os.path.join(UPLOAD_DIR, str(task_id))
+    os.makedirs(task_dir, exist_ok=True)
+
+    stored_name = f"{uuid.uuid4().hex}_{file.filename}"
+    stored_path = os.path.join(task_dir, stored_name)
+
+    content = await file.read()
+    with open(stored_path, "wb") as f:
+        f.write(content)
+
+    attachment = Attachment(
+        task_id=task_id,
+        filename=file.filename,
+        stored_path=stored_path,
+        content_type=file.content_type or "application/octet-stream",
+        size_bytes=len(content),
+        uploaded_by=current_user.id,
+    )
+    db.add(attachment)
+    await db.commit()
+    await db.refresh(attachment)
+    return attachment
+
+
+@router.get("/{task_id}/attachments", response_model=list[AttachmentOut])
+async def list_attachments(
+    task_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    task = await _get_task_or_404(db, task_id)
+    if not _is_task_in_scope(task, current_user):
+        raise HTTPException(status_code=404, detail="Task not found")
+    result = await db.execute(select(Attachment).where(Attachment.task_id == task_id))
+    return result.scalars().all()
+
+
+@router.get("/attachments/{attachment_id}/download")
+async def download_attachment(
+    attachment_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(select(Attachment).where(Attachment.id == attachment_id))
+    attachment = result.scalar_one_or_none()
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    task = await _get_task_or_404(db, attachment.task_id)
+    if not _is_task_in_scope(task, current_user):
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    return FileResponse(
+        attachment.stored_path,
+        media_type=attachment.content_type,
+        filename=attachment.filename,
+    )
