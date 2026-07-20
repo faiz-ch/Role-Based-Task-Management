@@ -120,35 +120,37 @@ export function TasksPage() {
 
   const canCreate = permissions.includes("task:create");
   const canEdit = permissions.includes("task:edit");
-  const canAssignAll = permissions.includes("task:assign_all");
-  const canAssignDepartment = permissions.includes("task:assign_department");
-  const canViewAll = permissions.includes("task:view_all");
-  const canViewDepartment = permissions.includes("task:view_department");
-  const canAssign = canAssignAll || canAssignDepartment;
+  const canAssign = permissions.includes("task:assign");
+  const canViewAll = permissions.includes("task:view");
 
   useEffect(() => {
-    async function loadData() {
-      try {
-        setLoading(true);
-        setError(null);
-        const [fetchedTasks, fetchedUsers, fetchedDepartments] = await Promise.all([
-          canViewAll && scope === "mine" && currentUser
-            ? getTasks({ assignedTo: currentUser.id })
-            : getTasks(),
-          getUsers(),
-          getDepartments(),
-        ]);
-        setTasks(fetchedTasks);
-        setUsers(fetchedUsers);
-        setDepartments(fetchedDepartments);
-      } catch (err: any) {
-        setError(err?.message || "Failed to load tasks data.");
-      } finally {
-        setLoading(false);
+  async function loadData() {
+    try {
+      setLoading(true);
+      setError(null);
+      const [tasksResult, usersResult, departmentsResult] = await Promise.allSettled([
+        canViewAll && scope === "mine" && currentUser
+          ? getTasks({ assignedTo: currentUser.id })
+          : getTasks(),
+        getUsers(),
+        getDepartments(),
+      ]);
+
+      setTasks(tasksResult.status === "fulfilled" ? tasksResult.value : []);
+      setUsers(usersResult.status === "fulfilled" ? usersResult.value : []);
+      setDepartments(departmentsResult.status === "fulfilled" ? departmentsResult.value : []);
+
+      if (tasksResult.status === "rejected") {
+        setError((tasksResult.reason as any)?.message || "Failed to load tasks.");
       }
+      // Intentionally silent if users/departments fail — those are
+      // supplementary data (names/dropdowns), not the core content of this page.
+    } finally {
+      setLoading(false);
     }
-    loadData();
-  }, [scope, canViewAll, currentUser]);
+  }
+  loadData();
+}, [scope, canViewAll, currentUser]);
 
   // Filter tasks
   const filteredTasks = tasks.filter((task) => {

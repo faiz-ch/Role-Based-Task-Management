@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Plus, AlertTriangle, Trash2, CheckCircle2 } from "lucide-react";
+import { Plus, AlertTriangle, Trash2, CheckCircle2, ArrowLeft, ArrowRight } from "lucide-react";
 import { Role, Category, Department } from "../types";
 import { getRoles, createRole, setRoleCategory, deleteRole, setRoleDepartments, setRoleAssignableCategories } from "../api/roles";
 import { getCategories } from "../api/categories";
@@ -34,9 +34,9 @@ function SelectAllChecklist<T extends { id: number; name: string }>({
   const allSelected = items.length > 0 && selectedIds.length === items.length;
 
   return (
-    <div className="space-y-2">
+    <div className="grid grid-cols-2 gap-2">
       <label
-        className={`flex items-center gap-3.5 p-3.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
+        className={`col-span-2 flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
           allSelected ? "border-blue-200 bg-blue-50" : "border-border hover:bg-muted/30"
         }`}
       >
@@ -46,19 +46,17 @@ function SelectAllChecklist<T extends { id: number; name: string }>({
           onChange={() => onToggleAll(!allSelected)}
           className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
         />
-        <div className="flex-1 min-w-0">
-          <p className={`text-sm font-semibold ${allSelected ? "text-blue-700" : "text-foreground"}`}>
-            Select All
-          </p>
-        </div>
-        {allSelected && <CheckCircle2 size={15} className="text-blue-500 flex-shrink-0" />}
+        <p className={`text-sm font-semibold ${allSelected ? "text-blue-700" : "text-foreground"}`}>
+          Select All
+        </p>
+        {allSelected && <CheckCircle2 size={14} className="text-blue-500 flex-shrink-0 ml-auto" />}
       </label>
       {items.map((item) => {
         const on = selectedIds.includes(item.id);
         return (
           <label
             key={item.id}
-            className={`flex items-center gap-3.5 p-3.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
+            className={`flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
               on ? "border-blue-200 bg-blue-50" : "border-border hover:bg-muted/30"
             }`}
           >
@@ -68,15 +66,29 @@ function SelectAllChecklist<T extends { id: number; name: string }>({
               onChange={() => onToggleOne(item.id)}
               className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
             />
-            <div className="flex-1 min-w-0">
-              <p className={`text-sm font-semibold ${on ? "text-blue-700" : "text-foreground"}`}>
-                {item.name}
-              </p>
-            </div>
-            {on && <CheckCircle2 size={15} className="text-blue-500 flex-shrink-0" />}
+            <p className={`text-sm font-medium truncate ${on ? "text-blue-700" : "text-foreground"}`}>
+              {item.name}
+            </p>
           </label>
         );
       })}
+    </div>
+  );
+}
+
+// Thin progress bar at the top of the wizard — one filled segment per step,
+// current + completed steps are filled, upcoming steps are dim.
+function WizardProgress({ total, current }: { total: number; current: number }) {
+  return (
+    <div className="flex items-center gap-1.5 mb-5">
+      {Array.from({ length: total }).map((_, i) => (
+        <div
+          key={i}
+          className={`h-1 flex-1 rounded-full transition-colors ${
+            i <= current ? "bg-blue-500" : "bg-muted"
+          }`}
+        />
+      ))}
     </div>
   );
 }
@@ -90,6 +102,7 @@ export function RolesPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [showNew, setShowNew] = useState(false);
+  const [wizardStep, setWizardStep] = useState(0);
   const [newName, setNewName] = useState("");
   const [newCategoryId, setNewCategoryId] = useState<number | "">("");
   const [newAllDepartments, setNewAllDepartments] = useState(false);
@@ -156,8 +169,68 @@ export function RolesPage() {
   const hasUserManagePerm = selectedCategory?.permissions.includes("user:manage");
 
   const newCategory = categories.find((c) => c.id === (newCategoryId === "" ? null : Number(newCategoryId)));
-  const newHasDeptScopedPerms = newCategory?.permissions.some((p) => DEPARTMENT_SCOPED_PERMISSIONS.has(p));
-  const newHasUserManagePerm = newCategory?.permissions.includes("user:manage");
+  const newHasDeptScopedPerms = !!newCategory?.permissions.some((p) => DEPARTMENT_SCOPED_PERMISSIONS.has(p));
+  const newHasUserManagePerm = !!newCategory?.permissions.includes("user:manage");
+
+  // The wizard's step list is dynamic — steps for sections that don't apply
+  // to the currently selected category are skipped entirely, not just
+  // hidden. "basic" (name + category) always exists.
+  const wizardSteps: Array<"basic" | "departments" | "assignable"> = [
+    "basic",
+    ...(newHasDeptScopedPerms ? (["departments"] as const) : []),
+    ...(newHasUserManagePerm ? (["assignable"] as const) : []),
+  ];
+  // Guard against a stale index if the step list shrank (e.g. category
+  // changed to one with fewer applicable sections) after landing on a step.
+  const currentStepIndex = Math.min(wizardStep, wizardSteps.length - 1);
+  const currentStepKey = wizardSteps[currentStepIndex];
+  const isLastStep = currentStepIndex === wizardSteps.length - 1;
+
+  function resetWizard() {
+    setWizardStep(0);
+    setNewName("");
+    setNewCategoryId("");
+    setNewAllDepartments(false);
+    setNewDepartmentIds([]);
+    setNewAssignableCategoryIds([]);
+    setError(null);
+  }
+
+  function openWizard() {
+    resetWizard();
+    setShowNew(true);
+  }
+
+  function closeWizard() {
+    setShowNew(false);
+    resetWizard();
+  }
+
+  function goNext() {
+    setError(null);
+    if (currentStepKey === "basic" && !newName.trim()) {
+      setError("Enter a role name to continue.");
+      return;
+    }
+    if (
+      currentStepKey === "departments" &&
+      !newAllDepartments &&
+      newDepartmentIds.length === 0
+    ) {
+      setError("Select at least one department, or use Select All.");
+      return;
+    }
+    if (isLastStep) {
+      handleCreateRole();
+      return;
+    }
+    setWizardStep((s) => Math.min(s + 1, wizardSteps.length - 1));
+  }
+
+  function goBack() {
+    setError(null);
+    setWizardStep((s) => Math.max(s - 1, 0));
+  }
 
   async function handleCategoryChange(roleId: number, categoryIdStr: string) {
     try {
@@ -274,12 +347,7 @@ export function RolesPage() {
       );
       setRoles((prev) => [...prev, nr]);
       setSelectedId(nr.id);
-      setNewName("");
-      setNewCategoryId("");
-      setNewAllDepartments(false);
-      setNewDepartmentIds([]);
-      setNewAssignableCategoryIds([]);
-      setShowNew(false);
+      closeWizard();
     } catch (err: any) {
       setError(err?.message || "Failed to create role.");
     }
@@ -314,7 +382,7 @@ export function RolesPage() {
         <p className="text-sm text-muted-foreground">Define role names and assign them to categories</p>
       </div>
 
-      {error && (
+      {error && !showNew && (
         <div className="mb-4 flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm">
           <AlertTriangle size={14} className="text-red-500 flex-shrink-0" />
           <span className="text-red-700">{error}</span>
@@ -327,7 +395,7 @@ export function RolesPage() {
           <div className="flex items-center justify-between px-4 py-3.5 border-b border-border">
             <span className="text-sm font-semibold text-foreground">Roles</span>
             <button
-              onClick={() => setShowNew(true)}
+              onClick={openWizard}
               className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-semibold transition-colors cursor-pointer"
             >
               <Plus size={12} /> New
@@ -442,86 +510,104 @@ export function RolesPage() {
       </div>
 
       {showNew && (
-        <Dlg title="Create Role" onClose={() => setShowNew(false)}>
-          <div className="space-y-4">
-            <FldInput
-              label="Role name"
-              placeholder="e.g. Team Lead"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              autoFocus
-            />
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Category (optional)</label>
-              <select
-                value={newCategoryId}
-                onChange={(e) => setNewCategoryId(e.target.value === "" ? "" : Number(e.target.value))}
-                className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-white text-foreground focus:outline-none focus:border-blue-400"
-              >
-                <option value="">No category</option>
-                {categories.map((cat) => (
-                  <option key={cat.id} value={cat.id}>
-                    {cat.name}
-                  </option>
-                ))}
-              </select>
+        <Dlg title="Create role" onClose={closeWizard}>
+          <WizardProgress total={wizardSteps.length} current={currentStepIndex} />
+
+          {error && (
+            <div className="mb-4 flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5 text-xs">
+              <AlertTriangle size={13} className="text-red-500 flex-shrink-0" />
+              <span className="text-red-700">{error}</span>
             </div>
-            {/* Departments section - only show if category has department-scoped permissions */}
-            {newHasDeptScopedPerms && (
-              <div>
-                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Departments</h4>
-                <SelectAllChecklist
-                  items={departments}
-                  selectedIds={newAllDepartments ? departments.map((d) => d.id) : newDepartmentIds}
-                  onToggleAll={(selectAll) => {
-                    setNewAllDepartments(selectAll);
-                    setNewDepartmentIds(selectAll ? departments.map((d) => d.id) : []);
-                  }}
-                  onToggleOne={(deptId) => {
-                    const baseline = newAllDepartments ? departments.map((d) => d.id) : newDepartmentIds;
-                    const currentlyOn = baseline.includes(deptId);
-                    const nextIds = currentlyOn ? baseline.filter((id) => id !== deptId) : [...baseline, deptId];
-                    setNewDepartmentIds(nextIds);
-                    setNewAllDepartments(nextIds.length === departments.length && departments.length > 0);
-                  }}
-                />
-              </div>
-            )}
+          )}
 
-            {/* Can Assign section - only show if category has user:manage permission */}
-            {newHasUserManagePerm && (
-              <div>
-                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Can Assign (when creating/editing users)</h4>
-                <SelectAllChecklist
-                  items={categories}
-                  selectedIds={newAssignableCategoryIds}
-                  onToggleAll={(selectAll) => setNewAssignableCategoryIds(selectAll ? categories.map((c) => c.id) : [])}
-                  onToggleOne={(catId) => {
-                    setNewAssignableCategoryIds((prev) =>
-                      prev.includes(catId) ? prev.filter((id) => id !== catId) : [...prev, catId]
-                    );
-                  }}
-                />
-              </div>
-            )}
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+            Step {currentStepIndex + 1} of {wizardSteps.length}
+          </p>
 
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              The new role will inherit permissions from its category. Department scope and assignable categories are configured per role.
-            </p>
-            <div className="flex justify-end gap-2 pt-2">
+          {currentStepKey === "basic" && (
+            <div className="space-y-4">
+              <FldInput
+                label="Role name"
+                placeholder="e.g. Team Lead"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                autoFocus
+              />
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Category (optional)</label>
+                <select
+                  value={newCategoryId}
+                  onChange={(e) => setNewCategoryId(e.target.value === "" ? "" : Number(e.target.value))}
+                  className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-white text-foreground focus:outline-none focus:border-blue-400"
+                >
+                  <option value="">No category</option>
+                  {categories.map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
+                  The new role will inherit permissions from its category.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {currentStepKey === "departments" && (
+            <SelectAllChecklist
+              items={departments}
+              selectedIds={newAllDepartments ? departments.map((d) => d.id) : newDepartmentIds}
+              onToggleAll={(selectAll) => {
+                setNewAllDepartments(selectAll);
+                setNewDepartmentIds(selectAll ? departments.map((d) => d.id) : []);
+              }}
+              onToggleOne={(deptId) => {
+                const baseline = newAllDepartments ? departments.map((d) => d.id) : newDepartmentIds;
+                const currentlyOn = baseline.includes(deptId);
+                const nextIds = currentlyOn ? baseline.filter((id) => id !== deptId) : [...baseline, deptId];
+                setNewDepartmentIds(nextIds);
+                setNewAllDepartments(nextIds.length === departments.length && departments.length > 0);
+              }}
+            />
+          )}
+
+          {currentStepKey === "assignable" && (
+            <SelectAllChecklist
+              items={categories}
+              selectedIds={newAssignableCategoryIds}
+              onToggleAll={(selectAll) => setNewAssignableCategoryIds(selectAll ? categories.map((c) => c.id) : [])}
+              onToggleOne={(catId) => {
+                setNewAssignableCategoryIds((prev) =>
+                  prev.includes(catId) ? prev.filter((id) => id !== catId) : [...prev, catId]
+                );
+              }}
+            />
+          )}
+
+          <div className="flex justify-between gap-2 pt-5 mt-5 border-t border-border">
+            {currentStepIndex > 0 ? (
               <button
-                onClick={() => setShowNew(false)}
+                onClick={goBack}
+                className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
+              >
+                <ArrowLeft size={14} /> Back
+              </button>
+            ) : (
+              <button
+                onClick={closeWizard}
                 className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
               >
                 Cancel
               </button>
-              <button
-                onClick={handleCreateRole}
-                className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
-              >
-                Create Role
-              </button>
-            </div>
+            )}
+            <button
+              onClick={goNext}
+              className="flex items-center gap-1.5 px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+            >
+              {isLastStep ? "Create role" : "Next"}
+              {!isLastStep && <ArrowRight size={14} />}
+            </button>
           </div>
         </Dlg>
       )}
