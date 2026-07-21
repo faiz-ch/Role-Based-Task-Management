@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router";
-import { ArrowLeft, AlertTriangle, Plus, Image, FileText, X } from "lucide-react";
+import { ArrowLeft, AlertTriangle, Plus, Image, FileText, X, Trash2 } from "lucide-react";
 import { Task, UserType, Department } from "../types";
 import { getTask, updateTaskStatus, rescheduleTask } from "../api/tasks";
 import { getUsers } from "../api/users";
 import { getDepartments } from "../api/departments";
-import { uploadAttachment, getAttachments, getAttachmentDownloadUrl, fetchAttachmentBlobUrl, Attachment } from "../api/attachments";
+import { uploadAttachment, getAttachments, getAttachmentDownloadUrl, fetchAttachmentBlobUrl, deleteAttachment, Attachment } from "../api/attachments";
 import { useAuth } from "../context/AuthContext";
 import { StatusBadge } from "../components/StatusBadge";
 import { PriBadge } from "../components/PriBadge";
@@ -81,6 +81,10 @@ export function TaskDetailPage() {
   const assignee = users.find((u) => u.id === task?.assigneeId);
   const department = departments.find((d) => d.id === task?.departmentId);
 
+  const canDeleteAttachments =
+    currentUser?.id === task?.assigneeId &&
+    (task?.status === "To Do" || task?.status === "Reschedule");
+
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file || !taskId) return;
@@ -144,6 +148,15 @@ export function TaskDetailPage() {
       setError(err?.message || "Failed to reschedule task");
     } finally {
       setRescheduleLoading(false);
+    }
+  }
+
+  async function handleDeleteAttachment(attachmentId: number) {
+    try {
+      await deleteAttachment(attachmentId);
+      setAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
+    } catch (err: any) {
+      setError(err?.message || "Failed to delete attachment");
     }
   }
 
@@ -270,6 +283,18 @@ export function TaskDetailPage() {
                           Uploaded by {uploader?.name || "Unknown"} · {formatFileSize(attachment.sizeBytes)}
                         </p>
                       </div>
+                      {canDeleteAttachments && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteAttachment(attachment.id);
+                          }}
+                          className="p-1.5 hover:bg-red-50 rounded transition-colors cursor-pointer"
+                          title="Delete attachment"
+                        >
+                          <Trash2 size={14} className="text-red-400" />
+                        </button>
+                      )}
                     </div>
                   );
                 })}

@@ -423,3 +423,47 @@ async def download_attachment(
         media_type=attachment.content_type,
         filename=attachment.filename,
     )
+
+
+@router.delete("/attachments/{attachment_id}", status_code=204)
+async def delete_attachment(
+    attachment_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Delete an attachment. Only the task's assignee can delete attachments,
+    and only while the task is in an editable state (To Do or Reschedule).
+    Once a task is submitted for review (Review or Done status), attachments
+    are locked until the task is sent back to Reschedule.
+    """
+    result = await db.execute(select(Attachment).where(Attachment.id == attachment_id))
+    attachment = result.scalar_one_or_none()
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    task = await _get_task_or_404(db, attachment.task_id)
+    if not _is_task_in_scope(task, current_user):
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    # Only the assignee can delete attachments
+    if current_user.id != task.assigned_to:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the task's assignee can delete attachments"
+        )
+
+    # Can only delete when task is in editable state
+    if task.status not in (TaskStatus.TODO, TaskStatus.RESCHEDULE):
+        raise HTTPException(
+            status_code=400,
+            detail="Attachments can't be removed once the task is submitted for review"
+        )
+
+    # Delete file from disk if it exists
+    if os.path.exists(attachment.stored_path):
+        os.remove(attachment.stored_path)
+
+    # Delete from database
+    await db.delete(attachment)
+    await db.commit()

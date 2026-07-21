@@ -115,6 +115,7 @@ export function TasksPage() {
 
   const [showNew, setShowNew] = useState(false);
   const [editTask, setEditTask] = useState<Task | null>(null);
+  const [deleteConfirmTaskId, setDeleteConfirmTaskId] = useState<number | null>(null);
   const [form, setForm] = useState<TForm>({
     title: "",
     description: "",
@@ -305,11 +306,11 @@ export function TasksPage() {
   }
 
   async function handleDelete(taskId: number) {
-    if (!window.confirm("Are you sure you want to delete this task?")) return;
     try {
       setError(null);
       await deleteTask(taskId);
       setTasks((prev) => prev.filter((t) => t.id !== taskId));
+      setDeleteConfirmTaskId(null);
     } catch (err: any) {
       setError(err?.message || "Failed to delete task.");
     }
@@ -557,7 +558,7 @@ export function TasksPage() {
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleDelete(task.id);
+                                  setDeleteConfirmTaskId(task.id);
                                 }}
                                 className="p-1.5 hover:bg-red-50 rounded transition-colors cursor-pointer"
                                 title="Delete task"
@@ -751,6 +752,30 @@ export function TasksPage() {
             >
               Save Changes
             </button>
+          </div>
+        </Dlg>
+      )}
+
+      {deleteConfirmTaskId !== null && (
+        <Dlg title="Delete task" onClose={() => setDeleteConfirmTaskId(null)}>
+          <div className="space-y-4">
+            <p className="text-sm text-foreground">
+              Are you sure you want to delete this task? This cannot be undone.
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setDeleteConfirmTaskId(null)}
+                className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDelete(deleteConfirmTaskId)}
+                className="px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors cursor-pointer"
+              >
+                Delete
+              </button>
+            </div>
           </div>
         </Dlg>
       )}

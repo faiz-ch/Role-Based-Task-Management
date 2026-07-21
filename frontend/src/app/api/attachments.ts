@@ -49,3 +49,7 @@ export async function fetchAttachmentBlobUrl(attachmentId: number): Promise<stri
   const blob = await res.blob();
   return URL.createObjectURL(blob);
 }
+
+export async function deleteAttachment(attachmentId: number): Promise<void> {
+  await apiFetch(`/tasks/attachments/${attachmentId}`, { method: "DELETE" });
+}
