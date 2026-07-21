@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useNavigate, useLocation } from "react-router";
 import {
   LayoutDashboard,
   CheckSquare,
@@ -28,17 +29,23 @@ const NAV: {
   { id: "departments", label: "Departments", Icon: Building2, perm: "department:manage" },
 ];
 
-export function Shell({
-  page,
-  setPage,
-  children,
-}: {
-  page: Page;
-  setPage: (p: Page) => void;
-  children: React.ReactNode;
-}) {
+export function Shell({ children }: { children: React.ReactNode }) {
   const { currentUser, permissions, logout } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
+
+  // Derive current page from pathname
+  const page: Page = (() => {
+    const path = location.pathname;
+    if (path === "/dashboard") return "dashboard";
+    if (path.startsWith("/tasks")) return "tasks";
+    if (path === "/users") return "users";
+    if (path === "/roles") return "roles";
+    if (path === "/categories") return "categories";
+    if (path === "/departments") return "departments";
+    return "tasks"; // default
+  })();
 
   if (!currentUser) return <>{children}</>;
 
@@ -48,7 +55,7 @@ export function Shell({
 
   return (
     <div
-      className="min-h-screen flex bg-background"
+      className="h-screen flex bg-background overflow-hidden"
       style={{ fontFamily: "'Inter', sans-serif" }}
     >
       {/* Sidebar */}
@@ -78,7 +85,7 @@ export function Shell({
             return (
               <button
                 key={id}
-                onClick={() => setPage(id)}
+                onClick={() => navigate(`/${id}`)}
                 title={collapsed ? label : undefined}
                 className={`w-full flex items-center gap-3 px-2.5 py-2.5 rounded-lg transition-all text-sm font-medium cursor-pointer ${
                   active

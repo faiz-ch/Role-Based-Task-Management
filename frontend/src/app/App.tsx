@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect } from "react";
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { Page } from "./types";
 import { Shell } from "./components/Shell";
@@ -13,75 +14,163 @@ import { CategoriesPage } from "./pages/CategoriesPage";
 import { DepartmentsPage } from "./pages/DepartmentsPage";
 import { TaskDetailPage } from "./pages/TaskDetailPage";
 
-function AppContent() {
+// Auth guard component to redirect unauthenticated users
+function AuthGuard({ children }: { children: React.ReactNode }) {
   const { currentUser, permissions } = useAuth();
-  const [page, setPage] = useState<Page>("login");
-  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
+  const navigate = useNavigate();
+  const location = useLocation();
 
-  // Sync page routing on login/logout
   useEffect(() => {
-    if (currentUser) {
-      setPage(permissions.includes("dashboard:view") ? "dashboard" : "tasks");
-    } else {
-      setPage("login");
+    if (!currentUser) {
+      navigate("/login", { replace: true });
+    } else if ((location.pathname === "/login" || location.pathname === "/register") && currentUser) {
+      // Redirect authenticated users away from login/register
+      navigate(permissions.includes("dashboard:view") ? "/dashboard" : "/tasks", { replace: true });
     }
-  }, [currentUser, permissions]);
+  }, [currentUser, permissions, navigate, location.pathname]);
 
-  // If not logged in, render login/register pages
   if (!currentUser) {
-    if (page === "register") {
-      return <RegisterPage onGoLogin={() => setPage("login")} />;
-    }
-    return <LoginPage onGoRegister={() => setPage("register")} />;
+    return null;
   }
 
-  const noRole = !currentUser.role;
+  return <>{children}</>;
+}
+
+// Public routes (login/register) - redirect if already authenticated
+function PublicRoute({ children }: { children: React.ReactNode }) {
+  const { currentUser, permissions } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (currentUser) {
+      navigate(permissions.includes("dashboard:view") ? "/dashboard" : "/tasks", { replace: true });
+    }
+  }, [currentUser, permissions, navigate]);
+
+  if (currentUser) {
+    return null;
+  }
+
+  return <>{children}</>;
+}
+
+function AppContent() {
+  const { currentUser, permissions } = useAuth();
+  const navigate = useNavigate();
+
+  // Permission-based redirect after login
+  useEffect(() => {
+    if (currentUser && permissions.length > 0) {
+      const target = permissions.includes("dashboard:view") ? "/dashboard" : "/tasks";
+      // Only redirect if we're on a public route
+      if (window.location.pathname === "/login" || window.location.pathname === "/register") {
+        navigate(target, { replace: true });
+      }
+    }
+  }, [currentUser, permissions, navigate]);
+
+  const noRole = !currentUser?.role;
 
   return (
-    <Shell page={page} setPage={setPage}>
-      {noRole ? (
-        <NoRoleView />
-      ) : (
-        <>
-          {page === "dashboard" && permissions.includes("dashboard:view") && (
-            <DashboardPage />
-          )}
-          {page === "tasks" && (
-            <TasksPage
-              onOpenTask={(id: number) => {
-                setSelectedTaskId(id);
-                setPage("taskDetail");
-              }}
-            />
-          )}
-          {page === "users" && permissions.includes("user:manage") && (
-            <UsersPage />
-          )}
-          {page === "roles" && permissions.includes("role:manage") && (
-            <RolesPage />
-          )}
-          {page === "categories" && permissions.includes("role:manage") && (
-            <CategoriesPage />
-          )}
-          {page === "departments" && permissions.includes("department:manage") && (
-            <DepartmentsPage />
-          )}
-          {page === "taskDetail" && selectedTaskId !== null && (
-            <TaskDetailPage
-              taskId={selectedTaskId}
-              onBack={() => setPage("tasks")}
-            />
-          )}
-        </>
-      )}
-    </Shell>
+    <Routes>
+      {/* Public routes */}
+      <Route
+        path="/login"
+        element={
+          <PublicRoute>
+            <LoginPage />
+          </PublicRoute>
+        }
+      />
+      <Route
+        path="/register"
+        element={
+          <PublicRoute>
+            <RegisterPage />
+          </PublicRoute>
+        }
+      />
+
+      {/* Protected routes */}
+      <Route
+        path="/*"
+        element={
+          <AuthGuard>
+            {noRole ? (
+              <NoRoleView />
+            ) : (
+              <Shell>
+                <Routes>
+                  <Route
+                    path="/dashboard"
+                    element={
+                      permissions.includes("dashboard:view") ? (
+                        <DashboardPage />
+                      ) : (
+                        <Navigate to="/tasks" replace />
+                      )
+                    }
+                  />
+                  <Route path="/tasks" element={<TasksPage />} />
+                  <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
+                  <Route
+                    path="/users"
+                    element={
+                      permissions.includes("user:manage") ? (
+                        <UsersPage />
+                      ) : (
+                        <Navigate to="/tasks" replace />
+                      )
+                    }
+                  />
+                  <Route
+                    path="/roles"
+                    element={
+                      permissions.includes("role:manage") ? (
+                        <RolesPage />
+                      ) : (
+                        <Navigate to="/tasks" replace />
+                      )
+                    }
+                  />
+                  <Route
+                    path="/categories"
+                    element={
+                      permissions.includes("role:manage") ? (
+                        <CategoriesPage />
+                      ) : (
+                        <Navigate to="/tasks" replace />
+                      )
+                    }
+                  />
+                  <Route
+                    path="/departments"
+                    element={
+                      permissions.includes("department:manage") ? (
+                        <DepartmentsPage />
+                      ) : (
+                        <Navigate to="/tasks" replace />
+                      )
+                    }
+                  />
+                  <Route path="/" element={<Navigate to={permissions.includes("dashboard:view") ? "/dashboard" : "/tasks"} replace />} />
+                  <Route path="*" element={<Navigate to={permissions.includes("dashboard:view") ? "/dashboard" : "/tasks"} replace />} />
+                </Routes>
+              </Shell>
+            )}
+          </AuthGuard>
+        }
+      />
+    </Routes>
   );
 }
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <BrowserRouter>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </BrowserRouter>
   );
 }

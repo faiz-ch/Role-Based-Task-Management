@@ -4,6 +4,9 @@ export const API_BASE_URL = window.location.hostname === "localhost"
   ? "http://localhost:8000"
   : "https://fhk9c4kk-8000.inc1.devtunnels.ms";
 
+const ACCESS_TOKEN_KEY = "access_token";
+const REFRESH_TOKEN_KEY = "refresh_token";
+
 let accessToken: string | null = null;
 let refreshToken: string | null = null;
 let logoutCallback: (() => void) | null = null;
@@ -13,11 +16,15 @@ let refreshSubscribers: ((token: string) => void)[] = [];
 export function setTokens(access: string, refresh: string) {
   accessToken = access;
   refreshToken = refresh;
+  localStorage.setItem(ACCESS_TOKEN_KEY, access);
+  localStorage.setItem(REFRESH_TOKEN_KEY, refresh);
 }
 
 export function clearTokens() {
   accessToken = null;
   refreshToken = null;
+  localStorage.removeItem(ACCESS_TOKEN_KEY);
+  localStorage.removeItem(REFRESH_TOKEN_KEY);
 }
 
 export function getAccessToken() {
@@ -26,6 +33,19 @@ export function getAccessToken() {
 
 export function getRefreshToken() {
   return refreshToken;
+}
+
+export function getStoredRefreshToken(): string | null {
+  return localStorage.getItem(REFRESH_TOKEN_KEY);
+}
+
+export function initializeTokensFromStorage() {
+  const access = localStorage.getItem(ACCESS_TOKEN_KEY);
+  const refresh = localStorage.getItem(REFRESH_TOKEN_KEY);
+  if (access && refresh) {
+    accessToken = access;
+    refreshToken = refresh;
+  }
 }
 
 export function registerLogoutCallback(cb: () => void) {

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router";
 import { Plus, Edit2, Trash2, AlertTriangle, ChevronDown, ChevronRight, Search } from "lucide-react";
 import { Task, UserType, Status, Priority, Department } from "../types";
 import { useAuth } from "../context/AuthContext";
@@ -95,12 +96,8 @@ function getValidTransitions(
   return [];
 }
 
-// Main page component
-interface TasksPageProps {
-  onOpenTask?: (id: number) => void;
-}
-
-export function TasksPage({ onOpenTask }: TasksPageProps = {}) {
+export function TasksPage() {
+  const navigate = useNavigate();
   const { currentUser, permissions } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [users, setUsers] = useState<UserType[]>([]);
@@ -501,7 +498,7 @@ export function TasksPage({ onOpenTask }: TasksPageProps = {}) {
                             <div className="flex items-center gap-2 mb-2">
                               <h3 
                                 className="text-sm font-medium text-foreground cursor-pointer hover:text-blue-600 transition-colors"
-                                onClick={() => onOpenTask?.(task.id)}
+                                onClick={() => navigate(`/tasks/${task.id}`)}
                               >
                                 {task.title}
                               </h3>

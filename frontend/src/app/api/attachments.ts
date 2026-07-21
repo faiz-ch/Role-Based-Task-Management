@@ -40,3 +40,12 @@ export async function getAttachments(taskId: number): Promise<Attachment[]> {
 export function getAttachmentDownloadUrl(attachmentId: number): string {
   return `${API_BASE_URL}/tasks/attachments/${attachmentId}/download`;
 }
+
+export async function fetchAttachmentBlobUrl(attachmentId: number): Promise<string> {
+  const res = await fetch(getAttachmentDownloadUrl(attachmentId), {
+    headers: { Authorization: `Bearer ${getAccessToken()}` },
+  });
+  if (!res.ok) throw new Error("Failed to fetch attachment");
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}

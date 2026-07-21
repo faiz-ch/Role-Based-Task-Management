@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from "react";
 import { UserType } from "../types";
 import { login as apiLogin, register as apiRegister } from "../api/auth";
 import { getMe, getMePermissions } from "../api/users";
-import { registerLogoutCallback, clearTokens } from "../api/client";
+import { registerLogoutCallback, clearTokens, initializeTokensFromStorage, getStoredRefreshToken, setTokens, API_BASE_URL } from "../api/client";
 
 interface AuthContextType {
   currentUser: UserType | null;
@@ -20,8 +20,9 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [currentUser, setCurrentUser] = useState<UserType | null>(null);
   const [permissions, setPermissions] = useState<string[]>([]);
-  const [loading, setLoading] = useState<boolean>(false);
+  const [loading, setLoading] = useState<boolean>(true); // Start as true for initial session restoration
   const [error, setError] = useState<string | null>(null);
+  const [initialized, setInitialized] = useState<boolean>(false);
 
   const logout = React.useCallback(() => {
     clearTokens();
@@ -34,6 +35,48 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     registerLogoutCallback(logout);
   }, [logout]);
+
+  // Initialize tokens from storage and attempt silent refresh on mount
+  useEffect(() => {
+    async function restoreSession() {
+      try {
+        initializeTokensFromStorage();
+        const storedRefreshToken = getStoredRefreshToken();
+        
+        if (storedRefreshToken) {
+          // Attempt silent token refresh
+          const refreshRes = await fetch(`${API_BASE_URL}/auth/refresh`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ refresh_token: storedRefreshToken }),
+          });
+
+          if (refreshRes.ok) {
+            const tokenData = await refreshRes.json();
+            setTokens(tokenData.access_token, tokenData.refresh_token);
+            
+            // Fetch user and permissions
+            const [user, perms] = await Promise.all([getMe(), getMePermissions()]);
+            setCurrentUser(user);
+            setPermissions(perms);
+          } else {
+            // Refresh failed, clear tokens and stay logged out
+            clearTokens();
+          }
+        }
+      } catch (err) {
+        // Session restoration failed, clear tokens and stay logged out
+        clearTokens();
+      } finally {
+        setLoading(false);
+        setInitialized(true);
+      }
+    }
+
+    restoreSession();
+  }, []);
 
   async function login(email: string, password: string) {
     setLoading(true);

@@ -1,18 +1,14 @@
 import React, { useState, useEffect, useRef } from "react";
+import { useParams, useNavigate } from "react-router";
 import { ArrowLeft, AlertTriangle, Plus, Image, FileText, X } from "lucide-react";
 import { Task, UserType, Department } from "../types";
 import { getTask, updateTaskStatus, rescheduleTask } from "../api/tasks";
 import { getUsers } from "../api/users";
 import { getDepartments } from "../api/departments";
-import { uploadAttachment, getAttachments, getAttachmentDownloadUrl, Attachment } from "../api/attachments";
+import { uploadAttachment, getAttachments, getAttachmentDownloadUrl, fetchAttachmentBlobUrl, Attachment } from "../api/attachments";
 import { useAuth } from "../context/AuthContext";
 import { StatusBadge } from "../components/StatusBadge";
 import { PriBadge } from "../components/PriBadge";
-
-interface TaskDetailPageProps {
-  taskId: number;
-  onBack: () => void;
-}
 
 function fmtDate(d: string) {
   if (!d) return "—";
@@ -33,7 +29,9 @@ function formatFileSize(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
-export function TaskDetailPage({ taskId, onBack }: TaskDetailPageProps) {
+export function TaskDetailPage() {
+  const { taskId } = useParams<{ taskId: string }>();
+  const navigate = useNavigate();
   const { currentUser, permissions } = useAuth();
   const [task, setTask] = useState<Task | null>(null);
   const [users, setUsers] = useState<UserType[]>([]);
@@ -50,14 +48,19 @@ export function TaskDetailPage({ taskId, onBack }: TaskDetailPageProps) {
 
   useEffect(() => {
     async function loadData() {
+      if (!taskId) {
+        setError("Task ID is required");
+        setLoading(false);
+        return;
+      }
       try {
         setLoading(true);
         setError(null);
         const [taskResult, usersResult, departmentsResult, attachmentsResult] = await Promise.allSettled([
-          getTask(taskId),
+          getTask(Number(taskId)),
           getUsers(),
           getDepartments(),
-          getAttachments(taskId),
+          getAttachments(Number(taskId)),
         ]);
 
         setTask(taskResult.status === "fulfilled" ? taskResult.value : null);
@@ -80,12 +83,12 @@ export function TaskDetailPage({ taskId, onBack }: TaskDetailPageProps) {
 
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !taskId) return;
 
     try {
       setUploading(true);
       setError(null);
-      const uploaded = await uploadAttachment(taskId, file);
+      const uploaded = await uploadAttachment(Number(taskId), file);
       setAttachments((prev) => [...prev, uploaded]);
     } catch (err: any) {
       setError(err?.message || "Failed to upload file");
@@ -97,13 +100,24 @@ export function TaskDetailPage({ taskId, onBack }: TaskDetailPageProps) {
     }
   }
 
-  function handleAttachmentClick(attachment: Attachment) {
+  async function handleAttachmentClick(attachment: Attachment) {
+  try {
+    const blobUrl = await fetchAttachmentBlobUrl(attachment.id);
     if (attachment.contentType.startsWith("image/")) {
-      setLightboxImage(getAttachmentDownloadUrl(attachment.id));
+      setLightboxImage(blobUrl);
     } else {
-      window.open(getAttachmentDownloadUrl(attachment.id), "_blank");
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = attachment.filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
     }
+  } catch (err: any) {
+    setError(err?.message || "Failed to open attachment");
   }
+}
 
   async function handleApprove() {
     if (!task) return;
@@ -161,7 +175,7 @@ export function TaskDetailPage({ taskId, onBack }: TaskDetailPageProps) {
           <span className="text-red-700">{error || "Task not found"}</span>
         </div>
         <button
-          onClick={onBack}
+          onClick={() => navigate("/tasks")}
           className="text-sm text-blue-600 hover:text-blue-800 transition-colors cursor-pointer"
         >
           ← Back to tasks
@@ -175,7 +189,7 @@ export function TaskDetailPage({ taskId, onBack }: TaskDetailPageProps) {
       {/* Back button + breadcrumb */}
       <div className="mb-6">
         <button
-          onClick={onBack}
+          onClick={() => navigate("/tasks")}
           className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
         >
           <ArrowLeft size={16} />

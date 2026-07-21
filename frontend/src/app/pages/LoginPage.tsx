@@ -1,13 +1,11 @@
 import React, { useState } from "react";
+import { useNavigate } from "react-router";
 import { CheckSquare } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { FldInput } from "../components/FldInput";
 
-export function LoginPage({
-  onGoRegister,
-}: {
-  onGoRegister: () => void;
-}) {
+export function LoginPage() {
+  const navigate = useNavigate();
   const { login, loading, error } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -106,7 +104,7 @@ export function LoginPage({
           <p className="text-center text-sm text-muted-foreground mt-5">
             New to Nexus?{" "}
             <button
-              onClick={onGoRegister}
+              onClick={() => navigate("/register")}
               disabled={loading}
               className="text-blue-600 hover:underline font-medium cursor-pointer"
             >

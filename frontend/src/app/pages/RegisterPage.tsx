@@ -1,9 +1,11 @@
 import React, { useState } from "react";
+import { useNavigate } from "react-router";
 import { CheckSquare } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { FldInput } from "../components/FldInput";
 
-export function RegisterPage({ onGoLogin }: { onGoLogin: () => void }) {
+export function RegisterPage() {
+  const navigate = useNavigate();
   const { register, loading, error } = useAuth();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -85,7 +87,7 @@ export function RegisterPage({ onGoLogin }: { onGoLogin: () => void }) {
         <p className="text-center text-sm text-muted-foreground mt-5">
           Already have an account?{" "}
           <button
-            onClick={onGoLogin}
+            onClick={() => navigate("/login")}
             disabled={loading}
             className="text-blue-600 hover:underline font-medium cursor-pointer"
           >

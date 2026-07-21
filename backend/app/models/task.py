@@ -41,4 +41,6 @@ class Task(Base):
     creator = relationship("User", foreign_keys=[created_by], back_populates="tasks_created")
     assignee = relationship("User", foreign_keys=[assigned_to], back_populates="tasks_assigned")
     department = relationship("Department", back_populates="tasks")
-    attachments = relationship("Attachment", back_populates="task", cascade="all, delete-orphan")
+    attachments = relationship(
+    "Attachment", back_populates="task", cascade="all, delete-orphan", lazy="selectin"
+)
