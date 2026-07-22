@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     ENV: str = "development"
+    GOTENBERG_URL: str = "http://localhost:3000"
 
     class Config:
         env_file = ".env"

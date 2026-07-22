@@ -21,6 +21,7 @@ class Attachment(Base):
     size_bytes = Column(Integer, nullable=False)
     uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+    preview_path = Column(String, nullable=True)
 
     task = relationship("Task", back_populates="attachments")
     uploader = relationship("User")

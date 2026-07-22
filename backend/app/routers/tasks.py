@@ -2,7 +2,8 @@ import os
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
+from app.services.conversion import convert_to_pdf
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -467,3 +468,45 @@ async def delete_attachment(
     # Delete from database
     await db.delete(attachment)
     await db.commit()
+
+@router.get("/attachments/{attachment_id}/preview")
+async def preview_attachment(
+    attachment_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(select(Attachment).where(Attachment.id == attachment_id))
+    attachment = result.scalar_one_or_none()
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    task = await _get_task_or_404(db, attachment.task_id)
+    if not _is_task_in_scope(task, current_user):
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    if attachment.content_type == "application/pdf" or attachment.content_type.startswith("image/"):
+        return FileResponse(attachment.stored_path, media_type=attachment.content_type)
+
+    if attachment.preview_path and os.path.exists(attachment.preview_path):
+        return FileResponse(attachment.preview_path, media_type="application/pdf")
+
+    try:
+        with open(attachment.stored_path, "rb") as f:
+            original_bytes = f.read()
+        pdf_bytes = await convert_to_pdf(original_bytes, attachment.filename)
+    except Exception:
+        raise HTTPException(
+            status_code=422,
+            detail="Preview not available for this file type. Try downloading it instead.",
+        )
+
+    preview_dir = os.path.join(UPLOAD_DIR, str(attachment.task_id), "previews")
+    os.makedirs(preview_dir, exist_ok=True)
+    preview_path = os.path.join(preview_dir, f"{uuid.uuid4().hex}.pdf")
+    with open(preview_path, "wb") as f:
+        f.write(pdf_bytes)
+
+    attachment.preview_path = preview_path
+    await db.commit()
+
+    return Response(content=pdf_bytes, media_type="application/pdf")
