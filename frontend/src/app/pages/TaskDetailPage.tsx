@@ -5,7 +5,7 @@ import { Task, UserType, Department } from "../types";
 import { getTask, updateTaskStatus, rescheduleTask } from "../api/tasks";
 import { getUsers } from "../api/users";
 import { getDepartments } from "../api/departments";
-import { uploadAttachment, getAttachments, getAttachmentDownloadUrl, fetchAttachmentBlobUrl, deleteAttachment, Attachment } from "../api/attachments";
+import { uploadAttachment, getAttachments, getAttachmentDownloadUrl, fetchAttachmentBlobUrl, fetchAttachmentPreviewBlobUrl, deleteAttachment, Attachment } from "../api/attachments";
 import { useAuth } from "../context/AuthContext";
 import { StatusBadge } from "../components/StatusBadge";
 import { PriBadge } from "../components/PriBadge";
@@ -40,7 +40,7 @@ export function TaskDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [previewFile, setPreviewFile] = useState<{ id: number; url: string; filename: string; isImage: boolean } | null>(null);
   const [showReschedule, setShowReschedule] = useState(false);
   const [rescheduleDate, setRescheduleDate] = useState("");
   const [rescheduleLoading, setRescheduleLoading] = useState(false);
@@ -106,20 +106,30 @@ export function TaskDetailPage() {
 
   async function handleAttachmentClick(attachment: Attachment) {
   try {
-    const blobUrl = await fetchAttachmentBlobUrl(attachment.id);
     if (attachment.contentType.startsWith("image/")) {
-      setLightboxImage(blobUrl);
+      const blobUrl = await fetchAttachmentBlobUrl(attachment.id);
+      setPreviewFile({ id: attachment.id, url: blobUrl, filename: attachment.filename, isImage: true });
     } else {
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = attachment.filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(blobUrl);
+      const blobUrl = await fetchAttachmentPreviewBlobUrl(attachment.id);
+      setPreviewFile({ id: attachment.id, url: blobUrl, filename: attachment.filename, isImage: false });
     }
   } catch (err: any) {
-    setError(err?.message || "Failed to open attachment");
+    setError(err?.message || "Failed to preview this file. You can still download it.");
+  }
+}
+
+async function handleDownloadOriginal(attachment: { id: number; filename: string }) {
+  try {
+    const blobUrl = await fetchAttachmentBlobUrl(attachment.id);
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = attachment.filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(blobUrl);
+  } catch (err: any) {
+    setError(err?.message || "Failed to download file");
   }
 }
 
@@ -390,29 +400,42 @@ export function TaskDetailPage() {
         </div>
       </div>
 
-      {/* Lightbox overlay */}
-      {lightboxImage && (
-        <div
-          className="fixed inset-0 bg-black/80 flex items-center justify-center z-50"
-          onClick={() => setLightboxImage(null)}
-        >
+      {previewFile && (
+  <div
+    className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-6"
+    onClick={() => setPreviewFile(null)}
+  >
+    <div
+      className="bg-white rounded-xl w-full h-full max-w-5xl flex flex-col overflow-hidden"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
+        <p className="text-sm font-medium text-foreground truncate">{previewFile.filename}</p>
+        <div className="flex items-center gap-2">
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setLightboxImage(null);
-            }}
-            className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors cursor-pointer"
+            onClick={() => handleDownloadOriginal(previewFile)}
+            className="px-3 py-1.5 text-xs font-semibold border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
           >
-            <X size={24} className="text-white" />
+            Download original
           </button>
-          <img
-            src={lightboxImage}
-            alt="Attachment preview"
-            className="max-w-[90vw] max-h-[90vh] object-contain"
-            onClick={(e) => e.stopPropagation()}
-          />
+          <button
+            onClick={() => setPreviewFile(null)}
+            className="p-1.5 hover:bg-muted rounded-lg transition-colors cursor-pointer"
+          >
+            <X size={16} className="text-muted-foreground" />
+          </button>
         </div>
-      )}
+      </div>
+      <div className="flex-1 bg-slate-100 flex items-center justify-center overflow-auto">
+        {previewFile.isImage ? (
+          <img src={previewFile.url} alt={previewFile.filename} className="max-w-full max-h-full object-contain" />
+        ) : (
+          <iframe src={previewFile.url} title={previewFile.filename} className="w-full h-full" />
+        )}
+      </div>
+    </div>
+  </div>
+)}
     </div>
   );
 }

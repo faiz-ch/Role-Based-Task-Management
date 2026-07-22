@@ -53,3 +53,16 @@ export async function fetchAttachmentBlobUrl(attachmentId: number): Promise<stri
 export async function deleteAttachment(attachmentId: number): Promise<void> {
   await apiFetch(`/tasks/attachments/${attachmentId}`, { method: "DELETE" });
 }
+
+export function getAttachmentPreviewUrl(attachmentId: number): string {
+  return `${API_BASE_URL}/tasks/attachments/${attachmentId}/preview`;
+}
+
+export async function fetchAttachmentPreviewBlobUrl(attachmentId: number): Promise<string> {
+  const res = await fetch(getAttachmentPreviewUrl(attachmentId), {
+    headers: { Authorization: `Bearer ${getAccessToken()}` },
+  });
+  if (!res.ok) throw new Error("Preview not available for this file. You can still download it.");
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
