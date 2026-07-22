@@ -1,9 +1,10 @@
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.responses import FileResponse, Response
 from app.services.conversion import convert_to_pdf
+from app.services import notification_dispatch
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -95,6 +96,7 @@ async def get_task(
 @router.post("", response_model=TaskOut, status_code=201)
 async def create_task(
     payload: TaskCreate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission("task:create")),
 ):
@@ -145,6 +147,7 @@ async def create_task(
     db.add(task)
     await db.commit()
     await db.refresh(task)
+    background_tasks.add_task(notification_dispatch.notify_task_assigned, task.id)
     return task
 
 
@@ -177,6 +180,7 @@ async def update_task(
 async def update_task_status(
     task_id: int,
     payload: TaskStatusUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -236,12 +240,17 @@ async def update_task_status(
     task.status = payload.status
     await db.commit()
     await db.refresh(task)
+    if payload.status == TaskStatus.REVIEW:
+        background_tasks.add_task(notification_dispatch.notify_task_submitted_for_review, task.id)
+    elif payload.status == TaskStatus.DONE:
+        background_tasks.add_task(notification_dispatch.notify_task_done, task.id)
     return task
 
 @router.patch("/{task_id}/reschedule", response_model=TaskOut)
 async def reschedule_task(
     task_id: int,
     payload: RescheduleRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -271,12 +280,14 @@ async def reschedule_task(
     task.due_date = payload.new_due_date
     await db.commit()
     await db.refresh(task)
+    background_tasks.add_task(notification_dispatch.notify_task_rescheduled, task.id)
     return task
 
 @router.patch("/{task_id}/assign", response_model=TaskOut)
 async def assign_task(
     task_id: int,
     payload: TaskAssignRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -320,6 +331,7 @@ async def assign_task(
 
     await db.commit()
     await db.refresh(task)
+    background_tasks.add_task(notification_dispatch.notify_task_assigned, task.id)
     return task
 
 

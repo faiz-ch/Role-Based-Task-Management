@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Plus, AlertTriangle, Trash2, CheckCircle2, ArrowLeft, ArrowRight } from "lucide-react";
 import { Role, Category, Department } from "../types";
-import { getRoles, createRole, setRoleCategory, deleteRole, setRoleDepartments, setRoleAssignableCategories } from "../api/roles";
+import { getRoles, createRole, setRoleCategory, deleteRole, setRoleDepartments, setRoleAssignableCategories, setRoleNotifications } from "../api/roles";
 import { getCategories } from "../api/categories";
 import { getDepartments } from "../api/departments";
 import { Dlg } from "../components/Dlg";
@@ -108,6 +108,10 @@ export function RolesPage() {
   const [newAllDepartments, setNewAllDepartments] = useState(false);
   const [newDepartmentIds, setNewDepartmentIds] = useState<number[]>([]);
   const [newAssignableCategoryIds, setNewAssignableCategoryIds] = useState<number[]>([]);
+  const [newNotifyOnAssign, setNewNotifyOnAssign] = useState(false);
+  const [newNotifyOnReview, setNewNotifyOnReview] = useState(false);
+  const [newNotifyOnReschedule, setNewNotifyOnReschedule] = useState(false);
+  const [newNotifyOnDone, setNewNotifyOnDone] = useState(false);
 
   // Local drafts for the selected role's editable sections. These update
   // instantly on click (no waiting on the network), and are the single
@@ -119,8 +123,20 @@ export function RolesPage() {
     departmentIds: [],
   });
   const [assignableDraft, setAssignableDraft] = useState<number[]>([]);
+  const [notificationDraft, setNotificationDraft] = useState<{
+    notifyOnAssign: boolean;
+    notifyOnReview: boolean;
+    notifyOnReschedule: boolean;
+    notifyOnDone: boolean;
+  }>({
+    notifyOnAssign: false,
+    notifyOnReview: false,
+    notifyOnReschedule: false,
+    notifyOnDone: false,
+  });
   const deptSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const assignableSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notificationSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     async function loadData() {
@@ -160,6 +176,12 @@ export function RolesPage() {
         departmentIds: selected.departments.map((d) => d.id),
       });
       setAssignableDraft(selected.assignableCategories.map((c) => c.id));
+      setNotificationDraft({
+        notifyOnAssign: selected.notifyOnAssign,
+        notifyOnReview: selected.notifyOnReview,
+        notifyOnReschedule: selected.notifyOnReschedule,
+        notifyOnDone: selected.notifyOnDone,
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
@@ -193,6 +215,10 @@ export function RolesPage() {
     setNewAllDepartments(false);
     setNewDepartmentIds([]);
     setNewAssignableCategoryIds([]);
+    setNewNotifyOnAssign(false);
+    setNewNotifyOnReview(false);
+    setNewNotifyOnReschedule(false);
+    setNewNotifyOnDone(false);
     setError(null);
   }
 
@@ -277,6 +303,33 @@ export function RolesPage() {
     }, SAVE_DEBOUNCE_MS);
   }, []);
 
+  const scheduleNotificationSave = useCallback((
+    roleId: number,
+    draft: {
+      notifyOnAssign: boolean;
+      notifyOnReview: boolean;
+      notifyOnReschedule: boolean;
+      notifyOnDone: boolean;
+    }
+  ) => {
+    if (notificationSaveTimer.current) clearTimeout(notificationSaveTimer.current);
+    notificationSaveTimer.current = setTimeout(async () => {
+      try {
+        setError(null);
+        const updatedRole = await setRoleNotifications(
+          roleId,
+          draft.notifyOnAssign,
+          draft.notifyOnReview,
+          draft.notifyOnReschedule,
+          draft.notifyOnDone
+        );
+        setRoles((prev) => prev.map((r) => (r.id === roleId ? updatedRole : r)));
+      } catch (err: any) {
+        setError(err?.message || "Failed to update notification preferences.");
+      }
+    }, SAVE_DEBOUNCE_MS);
+  }, []);
+
   function handleDeptToggleAll(selectAll: boolean) {
     if (!selected) return;
     const next = {
@@ -324,6 +377,15 @@ export function RolesPage() {
     });
   }
 
+  function handleNotificationToggle(field: keyof typeof notificationDraft) {
+    if (!selected) return;
+    setNotificationDraft((prev) => {
+      const next = { ...prev, [field]: !prev[field] };
+      scheduleNotificationSave(selected.id, next);
+      return next;
+    });
+  }
+
   async function handleCreateRole() {
     if (!newName.trim()) return;
     try {
@@ -343,7 +405,11 @@ export function RolesPage() {
         categoryId,
         hasDept ? newAllDepartments : false,
         hasDept ? newDepartmentIds : [],
-        hasUM ? newAssignableCategoryIds : []
+        hasUM ? newAssignableCategoryIds : [],
+        newNotifyOnAssign,
+        newNotifyOnReview,
+        newNotifyOnReschedule,
+        newNotifyOnDone
       );
       setRoles((prev) => [...prev, nr]);
       setSelectedId(nr.id);
@@ -499,6 +565,97 @@ export function RolesPage() {
                     />
                   </div>
                 )}
+
+                {/* Notification preferences section */}
+                <div>
+                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Email Notification Preferences</h4>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label
+                      className={`flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
+                        notificationDraft.notifyOnAssign
+                          ? "border-blue-200 bg-blue-50"
+                          : "border-border hover:bg-muted/30"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={notificationDraft.notifyOnAssign}
+                        onChange={() => handleNotificationToggle("notifyOnAssign")}
+                        className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
+                      />
+                      <p
+                        className={`text-sm font-medium ${
+                          notificationDraft.notifyOnAssign ? "text-blue-700" : "text-foreground"
+                        }`}
+                      >
+                        Email when task is assigned
+                      </p>
+                    </label>
+                    <label
+                      className={`flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
+                        notificationDraft.notifyOnReview
+                          ? "border-blue-200 bg-blue-50"
+                          : "border-border hover:bg-muted/30"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={notificationDraft.notifyOnReview}
+                        onChange={() => handleNotificationToggle("notifyOnReview")}
+                        className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
+                      />
+                      <p
+                        className={`text-sm font-medium ${
+                          notificationDraft.notifyOnReview ? "text-blue-700" : "text-foreground"
+                        }`}
+                      >
+                        Email when task is submitted for review
+                      </p>
+                    </label>
+                    <label
+                      className={`flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
+                        notificationDraft.notifyOnReschedule
+                          ? "border-blue-200 bg-blue-50"
+                          : "border-border hover:bg-muted/30"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={notificationDraft.notifyOnReschedule}
+                        onChange={() => handleNotificationToggle("notifyOnReschedule")}
+                        className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
+                      />
+                      <p
+                        className={`text-sm font-medium ${
+                          notificationDraft.notifyOnReschedule ? "text-blue-700" : "text-foreground"
+                        }`}
+                      >
+                        Email when task is rescheduled
+                      </p>
+                    </label>
+                    <label
+                      className={`flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all hover:shadow-sm ${
+                        notificationDraft.notifyOnDone
+                          ? "border-blue-200 bg-blue-50"
+                          : "border-border hover:bg-muted/30"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={notificationDraft.notifyOnDone}
+                        onChange={() => handleNotificationToggle("notifyOnDone")}
+                        className="w-4 h-4 rounded accent-blue-600 flex-shrink-0 cursor-pointer"
+                      />
+                      <p
+                        className={`text-sm font-medium ${
+                          notificationDraft.notifyOnDone ? "text-blue-700" : "text-foreground"
+                        }`}
+                      >
+                        Email when task is approved
+                      </p>
+                    </label>
+                  </div>
+                </div>
               </div>
             </>
           ) : (

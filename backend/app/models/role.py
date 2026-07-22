@@ -31,6 +31,13 @@ class Role(Base):
     name = Column(String, unique=True, nullable=False)  # e.g. "Team Lead" — custom, admin-created
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
     all_departments = Column(Boolean, nullable=False, default=False, server_default=false())
+    # Email notification preferences: whether users holding this Role get
+    # emailed when a task in their department(s) hits each of these events.
+    # Kept on Role (not Category) since department scope already lives here.
+    notify_on_assign = Column(Boolean, nullable=False, default=False, server_default=false())
+    notify_on_review = Column(Boolean, nullable=False, default=False, server_default=false())
+    notify_on_reschedule = Column(Boolean, nullable=False, default=False, server_default=false())
+    notify_on_done = Column(Boolean, nullable=False, default=False, server_default=false())
 
     category = relationship("Category", back_populates="roles")
     departments = relationship("Department", secondary=role_department)

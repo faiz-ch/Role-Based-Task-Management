@@ -33,6 +33,10 @@ class RoleCreate(BaseModel):
     all_departments: bool = False
     department_ids: list[int] = []
     assignable_category_ids: list[int] = []
+    notify_on_assign: bool = False
+    notify_on_review: bool = False
+    notify_on_reschedule: bool = False
+    notify_on_done: bool = False
 
 
 class RoleOut(BaseModel):
@@ -42,6 +46,10 @@ class RoleOut(BaseModel):
     all_departments: bool = False
     departments: list[DepartmentOut] = []
     assignable_categories: list[CategoryOut] = []
+    notify_on_assign: bool = False
+    notify_on_review: bool = False
+    notify_on_reschedule: bool = False
+    notify_on_done: bool = False
 
     class Config:
         from_attributes = True
@@ -49,3 +57,10 @@ class RoleOut(BaseModel):
 
 class SetRoleCategoryRequest(BaseModel):
     category_id: int | None
+
+
+class SetRoleNotificationsRequest(BaseModel):
+    notify_on_assign: bool = False
+    notify_on_review: bool = False
+    notify_on_reschedule: bool = False
+    notify_on_done: bool = False

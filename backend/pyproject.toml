@@ -18,7 +18,8 @@ dependencies = [
     "bcrypt (==4.0.1)",
     "python-jose[cryptography] (>=3.5.0,<4.0.0)",
     "python-multipart (>=0.0.32,<0.0.33)",
-    "httpx (>=0.28.1,<0.29.0)"
+    "httpx (>=0.28.1,<0.29.0)",
+    "aiosmtplib (>=5.1.2,<6.0.0)"
 ]
 
 

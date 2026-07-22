@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     ENV: str = "development"
     GOTENBERG_URL: str = "http://localhost:3000"
+    SMTP_HOST: str = "smtp.gmail.com"
+    EMAIL_ADDRESS: str = ""
+    EMAIL_PASSWORD: str = ""
+    FRONTEND_URL: str = "http://localhost:5173"
 
     class Config:
         env_file = ".env"
