@@ -1,0 +1,291 @@
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select, delete
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.core.deps import (
+    get_current_user,
+    can_view_subtask,
+    can_manage_subtask,
+    can_create_subtask_in_task,
+    is_task_lead,
+    get_assignable_user_pool,
+)
+from app.database import get_db
+from app.models.user import User
+from app.models.task import Task
+from app.models.project import Project
+from app.models.subtask import SubTask, SubTaskAssignee
+from app.schemas.subtask import (
+    SubtaskCreate,
+    SubtaskUpdate,
+    SubtaskStatusUpdate,
+    SubtaskAssigneeUpdate,
+    SubtaskOut,
+)
+
+router = APIRouter(prefix="/subtasks", tags=["subtasks"])
+
+
+async def _get_task_or_404_with_loads(db: AsyncSession, task_id: int) -> Task:
+    """Load task with relationships needed for cascade authorization checks."""
+    result = await db.execute(
+        select(Task).options(
+            selectinload(Task.project).selectinload(Project.departments),
+            selectinload(Task.team_members),
+        ).where(Task.id == task_id)
+    )
+    task = result.scalar_one_or_none()
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
+
+
+async def _get_subtask_or_404_with_loads(db: AsyncSession, subtask_id: int) -> SubTask:
+    """Load subtask with relationships needed for cascade authorization checks."""
+    result = await db.execute(
+        select(SubTask).options(
+            selectinload(SubTask.assignees),
+            selectinload(SubTask.task).selectinload(Task.project).selectinload(Project.departments),
+            selectinload(SubTask.task).selectinload(Task.team_members),
+        ).where(SubTask.id == subtask_id)
+    )
+    subtask = result.scalar_one_or_none()
+    if subtask is None:
+        raise HTTPException(status_code=404, detail="Subtask not found")
+    return subtask
+
+
+def _subtask_to_out(subtask: SubTask) -> SubtaskOut:
+    """Convert SubTask model to SubtaskOut schema."""
+    return SubtaskOut(
+        id=subtask.id,
+        task_id=subtask.task_id,
+        title=subtask.title,
+        description=subtask.description,
+        status=subtask.status,
+        priority=subtask.priority,
+        due_date=subtask.due_date,
+        created_by=subtask.created_by,
+        created_at=subtask.created_at,
+        assignee_ids=[sa.user_id for sa in subtask.assignees],
+    )
+
+
+@router.post("/tasks/{task_id}/subtasks", response_model=SubtaskOut, status_code=201)
+async def create_subtask(
+    task_id: int,
+    payload: SubtaskCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a new subtask within a task. Only the task lead can create subtasks."""
+    task = await _get_task_or_404_with_loads(db, task_id)
+
+    if not can_create_subtask_in_task(current_user, task):
+        raise HTTPException(status_code=403, detail="You can only create subtasks in tasks you lead")
+
+    # Get assignable user pool from task's project departments
+    project_dept_ids = {d.id for d in task.project.departments}
+    candidates_result = await db.execute(
+        select(User).where(User.department_id.in_(project_dept_ids))
+    )
+    candidates = candidates_result.scalars().all()
+
+    # Filter through assignable categories
+    assignable_pool = get_assignable_user_pool(
+        list(candidates), current_user, project_dept_ids
+    )
+    assignable_user_ids = {u.id for u in assignable_pool}
+
+    # Validate all requested assignee_ids are in the filtered pool
+    for assignee_id in payload.assignee_ids:
+        if assignee_id not in assignable_user_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"User {assignee_id} is not in your assignable pool for this task"
+            )
+
+    # Create the subtask
+    subtask = SubTask(
+        task_id=task_id,
+        title=payload.title,
+        description=payload.description,
+        priority=payload.priority,
+        due_date=payload.due_date,
+        created_by=current_user.id,
+    )
+    db.add(subtask)
+    await db.commit()
+    await db.refresh(subtask)
+
+    # Insert assignee relationships
+    for assignee_id in payload.assignee_ids:
+        assignee = SubTaskAssignee(
+            subtask_id=subtask.id,
+            user_id=assignee_id,
+            assigned_by=current_user.id,
+        )
+        db.add(assignee)
+
+    await db.commit()
+    await db.refresh(subtask)
+
+    # Reload with assignees for response
+    subtask_with_loads = await _get_subtask_or_404_with_loads(db, subtask.id)
+    return _subtask_to_out(subtask_with_loads)
+
+
+@router.get("/tasks/{task_id}/subtasks", response_model=list[SubtaskOut])
+async def list_subtasks_for_task(
+    task_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List all subtasks for a task that the user can view."""
+    task = await _get_task_or_404_with_loads(db, task_id)
+
+    # Load all subtasks for this task with assignees
+    result = await db.execute(
+        select(SubTask).options(
+            selectinload(SubTask.assignees),
+        ).where(SubTask.task_id == task_id)
+    )
+    subtasks = result.scalars().all()
+
+    # Filter by view permission
+    visible_subtasks = [s for s in subtasks if can_view_subtask(current_user, s)]
+    return [_subtask_to_out(s) for s in visible_subtasks]
+
+
+@router.get("/{subtask_id}", response_model=SubtaskOut)
+async def get_subtask(
+    subtask_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get a specific subtask by ID."""
+    subtask = await _get_subtask_or_404_with_loads(db, subtask_id)
+
+    if not can_view_subtask(current_user, subtask):
+        raise HTTPException(status_code=404, detail="Subtask not found")
+
+    return _subtask_to_out(subtask)
+
+
+@router.patch("/{subtask_id}", response_model=SubtaskOut)
+async def update_subtask(
+    subtask_id: int,
+    payload: SubtaskUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update subtask details. Assignees can update their own subtask's details, but not reassign."""
+    subtask = await _get_subtask_or_404_with_loads(db, subtask_id)
+
+    if not can_manage_subtask(current_user, subtask):
+        raise HTTPException(status_code=403, detail="You do not have permission to edit this subtask")
+
+    update_data = payload.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(subtask, field, value)
+
+    await db.commit()
+    await db.refresh(subtask)
+
+    subtask_with_loads = await _get_subtask_or_404_with_loads(db, subtask.id)
+    return _subtask_to_out(subtask_with_loads)
+
+
+@router.patch("/{subtask_id}/status", response_model=SubtaskOut)
+async def update_subtask_status(
+    subtask_id: int,
+    payload: SubtaskStatusUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update subtask status. Assignees can update their own subtask's status."""
+    subtask = await _get_subtask_or_404_with_loads(db, subtask_id)
+
+    if not can_manage_subtask(current_user, subtask):
+        raise HTTPException(status_code=403, detail="You do not have permission to change this subtask's status")
+
+    subtask.status = payload.status
+    await db.commit()
+    await db.refresh(subtask)
+
+    subtask_with_loads = await _get_subtask_or_404_with_loads(db, subtask.id)
+    return _subtask_to_out(subtask_with_loads)
+
+
+@router.put("/{subtask_id}/assignees", response_model=SubtaskOut)
+async def update_subtask_assignees(
+    subtask_id: int,
+    payload: SubtaskAssigneeUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update subtask assignees. Only the task lead can reassign people."""
+    subtask = await _get_subtask_or_404_with_loads(db, subtask_id)
+
+    if not is_task_lead(current_user, subtask.task):
+        raise HTTPException(status_code=403, detail="Only the task lead can reassign subtasks")
+
+    # Get assignable user pool from task's project departments
+    project_dept_ids = {d.id for d in subtask.task.project.departments}
+    candidates_result = await db.execute(
+        select(User).where(User.department_id.in_(project_dept_ids))
+    )
+    candidates = candidates_result.scalars().all()
+
+    # Filter through assignable categories
+    assignable_pool = get_assignable_user_pool(
+        list(candidates), current_user, project_dept_ids
+    )
+    assignable_user_ids = {u.id for u in assignable_pool}
+
+    # Validate all requested user_ids are in the filtered pool
+    for user_id in payload.user_ids:
+        if user_id not in assignable_user_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"User {user_id} is not in your assignable pool for this task"
+            )
+
+    # Delete existing assignees
+    await db.execute(
+        delete(SubTaskAssignee).where(SubTaskAssignee.subtask_id == subtask_id)
+    )
+
+    # Insert new assignees
+    for user_id in payload.user_ids:
+        assignee = SubTaskAssignee(
+            subtask_id=subtask_id,
+            user_id=user_id,
+            assigned_by=current_user.id,
+        )
+        db.add(assignee)
+
+    await db.commit()
+    await db.refresh(subtask)
+
+    subtask_with_loads = await _get_subtask_or_404_with_loads(db, subtask.id)
+    return _subtask_to_out(subtask_with_loads)
+
+
+@router.delete("/{subtask_id}", status_code=204)
+async def delete_subtask(
+    subtask_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete a subtask. Only task lead / project lead / manager cascade can delete."""
+    subtask = await _get_subtask_or_404_with_loads(db, subtask_id)
+
+    # Use can_manage_task (not can_manage_subtask) to prevent plain assignees from deleting
+    from app.core.deps import can_manage_task
+    if not can_manage_task(current_user, subtask.task):
+        raise HTTPException(status_code=403, detail="You do not have permission to delete this subtask")
+
+    await db.delete(subtask)
+    await db.commit()

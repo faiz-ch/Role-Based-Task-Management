@@ -1,18 +1,20 @@
 import os
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.responses import FileResponse, Response
 from app.services.conversion import convert_to_pdf
 from app.services import notification_dispatch
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import require_permission, get_current_user, has_permission, get_scoped_department_ids
+from app.core.deps import require_permission, get_current_user, has_permission, get_scoped_department_ids, can_view_task, can_manage_task, can_create_task_in_project, is_project_lead, is_task_lead, get_assignable_user_pool
 from app.database import get_db
-from app.models.task import Task, TaskStatus
+from app.models.task import Task, TaskStatus, TaskTeam
 from app.models.attachment import Attachment
 from app.models.user import User
+from app.models.project import Project
 from app.schemas.task import (
     TaskCreate,
     TaskUpdate,
@@ -20,6 +22,8 @@ from app.schemas.task import (
     TaskStatusUpdate,
     TaskAssignRequest,
     RescheduleRequest,
+    TaskAssignLead,
+    TaskTeamUpdate,
     AttachmentOut,
 )
 
@@ -28,19 +32,9 @@ UPLOAD_DIR = "uploads"  # relative to backend/ — where uploaded files actually
 
 def _is_task_in_scope(task: Task, current_user: User) -> bool:
     """
-    Check if a task is within the current user's view scope.
-    Used by task:edit, task:delete, and task:review to inherit view scope.
+    Check if a task is within the current user's view scope using cascade logic.
     """
-    if not has_permission(current_user, "task:view"):
-        # No view permission - only see own tasks
-        return task.assigned_to == current_user.id
-    
-    scoped_dept_ids = get_scoped_department_ids(current_user)
-    if scoped_dept_ids is None:
-        # Global scope - can see all tasks
-        return True
-    # Department scope - check if task is in scoped departments
-    return task.department_id in scoped_dept_ids
+    return can_view_task(current_user, task)
 
 
 @router.get("", response_model=list[TaskOut])
@@ -51,34 +45,32 @@ async def list_tasks(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Any logged-in user can list tasks (no special permission needed to VIEW),
-    but WHICH tasks they see depends on their view scope:
-
-      - task:view permission + all_departments=True -> sees all tasks
-      - task:view permission + specific departments -> sees only tasks in those departments
-      - no task:view permission -> sees only tasks assigned to them
+    List tasks based on cascade authorization:
+    - Managers with project:view scoped to departments see tasks in those departments
+    - Project Leads see tasks in their projects
+    - Task Leads see their own tasks
+    - Team members see tasks they're on
     """
-    query = select(Task)
+    from sqlalchemy.orm import selectinload
+
+    # Build base query with eager loading for cascade checks
+    query = select(Task).options(
+        selectinload(Task.project).selectinload(Project.departments),
+        selectinload(Task.team_members),
+    )
+
     if status is not None:
         query = query.where(Task.status == status)
 
-    if not has_permission(current_user, "task:view"):
-        # No view permission - only see own tasks
-        query = query.where(Task.assigned_to == current_user.id)
-    else:
-        scoped_dept_ids = get_scoped_department_ids(current_user)
-        if scoped_dept_ids is None:
-            # Global scope - sees everything
-            if assigned_to is not None:
-                query = query.where(Task.assigned_to == assigned_to)
-        else:
-            # Department scope
-            if not scoped_dept_ids:
-                return []  # Empty scope = no tasks visible
-            query = query.where(Task.department_id.in_(scoped_dept_ids))
+    if assigned_to is not None:
+        query = query.where(Task.assigned_to == assigned_to)
 
     result = await db.execute(query)
-    return result.scalars().all()
+    tasks = result.scalars().all()
+
+    # Filter by cascade logic
+    visible_tasks = [task for task in tasks if can_view_task(current_user, task)]
+    return visible_tasks
 
 
 @router.get("/{task_id}", response_model=TaskOut)
@@ -87,10 +79,11 @@ async def get_task(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    task = await _get_task_or_404(db, task_id)
-    if not _is_task_in_scope(task, current_user):
+    from sqlalchemy.orm import selectinload
+    task = await _get_task_or_404_with_loads(db, task_id)
+    if not can_view_task(current_user, task):
         raise HTTPException(status_code=404, detail="Task not found")
-    return task
+    return _task_to_out(task)
 
 
 @router.post("", response_model=TaskOut, status_code=201)
@@ -98,57 +91,43 @@ async def create_task(
     payload: TaskCreate,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_permission("task:create")),
+    current_user: User = Depends(get_current_user),
 ):
-    # Resolve assignee based on permissions
-    if not has_permission(current_user, "task:assign"):
-        # No assign permission - auto-assign to self
-        final_assignee_id = current_user.id
-    else:
-        scoped_dept_ids = get_scoped_department_ids(current_user)
-        if scoped_dept_ids is None:
-            # Global assign scope - can assign to anyone
-            assignee_result = await db.execute(select(User).where(User.id == payload.assigned_to))
-            assignee = assignee_result.scalar_one_or_none()
-            if assignee is None:
-                raise HTTPException(status_code=404, detail="Assignee user not found")
-            final_assignee_id = assignee.id
-        else:
-            # Department assign scope - can only assign to users in scoped departments
-            if not scoped_dept_ids:
-                raise HTTPException(
-                    status_code=403,
-                    detail="You cannot assign tasks because your role has no departments assigned"
-                )
-            assignee_result = await db.execute(select(User).where(User.id == payload.assigned_to))
-            assignee = assignee_result.scalar_one_or_none()
-            if assignee is None:
-                raise HTTPException(status_code=404, detail="Assignee user not found")
-            if assignee.department_id not in scoped_dept_ids:
-                raise HTTPException(
-                    status_code=403,
-                    detail="You can only assign tasks within your role's departments"
-                )
-            final_assignee_id = assignee.id
-    
-    # Fetch assignee to get department_id
+    # Load project and check if user can create tasks in it
+    from sqlalchemy.orm import selectinload
+    project_result = await db.execute(
+        select(Project).options(selectinload(Project.departments)).where(Project.id == payload.project_id)
+    )
+    project = project_result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not can_create_task_in_project(current_user, project):
+        raise HTTPException(status_code=403, detail="You can only create tasks in projects you lead")
+
+    # Resolve assignee - if not provided, auto-assign to self
+    final_assignee_id = payload.assigned_to if payload.assigned_to is not None else current_user.id
+
+    # Validate assignee exists
     assignee_result = await db.execute(select(User).where(User.id == final_assignee_id))
     assignee = assignee_result.scalar_one_or_none()
-    
+    if assignee is None:
+        raise HTTPException(status_code=404, detail="Assignee user not found")
+
     task = Task(
         title=payload.title,
         description=payload.description,
         priority=payload.priority,
         due_date=payload.due_date,
         assigned_to=final_assignee_id,
-        department_id=assignee.department_id if assignee else None,
+        project_id=payload.project_id,
         created_by=current_user.id,
     )
     db.add(task)
     await db.commit()
     await db.refresh(task)
     background_tasks.add_task(notification_dispatch.notify_task_assigned, task.id)
-    return task
+    return _task_to_out(task)
 
 
 @router.patch("/{task_id}", response_model=TaskOut)
@@ -156,16 +135,13 @@ async def update_task(
     task_id: int,
     payload: TaskUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_permission("task:edit")),
+    current_user: User = Depends(get_current_user),
 ):
-    task = await _get_task_or_404(db, task_id)
-    
-    # Check if task is within user's view scope
-    if not _is_task_in_scope(task, current_user):
-        raise HTTPException(
-            status_code=404,
-            detail="Task not found"
-        )
+    from sqlalchemy.orm import selectinload
+    task = await _get_task_or_404_with_loads(db, task_id)
+
+    if not can_manage_task(current_user, task):
+        raise HTTPException(status_code=403, detail="You do not have permission to edit this task")
 
     update_data = payload.model_dump(exclude_unset=True)
     for field, value in update_data.items():
@@ -173,7 +149,7 @@ async def update_task(
 
     await db.commit()
     await db.refresh(task)
-    return task
+    return _task_to_out(task)
 
 
 @router.patch("/{task_id}/status", response_model=TaskOut)
@@ -185,57 +161,15 @@ async def update_task_status(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Status changes follow a fixed workflow, and WHO can make each specific
-    transition depends on their role:
-
-      To Do -------------> Review        (assignee only, submits their work)
-      Reschedule ---------> Review        (assignee only, resubmits)
-      Review --------------> Done         (reviewer only, approves)
-
-    Review -> Reschedule is NOT handled here — it requires a new due date,
-    so it goes through the dedicated /{task_id}/reschedule endpoint instead.
-
-    "Assignee" means current_user.id == task.assigned_to.
-    "Reviewer" means the user's role has the "task:review" permission.
-    Anyone with "task:edit" bypasses all of the above (e.g. Admin).
-
-    Any transition not in this table (skipping steps, going backwards
-    outside of the Reschedule case, or trying to jump straight to
-    Reschedule through this endpoint) is rejected with a 400/403.
+    Status changes are now unified: anyone with can_manage_task can change status.
+    This includes Managers with project:manage, Project Leads, and Task Leads.
+    No separate reviewer concept anymore.
     """
-    task = await _get_task_or_404(db, task_id)
+    from sqlalchemy.orm import selectinload
+    task = await _get_task_or_404_with_loads(db, task_id)
 
-    has_edit_permission = has_permission(current_user, "task:edit")
-    has_review_permission = has_permission(current_user, "task:review")
-    is_assignee = task.assigned_to == current_user.id
-
-    if not has_edit_permission:
-        ASSIGNEE_TRANSITIONS = {
-            (TaskStatus.TODO, TaskStatus.REVIEW),
-            (TaskStatus.RESCHEDULE, TaskStatus.REVIEW),
-        }
-        REVIEWER_TRANSITIONS = {
-            (TaskStatus.REVIEW, TaskStatus.DONE),
-        }
-        transition = (task.status, payload.status)
-
-        # For reviewer transitions, also check task scope
-        if transition in REVIEWER_TRANSITIONS and has_review_permission:
-            if not _is_task_in_scope(task, current_user):
-                raise HTTPException(
-                    status_code=403,
-                    detail="You cannot review tasks outside your view scope.",
-                )
-
-        allowed = (
-            (transition in ASSIGNEE_TRANSITIONS and is_assignee)
-            or (transition in REVIEWER_TRANSITIONS and has_review_permission)
-        )
-        if not allowed:
-            raise HTTPException(
-                status_code=403,
-                detail="You cannot make this status change on this task.",
-            )
+    if not can_manage_task(current_user, task):
+        raise HTTPException(status_code=403, detail="You do not have permission to change this task's status")
 
     task.status = payload.status
     await db.commit()
@@ -244,7 +178,7 @@ async def update_task_status(
         background_tasks.add_task(notification_dispatch.notify_task_submitted_for_review, task.id)
     elif payload.status == TaskStatus.DONE:
         background_tasks.add_task(notification_dispatch.notify_task_done, task.id)
-    return task
+    return _task_to_out(task)
 
 @router.patch("/{task_id}/reschedule", response_model=TaskOut)
 async def reschedule_task(
@@ -259,16 +193,11 @@ async def reschedule_task(
     update_task_status because this transition requires extra data (the new
     due date) that the generic status endpoint has no way to carry.
     """
-    task = await _get_task_or_404(db, task_id)
+    from sqlalchemy.orm import selectinload
+    task = await _get_task_or_404_with_loads(db, task_id)
 
-    if not _is_task_in_scope(task, current_user):
-        raise HTTPException(status_code=404, detail="Task not found")
-
-    if not has_permission(current_user, "task:review"):
-        raise HTTPException(
-            status_code=403,
-            detail="You do not have permission to reschedule this task.",
-        )
+    if not can_manage_task(current_user, task):
+        raise HTTPException(status_code=403, detail="You do not have permission to reschedule this task")
 
     if task.status != TaskStatus.REVIEW:
         raise HTTPException(
@@ -281,7 +210,7 @@ async def reschedule_task(
     await db.commit()
     await db.refresh(task)
     background_tasks.add_task(notification_dispatch.notify_task_rescheduled, task.id)
-    return task
+    return _task_to_out(task)
 
 @router.patch("/{task_id}/assign", response_model=TaskOut)
 async def assign_task(
@@ -291,67 +220,180 @@ async def assign_task(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Check assign permissions
-    if not has_permission(current_user, "task:assign"):
-        raise HTTPException(
-            status_code=403,
-            detail="You do not have permission to assign tasks"
-        )
-    
-    task = await _get_task_or_404(db, task_id)
+    from sqlalchemy.orm import selectinload
+    task = await _get_task_or_404_with_loads(db, task_id)
+
+    if not can_manage_task(current_user, task):
+        raise HTTPException(status_code=403, detail="You do not have permission to assign this task")
 
     if payload.assigned_to is None:
         raise HTTPException(
             status_code=400,
             detail="Assignee cannot be null - tasks must be assigned to a user"
         )
-    
+
     assignee_result = await db.execute(select(User).where(User.id == payload.assigned_to))
     assignee = assignee_result.scalar_one_or_none()
     if assignee is None:
         raise HTTPException(status_code=404, detail="Assignee user not found")
-    
-    # Validate department scope for users with specific departments
-    scoped_dept_ids = get_scoped_department_ids(current_user)
-    if scoped_dept_ids is not None:
-        if not scoped_dept_ids:
-            raise HTTPException(
-                status_code=403,
-                detail="You cannot assign tasks because your role has no departments assigned"
-            )
-        if assignee.department_id not in scoped_dept_ids:
-            raise HTTPException(
-                status_code=403,
-                detail="You can only assign tasks within your role's departments"
-            )
-    
+
     task.assigned_to = assignee.id
-    # Sync department_id with assignee's department
-    task.department_id = assignee.department_id
 
     await db.commit()
     await db.refresh(task)
     background_tasks.add_task(notification_dispatch.notify_task_assigned, task.id)
-    return task
+    return _task_to_out(task)
 
 
 @router.delete("/{task_id}", status_code=204)
 async def delete_task(
     task_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_permission("task:delete")),
+    current_user: User = Depends(get_current_user),
 ):
-    task = await _get_task_or_404(db, task_id)
-    
-    # Check if task is within user's view scope
-    if not _is_task_in_scope(task, current_user):
-        raise HTTPException(
-            status_code=404,
-            detail="Task not found"
-        )
-    
+    from sqlalchemy.orm import selectinload
+    task = await _get_task_or_404_with_loads(db, task_id)
+
+    if not can_manage_task(current_user, task):
+        raise HTTPException(status_code=403, detail="You do not have permission to delete this task")
+
     await db.delete(task)
     await db.commit()
+
+
+@router.patch("/{task_id}/assign-lead", response_model=TaskOut)
+async def assign_task_lead(
+    task_id: int,
+    payload: TaskAssignLead,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from sqlalchemy.orm import selectinload
+    task = await _get_task_or_404_with_loads(db, task_id)
+
+    # Only the task's PROJECT lead can assign a task lead
+    if not is_project_lead(current_user, task.project):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the project lead can assign a task lead"
+        )
+
+    # Validate lead_id belongs to a user in one of task.project's departments
+    lead_result = await db.execute(
+        select(User).where(User.id == payload.lead_id)
+    )
+    lead = lead_result.scalar_one_or_none()
+    if lead is None:
+        raise HTTPException(status_code=404, detail="Lead user not found")
+
+    project_dept_ids = {d.id for d in task.project.departments}
+    if lead.department_id not in project_dept_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="Lead must belong to one of the project's departments"
+        )
+
+    task.lead_id = lead.id
+    await db.commit()
+    await db.refresh(task)
+
+    task_with_loads = await _get_task_or_404_with_loads(db, task.id)
+    return _task_to_out(task_with_loads)
+
+
+@router.put("/{task_id}/team", response_model=TaskOut)
+async def update_task_team(
+    task_id: int,
+    payload: TaskTeamUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from sqlalchemy.orm import selectinload
+    task = await _get_task_or_404_with_loads(db, task_id)
+
+    # Only the task's own lead can propose its team
+    if not is_task_lead(current_user, task):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the task lead can propose team changes"
+        )
+
+    # Get candidate pool: users in task.project's departments
+    project_dept_ids = {d.id for d in task.project.departments}
+    candidates_result = await db.execute(
+        select(User).where(User.department_id.in_(project_dept_ids))
+    )
+    candidates = candidates_result.scalars().all()
+
+    # Filter through assignable categories
+    assignable_pool = get_assignable_user_pool(
+        list(candidates), current_user, project_dept_ids
+    )
+    assignable_user_ids = {u.id for u in assignable_pool}
+
+    # Validate all requested user_ids are in the filtered pool
+    for user_id in payload.user_ids:
+        if user_id not in assignable_user_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"User {user_id} is not in your assignable pool for this task"
+            )
+
+    # Delete existing team members
+    await db.execute(
+        delete(TaskTeam).where(TaskTeam.task_id == task_id)
+    )
+
+    # Insert new team members
+    for user_id in payload.user_ids:
+        team_member = TaskTeam(
+            task_id=task_id,
+            user_id=user_id,
+            added_by=current_user.id,
+        )
+        db.add(team_member)
+
+    # Reset approval status
+    task.team_approved_by = None
+    task.team_approved_at = None
+
+    await db.commit()
+    await db.refresh(task)
+
+    task_with_loads = await _get_task_or_404_with_loads(db, task.id)
+    return _task_to_out(task_with_loads)
+
+
+@router.post("/{task_id}/approve-team", response_model=TaskOut)
+async def approve_task_team(
+    task_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from sqlalchemy.orm import selectinload
+    task = await _get_task_or_404_with_loads(db, task_id)
+
+    # Only the task's PROJECT lead approves its team
+    if not is_project_lead(current_user, task.project):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the project lead can approve the task team"
+        )
+
+    if not task.team_members:
+        raise HTTPException(
+            status_code=400,
+            detail="Task has no team members to approve"
+        )
+
+    task.team_approved_by = current_user.id
+    task.team_approved_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(task)
+
+    task_with_loads = await _get_task_or_404_with_loads(db, task.id)
+    return _task_to_out(task_with_loads)
 
 
 async def _get_task_or_404(db: AsyncSession, task_id: int) -> Task:
@@ -360,6 +402,42 @@ async def _get_task_or_404(db: AsyncSession, task_id: int) -> Task:
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
+
+
+async def _get_task_or_404_with_loads(db: AsyncSession, task_id: int) -> Task:
+    """Load task with relationships needed for cascade authorization checks."""
+    from sqlalchemy.orm import selectinload
+    result = await db.execute(
+        select(Task).options(
+            selectinload(Task.project).selectinload(Project.departments),
+            selectinload(Task.team_members),
+        ).where(Task.id == task_id)
+    )
+    task = result.scalar_one_or_none()
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
+
+
+def _task_to_out(task: Task) -> TaskOut:
+    """Convert Task model to TaskOut schema."""
+    return TaskOut(
+        id=task.id,
+        title=task.title,
+        description=task.description,
+        status=task.status,
+        priority=task.priority,
+        due_date=task.due_date,
+        created_at=task.created_at,
+        created_by=task.created_by,
+        assigned_to=task.assigned_to,
+        project_id=task.project_id,
+        lead_id=task.lead_id,
+        team_approved_by=task.team_approved_by,
+        team_approved_at=task.team_approved_at,
+        team_user_ids=[tm.user_id for tm in task.team_members],
+        attachments=[],
+    )
 
 @router.post("/{task_id}/attachments", response_model=AttachmentOut, status_code=201)
 async def upload_attachment(
@@ -374,9 +452,9 @@ async def upload_attachment(
     scope as everything else — if you can't see a task, you can't attach
     files to it either.
     """
-    task = await _get_task_or_404(db, task_id)
+    task = await _get_task_or_404_with_loads(db, task_id)
 
-    if not _is_task_in_scope(task, current_user):
+    if not can_view_task(current_user, task):
         raise HTTPException(status_code=404, detail="Task not found")
 
     task_dir = os.path.join(UPLOAD_DIR, str(task_id))
@@ -409,8 +487,8 @@ async def list_attachments(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    task = await _get_task_or_404(db, task_id)
-    if not _is_task_in_scope(task, current_user):
+    task = await _get_task_or_404_with_loads(db, task_id)
+    if not can_view_task(current_user, task):
         raise HTTPException(status_code=404, detail="Task not found")
     result = await db.execute(select(Attachment).where(Attachment.task_id == task_id))
     return result.scalars().all()
@@ -427,8 +505,8 @@ async def download_attachment(
     if attachment is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
-    task = await _get_task_or_404(db, attachment.task_id)
-    if not _is_task_in_scope(task, current_user):
+    task = await _get_task_or_404_with_loads(db, attachment.task_id)
+    if not can_view_task(current_user, task):
         raise HTTPException(status_code=404, detail="Attachment not found")
 
     return FileResponse(
@@ -455,8 +533,8 @@ async def delete_attachment(
     if attachment is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
-    task = await _get_task_or_404(db, attachment.task_id)
-    if not _is_task_in_scope(task, current_user):
+    task = await _get_task_or_404_with_loads(db, attachment.task_id)
+    if not can_view_task(current_user, task):
         raise HTTPException(status_code=404, detail="Attachment not found")
 
     # Only the assignee can delete attachments
@@ -492,8 +570,8 @@ async def preview_attachment(
     if attachment is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
-    task = await _get_task_or_404(db, attachment.task_id)
-    if not _is_task_in_scope(task, current_user):
+    task = await _get_task_or_404_with_loads(db, attachment.task_id)
+    if not can_view_task(current_user, task):
         raise HTTPException(status_code=404, detail="Attachment not found")
 
     if attachment.content_type == "application/pdf" or attachment.content_type.startswith("image/"):

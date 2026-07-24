@@ -14,6 +14,7 @@ from app.database import AsyncSessionLocal
 from app.models.task import Task
 from app.models.user import User
 from app.models.role import Role, role_department
+from app.models.project import Project
 from app.services.email import send_email
 from app.services import email_templates
 
@@ -27,7 +28,8 @@ async def notify_task_assigned(task_id: int) -> None:
         subject, body = email_templates.task_assigned_email(task)
         await send_email(task.assignee.email, subject, body)
         # Send supervisor broadcast to users with notify_on_assign flag
-        supervisors = await _get_users_with_flag(db, task.department_id, "notify_on_assign", exclude_user_id=task.assignee.id)
+        department_ids = {d.id for d in task.project.departments}
+        supervisors = await _get_users_with_flag(db, department_ids, "notify_on_assign", exclude_user_id=task.assignee.id)
         supervisor_subject, supervisor_body = email_templates.task_assigned_supervisor_email(task)
         for supervisor in supervisors:
             await send_email(supervisor.email, supervisor_subject, supervisor_body)
@@ -38,7 +40,8 @@ async def notify_task_submitted_for_review(task_id: int) -> None:
         task = await _load_task(db, task_id)
         if task is None:
             return
-        reviewers = await _get_users_with_flag(db, task.department_id, "notify_on_review")
+        department_ids = {d.id for d in task.project.departments}
+        reviewers = await _get_users_with_flag(db, department_ids, "notify_on_review")
         subject, body = email_templates.task_submitted_for_review_email(task)
         for reviewer in reviewers:
             await send_email(reviewer.email, subject, body)
@@ -53,7 +56,8 @@ async def notify_task_rescheduled(task_id: int) -> None:
         subject, body = email_templates.task_rescheduled_email(task)
         await send_email(task.assignee.email, subject, body)
         # Send supervisor broadcast to users with notify_on_reschedule flag
-        supervisors = await _get_users_with_flag(db, task.department_id, "notify_on_reschedule", exclude_user_id=task.assignee.id)
+        department_ids = {d.id for d in task.project.departments}
+        supervisors = await _get_users_with_flag(db, department_ids, "notify_on_reschedule", exclude_user_id=task.assignee.id)
         supervisor_subject, supervisor_body = email_templates.task_rescheduled_supervisor_email(task)
         for supervisor in supervisors:
             await send_email(supervisor.email, supervisor_subject, supervisor_body)
@@ -68,7 +72,8 @@ async def notify_task_done(task_id: int) -> None:
         subject, body = email_templates.task_done_email(task)
         await send_email(task.assignee.email, subject, body)
         # Send supervisor broadcast to users with notify_on_done flag
-        supervisors = await _get_users_with_flag(db, task.department_id, "notify_on_done", exclude_user_id=task.assignee.id)
+        department_ids = {d.id for d in task.project.departments}
+        supervisors = await _get_users_with_flag(db, department_ids, "notify_on_done", exclude_user_id=task.assignee.id)
         supervisor_subject, supervisor_body = email_templates.task_done_supervisor_email(task)
         for supervisor in supervisors:
             await send_email(supervisor.email, supervisor_subject, supervisor_body)
@@ -79,26 +84,26 @@ async def _load_task(db, task_id: int) -> Task | None:
         select(Task)
         .options(
             selectinload(Task.assignee).selectinload(User.role),
-            selectinload(Task.department)
+            selectinload(Task.project).selectinload(Project.departments),
         )
         .where(Task.id == task_id)
     )
     return result.scalar_one_or_none()
 
 
-async def _get_users_with_flag(db, department_id: int | None, flag_name: str, exclude_user_id: int | None = None) -> list[User]:
+async def _get_users_with_flag(db, department_ids: set[int], flag_name: str, exclude_user_id: int | None = None) -> list[User]:
     """Get all users whose role has the given notification flag enabled and whose
-    department scope covers the given department. Optionally exclude a specific user.
+    department scope covers ANY of the given department ids. Optionally exclude a specific user.
     """
     department_match = (
         Role.all_departments == True
-        if department_id is None
+        if not department_ids
         else or_(
             Role.all_departments == True,
             exists().where(
                 and_(
                     role_department.c.role_id == Role.id,
-                    role_department.c.department_id == department_id,
+                    role_department.c.department_id.in_(department_ids),
                 )
             ),
         )

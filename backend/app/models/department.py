@@ -18,3 +18,4 @@ class Department(Base):
     # A department can have many users and many tasks.
     users = relationship("User", back_populates="department")
     tasks = relationship("Task", back_populates="department")
+    projects = relationship("Project", secondary="project_department", back_populates="departments")

@@ -20,6 +20,9 @@ from app.core.security import decode_token
 from app.database import get_db
 from app.models.user import User
 from app.models.role import Role
+from app.models.project import Project
+from app.models.task import Task
+from app.models.subtask import SubTask
 
 # tokenUrl is just used by the /docs page to know where to send a login
 # request from its "Authorize" button — it doesn't affect real API calls.
@@ -105,3 +108,109 @@ def get_scoped_department_ids(user: User) -> set[int] | None:
     if user.role.all_departments:
         return None
     return {d.id for d in user.role.departments}
+
+
+def is_project_lead(user: User, project: Project) -> bool:
+    """Returns True if the user is the lead of the given project."""
+    return project.lead_id == user.id
+
+
+def is_task_lead(user: User, task: Task) -> bool:
+    """Returns True if the user is the lead of the given task."""
+    return task.lead_id == user.id
+
+
+def can_manage_project(user: User, project: Project) -> bool:
+    """
+    Returns True if the user can manage the project.
+    Combines role-based permission (project:manage) with instance-based ownership (project lead).
+    This allows admins/managers to bypass ownership checks while still respecting lead authority.
+    """
+    return has_permission(user, "project:manage") or is_project_lead(user, project)
+
+
+def can_create_task_in_project(user: User, project: Project) -> bool:
+    """Only the project's lead can create tasks inside it — this is pure instance ownership, not a role permission."""
+    return is_project_lead(user, project)
+
+
+def can_manage_task(user: User, task: Task) -> bool:
+    """
+    Authority cascades: a Manager with project:manage scoped to this task's
+    project's department(s) can manage any task in it; a Project Lead can
+    manage any task inside their own project; a Task Lead can manage their
+    specific task. No flat task-level permission exists anymore.
+    """
+    if has_permission(user, "project:manage"):
+        scoped = get_scoped_department_ids(user)
+        if scoped is None or any(d.id in scoped for d in task.project.departments):
+            return True
+    if is_project_lead(user, task.project):
+        return True
+    return is_task_lead(user, task)
+
+
+def can_view_task(user: User, task: Task) -> bool:
+    """
+    Authority cascades for viewing: a Manager with project:view scoped to this task's
+    project's department(s) can view any task in it; a Project Lead can view any task
+    inside their own project; a Task Lead can view their specific task; a user can view
+    tasks they're a team member of.
+    """
+    if has_permission(user, "project:view"):
+        scoped = get_scoped_department_ids(user)
+        if scoped is None or any(d.id in scoped for d in task.project.departments):
+            return True
+    if is_project_lead(user, task.project):
+        return True
+    if is_task_lead(user, task):
+        return True
+    # Check if user is in task team members
+    return any(tm.user_id == user.id for tm in task.team_members)
+
+
+def can_create_subtask_in_task(user: User, task: Task) -> bool:
+    """Only the task's lead can create subtasks inside it — pure instance ownership, no permission bypass."""
+    return is_task_lead(user, task)
+
+
+def get_assignable_user_pool(db_users: list[User], selector: User, department_ids: set[int]) -> list[User]:
+    """
+    Given a list of candidate users (already filtered to the relevant department(s)),
+    return only those whose Category is in the selector's role.assignable_categories —
+    reusing the existing role_assignable_category restriction instead of inventing new
+    hierarchy logic. selector is the Project Lead or Task Lead doing the picking.
+    """
+    if selector.role is None:
+        return []
+    assignable_category_ids = {c.id for c in selector.role.assignable_categories}
+    return [
+        u for u in db_users
+        if u.department_id in department_ids
+        and u.role is not None
+        and u.role.category_id in assignable_category_ids
+    ]
+
+
+def can_view_subtask(user: User, subtask: SubTask) -> bool:
+    """
+    Returns True if the user can view the subtask.
+    A user can view a subtask if they can view the parent task OR if they are one of the subtask's assignees.
+    """
+    if can_view_task(user, subtask.task):
+        return True
+    # Check if user is in subtask assignees
+    return any(sa.user_id == user.id for sa in subtask.assignees)
+
+
+def can_manage_subtask(user: User, subtask: SubTask) -> bool:
+    """
+    Returns True if the user can manage the subtask.
+    A user can manage a subtask if they can manage the parent task OR if they are one of the subtask's assignees.
+    Note: Assignees can update their own subtask's status/details, but not reassign it to others — that distinction
+    is enforced in the endpoint, not in this helper.
+    """
+    if can_manage_task(user, subtask.task):
+        return True
+    # Check if user is in subtask assignees
+    return any(sa.user_id == user.id for sa in subtask.assignees)

@@ -6,7 +6,9 @@ every table.
 """
 from app.models.user import User
 from app.models.role import Role, Permission, role_department, role_assignable_category
-from app.models.task import Task, TaskStatus, TaskPriority
+from app.models.task import Task, TaskStatus, TaskPriority, TaskTeam
 from app.models.department import Department
 from app.models.category import Category, category_permission
 from app.models.attachment import Attachment
+from app.models.project import Project, ProjectStatus, ProjectPriority, ProjectTeam, project_department
+from app.models.subtask import SubTask, SubTaskAssignee

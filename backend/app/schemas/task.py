@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import List
 
 from pydantic import BaseModel
 
@@ -10,7 +11,8 @@ class TaskCreate(BaseModel):
     description: str | None = None
     priority: TaskPriority = TaskPriority.MEDIUM
     due_date: datetime | None = None
-    assigned_to: int
+    project_id: int
+    assigned_to: int | None = None
 
 
 class TaskUpdate(BaseModel):
@@ -29,6 +31,14 @@ class TaskAssignRequest(BaseModel):
 
 class RescheduleRequest(BaseModel):
     new_due_date: datetime
+
+
+class TaskAssignLead(BaseModel):
+    lead_id: int
+
+
+class TaskTeamUpdate(BaseModel):
+    user_ids: List[int]
 
 
 class AttachmentOut(BaseModel):
@@ -53,7 +63,11 @@ class TaskOut(BaseModel):
     created_at: datetime
     created_by: int
     assigned_to: int | None
-    department_id: int | None
+    project_id: int
+    lead_id: int | None
+    team_approved_by: int | None
+    team_approved_at: datetime | None
+    team_user_ids: List[int]
     attachments: list[AttachmentOut] = []
 
     class Config:

@@ -23,6 +23,24 @@ class TaskPriority(str, enum.Enum):
     HIGH = "High"
 
 
+class TaskTeam(Base):
+    """
+    Association table for task team members with metadata.
+    Tracks who added each team member and when.
+    """
+    __tablename__ = "task_team"
+
+    task_id = Column(Integer, ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    added_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    added_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    task = relationship("Task", back_populates="team_members")
+    user = relationship("User", foreign_keys=[user_id])
+    adder = relationship("User", foreign_keys=[added_by])
+
+
 class Task(Base):
     __tablename__ = "tasks"
 
@@ -36,11 +54,25 @@ class Task(Base):
 
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     assigned_to = Column(Integer, ForeignKey("users.id"), nullable=True)
-    department_id = Column(Integer, ForeignKey("departments.id"), nullable=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
+    lead_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    team_approved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    team_approved_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Relationships - must specify foreign_keys= since multiple FKs point to User
     creator = relationship("User", foreign_keys=[created_by], back_populates="tasks_created")
     assignee = relationship("User", foreign_keys=[assigned_to], back_populates="tasks_assigned")
-    department = relationship("Department", back_populates="tasks")
+    lead = relationship("User", foreign_keys=[lead_id])
+    team_approver = relationship("User", foreign_keys=[team_approved_by])
+
+    # Project relationship
+    project = relationship("Project", back_populates="tasks")
+
+    # Team members relationship
+    team_members = relationship("TaskTeam", back_populates="task", cascade="all, delete-orphan")
+
+    # Existing relationships
     attachments = relationship(
-    "Attachment", back_populates="task", cascade="all, delete-orphan", lazy="selectin"
-)
+        "Attachment", back_populates="task", cascade="all, delete-orphan", lazy="selectin"
+    )
+    subtasks = relationship("SubTask", back_populates="task", cascade="all, delete-orphan")

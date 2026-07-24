@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.models  # noqa: F401 — registers all models with Base.metadata
 from app.database import engine, Base, get_db
 from app.seed import seed_permissions
-from app.routers import auth, users, roles, tasks, dashboard, departments, categories
+from app.routers import auth, users, roles, tasks, dashboard, departments, categories, projects, subtasks
 
 
 @asynccontextmanager
@@ -46,7 +46,9 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(roles.router)
+app.include_router(projects.router)
 app.include_router(tasks.router)
+app.include_router(subtasks.router)
 app.include_router(dashboard.router)
 app.include_router(departments.router)
 app.include_router(categories.router)
