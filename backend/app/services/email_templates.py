@@ -53,3 +53,22 @@ def task_done_email(task: Task) -> tuple[str, str]:
     subject = f"Task approved: {task.title}"
     body = _wrap("Task approved", "Your task was reviewed and approved.", task)
     return subject, body
+
+
+def task_assigned_supervisor_email(task: Task) -> tuple[str, str]:
+    subject = f"Task assigned: {task.title}"
+    body = _wrap("Task assigned", f"{task.assignee.name} was assigned this task in {task.department.name if task.department else 'the system'}.", task)
+    return subject, body
+
+
+def task_rescheduled_supervisor_email(task: Task) -> tuple[str, str]:
+    due = task.due_date.strftime("%b %d, %I:%M %p") if task.due_date else "no date set"
+    subject = f"Task rescheduled: {task.title}"
+    body = _wrap("Task rescheduled", f"{task.assignee.name}'s task was sent back for changes. New due date: {due}.", task)
+    return subject, body
+
+
+def task_done_supervisor_email(task: Task) -> tuple[str, str]:
+    subject = f"Task approved: {task.title}"
+    body = _wrap("Task approved", f"{task.assignee.name}'s task was reviewed and approved.", task)
+    return subject, body

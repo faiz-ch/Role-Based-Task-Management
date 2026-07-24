@@ -23,10 +23,14 @@ async def notify_task_assigned(task_id: int) -> None:
         task = await _load_task(db, task_id)
         if task is None or task.assignee is None:
             return
-        if not await _role_wants(db, task.assignee.role_id, "notify_on_assign"):
-            return
+        # Send assignee their email unconditionally
         subject, body = email_templates.task_assigned_email(task)
         await send_email(task.assignee.email, subject, body)
+        # Send supervisor broadcast to users with notify_on_assign flag
+        supervisors = await _get_users_with_flag(db, task.department_id, "notify_on_assign", exclude_user_id=task.assignee.id)
+        supervisor_subject, supervisor_body = email_templates.task_assigned_supervisor_email(task)
+        for supervisor in supervisors:
+            await send_email(supervisor.email, supervisor_subject, supervisor_body)
 
 
 async def notify_task_submitted_for_review(task_id: int) -> None:
@@ -34,7 +38,7 @@ async def notify_task_submitted_for_review(task_id: int) -> None:
         task = await _load_task(db, task_id)
         if task is None:
             return
-        reviewers = await _get_reviewer_users(db, task.department_id)
+        reviewers = await _get_users_with_flag(db, task.department_id, "notify_on_review")
         subject, body = email_templates.task_submitted_for_review_email(task)
         for reviewer in reviewers:
             await send_email(reviewer.email, subject, body)
@@ -45,10 +49,14 @@ async def notify_task_rescheduled(task_id: int) -> None:
         task = await _load_task(db, task_id)
         if task is None or task.assignee is None:
             return
-        if not await _role_wants(db, task.assignee.role_id, "notify_on_reschedule"):
-            return
+        # Send assignee their email unconditionally
         subject, body = email_templates.task_rescheduled_email(task)
         await send_email(task.assignee.email, subject, body)
+        # Send supervisor broadcast to users with notify_on_reschedule flag
+        supervisors = await _get_users_with_flag(db, task.department_id, "notify_on_reschedule", exclude_user_id=task.assignee.id)
+        supervisor_subject, supervisor_body = email_templates.task_rescheduled_supervisor_email(task)
+        for supervisor in supervisors:
+            await send_email(supervisor.email, supervisor_subject, supervisor_body)
 
 
 async def notify_task_done(task_id: int) -> None:
@@ -56,30 +64,32 @@ async def notify_task_done(task_id: int) -> None:
         task = await _load_task(db, task_id)
         if task is None or task.assignee is None:
             return
-        if not await _role_wants(db, task.assignee.role_id, "notify_on_done"):
-            return
+        # Send assignee their email unconditionally
         subject, body = email_templates.task_done_email(task)
         await send_email(task.assignee.email, subject, body)
+        # Send supervisor broadcast to users with notify_on_done flag
+        supervisors = await _get_users_with_flag(db, task.department_id, "notify_on_done", exclude_user_id=task.assignee.id)
+        supervisor_subject, supervisor_body = email_templates.task_done_supervisor_email(task)
+        for supervisor in supervisors:
+            await send_email(supervisor.email, supervisor_subject, supervisor_body)
 
 
 async def _load_task(db, task_id: int) -> Task | None:
     result = await db.execute(
         select(Task)
-        .options(selectinload(Task.assignee).selectinload(User.role))
+        .options(
+            selectinload(Task.assignee).selectinload(User.role),
+            selectinload(Task.department)
+        )
         .where(Task.id == task_id)
     )
     return result.scalar_one_or_none()
 
 
-async def _role_wants(db, role_id: int | None, flag_name: str) -> bool:
-    if role_id is None:
-        return False
-    result = await db.execute(select(Role).where(Role.id == role_id))
-    role = result.scalar_one_or_none()
-    return bool(role and getattr(role, flag_name))
-
-
-async def _get_reviewer_users(db, department_id: int | None) -> list[User]:
+async def _get_users_with_flag(db, department_id: int | None, flag_name: str, exclude_user_id: int | None = None) -> list[User]:
+    """Get all users whose role has the given notification flag enabled and whose
+    department scope covers the given department. Optionally exclude a specific user.
+    """
     department_match = (
         Role.all_departments == True
         if department_id is None
@@ -93,10 +103,13 @@ async def _get_reviewer_users(db, department_id: int | None) -> list[User]:
             ),
         )
     )
-    result = await db.execute(
+    query = (
         select(User)
         .join(Role, User.role_id == Role.id)
-        .where(Role.notify_on_review == True)
+        .where(getattr(Role, flag_name) == True)
         .where(department_match)
     )
+    if exclude_user_id is not None:
+        query = query.where(User.id != exclude_user_id)
+    result = await db.execute(query)
     return list(result.scalars().unique().all())
