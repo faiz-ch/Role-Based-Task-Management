@@ -18,7 +18,11 @@ function mapTask(t: any): Task {
     createdAt: t.created_at ? t.created_at.slice(0, 10) : "",
     creatorId: t.created_by,
     assigneeId: t.assigned_to,
-    departmentId: t.department_id,
+    projectId: t.project_id,
+    leadId: t.lead_id,
+    teamApprovedBy: t.team_approved_by,
+    teamApprovedAt: t.team_approved_at,
+    teamUserIds: t.team_user_ids || [],
   };
 }
 
@@ -42,6 +46,7 @@ export async function createTask(task: {
   description: string;
   priority: string;
   dueDate: string;
+  projectId: number;
   assigneeId?: number;
 }): Promise<Task> {
   const payload: any = {
@@ -49,6 +54,7 @@ export async function createTask(task: {
     description: task.description || null,
     priority: task.priority,
     due_date: task.dueDate ? new Date(task.dueDate).toISOString() : null,
+    project_id: task.projectId,
   };
   // Only include assigned_to if provided (backend auto-assigns if omitted)
   if (task.assigneeId !== undefined) {
@@ -111,6 +117,18 @@ export async function rescheduleTask(id: number, newDueDate: string): Promise<Ta
   };
   const data = await apiFetch(`/tasks/${id}/reschedule`, {
     method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return mapTask(data);
+}
+
+export async function updateTaskTeam(id: number, userIds: number[], leadId?: number): Promise<Task> {
+  const payload: any = { user_ids: userIds };
+  if (leadId !== undefined) {
+    payload.lead_id = leadId;
+  }
+  const data = await apiFetch(`/tasks/${id}/team`, {
+    method: "PUT",
     body: JSON.stringify(payload),
   });
   return mapTask(data);

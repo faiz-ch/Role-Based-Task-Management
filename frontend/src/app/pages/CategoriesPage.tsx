@@ -7,13 +7,9 @@ import { Dlg } from "../components/Dlg";
 import { FldInput } from "../components/FldInput";
 
 const PERM_DESCRIPTIONS: Record<string, string> = {
-  // Task permissions
-  "task:create": "Create new tasks",
-  "task:edit": "Edit task details",
-  "task:delete": "Delete tasks",
-  "task:review": "Review and approve/reject tasks",
-  "task:view": "View tasks",
-  "task:assign": "Assign tasks to users",
+  // Project permissions
+  "project:view": "View projects and their tasks",
+  "project:manage": "Create and manage projects, assign leads, approve teams",
   // User permissions
   "user:view": "View users",
   "user:manage": "Manage users and their settings",

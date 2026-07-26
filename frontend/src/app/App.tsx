@@ -13,6 +13,9 @@ import { RolesPage } from "./pages/RolesPage";
 import { CategoriesPage } from "./pages/CategoriesPage";
 import { DepartmentsPage } from "./pages/DepartmentsPage";
 import { TaskDetailPage } from "./pages/TaskDetailPage";
+import { ProjectsPage } from "./pages/ProjectsPage";
+import { ProjectDetailPage } from "./pages/ProjectDetailPage";
+import { SubtaskDetailPage } from "./pages/SubtaskDetailPage";
 
 // Auth guard component to redirect unauthenticated users
 function AuthGuard({ children }: { children: React.ReactNode }) {
@@ -113,6 +116,9 @@ function AppContent() {
                   />
                   <Route path="/tasks" element={<TasksPage />} />
                   <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
+                  <Route path="/subtasks/:subtaskId" element={<SubtaskDetailPage />} />
+                  <Route path="/projects" element={<ProjectsPage />} />
+                  <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
                   <Route
                     path="/users"
                     element={

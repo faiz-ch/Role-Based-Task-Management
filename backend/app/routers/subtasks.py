@@ -85,25 +85,13 @@ async def create_subtask(
     if not can_create_subtask_in_task(current_user, task):
         raise HTTPException(status_code=403, detail="You can only create subtasks in tasks you lead")
 
-    # Get assignable user pool from task's project departments
-    project_dept_ids = {d.id for d in task.project.departments}
-    candidates_result = await db.execute(
-        select(User).where(User.department_id.in_(project_dept_ids))
-    )
-    candidates = candidates_result.scalars().all()
-
-    # Filter through assignable categories
-    assignable_pool = get_assignable_user_pool(
-        list(candidates), current_user, project_dept_ids
-    )
-    assignable_user_ids = {u.id for u in assignable_pool}
-
-    # Validate all requested assignee_ids are in the filtered pool
+    # Validate all requested assignee_ids are in the task's team members
+    task_team_user_ids = {tm.user_id for tm in task.team_members}
     for assignee_id in payload.assignee_ids:
-        if assignee_id not in assignable_user_ids:
+        if assignee_id not in task_team_user_ids:
             raise HTTPException(
                 status_code=400,
-                detail=f"User {assignee_id} is not in your assignable pool for this task"
+                detail=f"User {assignee_id} is not a member of this task's team"
             )
 
     # Create the subtask
@@ -231,25 +219,13 @@ async def update_subtask_assignees(
     if not is_task_lead(current_user, subtask.task):
         raise HTTPException(status_code=403, detail="Only the task lead can reassign subtasks")
 
-    # Get assignable user pool from task's project departments
-    project_dept_ids = {d.id for d in subtask.task.project.departments}
-    candidates_result = await db.execute(
-        select(User).where(User.department_id.in_(project_dept_ids))
-    )
-    candidates = candidates_result.scalars().all()
-
-    # Filter through assignable categories
-    assignable_pool = get_assignable_user_pool(
-        list(candidates), current_user, project_dept_ids
-    )
-    assignable_user_ids = {u.id for u in assignable_pool}
-
-    # Validate all requested user_ids are in the filtered pool
+    # Validate all requested user_ids are in the task's team members
+    task_team_user_ids = {tm.user_id for tm in subtask.task.team_members}
     for user_id in payload.user_ids:
-        if user_id not in assignable_user_ids:
+        if user_id not in task_team_user_ids:
             raise HTTPException(
                 status_code=400,
-                detail=f"User {user_id} is not in your assignable pool for this task"
+                detail=f"User {user_id} is not a member of this task's team"
             )
 
     # Delete existing assignees

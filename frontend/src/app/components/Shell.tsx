@@ -10,6 +10,7 @@ import {
   Menu,
   Bell,
   Layers,
+  FolderKanban,
 } from "lucide-react";
 import { Page } from "../types";
 import { useAuth } from "../context/AuthContext";
@@ -22,6 +23,7 @@ const NAV: {
   perm: string | string[] | null;
 }[] = [
   { id: "dashboard", label: "Dashboard", Icon: LayoutDashboard, perm: "dashboard:view" },
+  { id: "projects", label: "Projects", Icon: FolderKanban, perm: null },
   { id: "tasks", label: "Tasks", Icon: CheckSquare, perm: null },
   { id: "users", label: "Users", Icon: Users, perm: "user:manage" },
   { id: "roles", label: "Roles", Icon: Shield, perm: "role:manage" },
@@ -39,6 +41,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const page: Page = (() => {
     const path = location.pathname;
     if (path === "/dashboard") return "dashboard";
+    if (path.startsWith("/projects")) return "projects";
     if (path.startsWith("/tasks")) return "tasks";
     if (path === "/users") return "users";
     if (path === "/roles") return "roles";

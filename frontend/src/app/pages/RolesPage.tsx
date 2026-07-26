@@ -8,8 +8,8 @@ import { Dlg } from "../components/Dlg";
 import { FldInput } from "../components/FldInput";
 
 const DEPARTMENT_SCOPED_PERMISSIONS = new Set([
-  "task:view",
-  "task:assign",
+  "project:view",
+  "project:manage",
   "user:view",
   "user:manage",
   "dashboard:view",

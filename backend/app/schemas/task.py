@@ -33,12 +33,9 @@ class RescheduleRequest(BaseModel):
     new_due_date: datetime
 
 
-class TaskAssignLead(BaseModel):
-    lead_id: int
-
-
 class TaskTeamUpdate(BaseModel):
     user_ids: List[int]
+    lead_id: int | None = None
 
 
 class AttachmentOut(BaseModel):

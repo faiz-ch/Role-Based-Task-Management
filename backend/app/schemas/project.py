@@ -33,9 +33,14 @@ class ProjectOut(BaseModel):
         from_attributes = True
 
 
-class ProjectAssignLead(BaseModel):
-    lead_id: int
-
-
 class ProjectTeamUpdate(BaseModel):
     user_ids: List[int]
+    lead_id: int | None = None
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    priority: str | None = None
+    due_date: datetime | None = None
+    department_ids: List[int] | None = None

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { Plus, Edit2, Trash2, AlertTriangle, ChevronDown, ChevronRight, Search } from "lucide-react";
-import { Task, UserType, Status, Priority, Department } from "../types";
+import { Task, UserType, Status, Priority, Department, Project } from "../types";
 import { useAuth } from "../context/AuthContext";
 import {
   getTasks,
@@ -11,6 +11,7 @@ import {
   assignTask,
   deleteTask,
 } from "../api/tasks";
+import { getProjects } from "../api/projects";
 import { getUsers } from "../api/users";
 import { getDepartments } from "../api/departments";
 import { Av } from "../components/Av";
@@ -28,6 +29,7 @@ interface TForm {
   description: string;
   priority: Priority;
   dueDate: string;
+  projectId: number;
   assigneeId: number | null;
 }
 
@@ -56,45 +58,6 @@ function isOverdue(dueDate: string, status: Status) {
   );
 }
 
-function getValidTransitions(
-  task: Task,
-  permissions: string[],
-  currentUserId: number
-): { label: string; status: Status }[] {
-  const canEdit = permissions.includes("task:edit");
-  const canReview = permissions.includes("task:review");
-  const isAssignee = task.assigneeId === currentUserId;
-
-  if (canEdit) {
-    // Can move to any status except current
-    return STATUSES.filter((s) => s !== task.status).map((s) => ({
-      label: `Move to ${s}`,
-      status: s,
-    }));
-  }
-
-  if (isAssignee) {
-    if (task.status === "To Do") {
-      return [{ label: "Submit for review", status: "Review" }];
-    }
-    if (task.status === "Reschedule") {
-      return [{ label: "Resubmit for review", status: "Review" }];
-    }
-  }
-
-  if (canReview) {
-    if (task.status === "Review") {
-      // Approve is a simple status flip (fits this dropdown). Reschedule is
-      // deliberately NOT offered here — it requires picking a new due
-      // date/time, which doesn't fit a plain dropdown. That action lives on
-      // the Task Detail page instead (a later step), which calls the
-      // dedicated /reschedule endpoint with the date the reviewer picks.
-      return [{ label: "Approve (Done)", status: "Done" }];
-    }
-  }
-
-  return [];
-}
 
 export function TasksPage() {
   const navigate = useNavigate();
@@ -102,6 +65,7 @@ export function TasksPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [users, setUsers] = useState<UserType[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -121,30 +85,48 @@ export function TasksPage() {
     description: "",
     priority: "Medium",
     dueDate: "",
+    projectId: 0,
     assigneeId: null,
   });
 
-  const canCreate = permissions.includes("task:create");
-  const canEdit = permissions.includes("task:edit");
-  const canAssign = permissions.includes("task:assign");
-  const canViewAll = permissions.includes("task:view");
+  const canManage = permissions.includes("project:manage");
+
+  // Build projects map for permission checks
+  const projectsById = projects.reduce((map, p) => {
+    map[p.id] = p;
+    return map;
+  }, {} as Record<number, Project>);
+
+  function canManageTask(task: Task): boolean {
+    const project = projectsById[task.projectId];
+    if (!project) return false;
+    return (
+      canManage ||
+      currentUser?.id === project.leadId ||
+      currentUser?.id === task.leadId
+    );
+  }
+
+  function isTaskAssignee(task: Task): boolean {
+    return currentUser?.id === task.assigneeId;
+  }
 
   useEffect(() => {
   async function loadData() {
     try {
       setLoading(true);
       setError(null);
-      const [tasksResult, usersResult, departmentsResult] = await Promise.allSettled([
-        canViewAll && scope === "mine" && currentUser
-          ? getTasks({ assignedTo: currentUser.id })
-          : getTasks(),
+      const [tasksResult, usersResult, departmentsResult, projectsResult] = await Promise.allSettled([
+        scope === "mine" && currentUser ? getTasks({ assignedTo: currentUser.id }) : getTasks(),
         getUsers(),
         getDepartments(),
+        getProjects(),
       ]);
 
       setTasks(tasksResult.status === "fulfilled" ? tasksResult.value : []);
       setUsers(usersResult.status === "fulfilled" ? usersResult.value : []);
       setDepartments(departmentsResult.status === "fulfilled" ? departmentsResult.value : []);
+      setProjects(projectsResult.status === "fulfilled" ? projectsResult.value : []);
 
       if (tasksResult.status === "rejected") {
         setError((tasksResult.reason as any)?.message || "Failed to load tasks.");
@@ -156,7 +138,7 @@ export function TasksPage() {
     }
   }
   loadData();
-}, [scope, canViewAll, currentUser]);
+}, [scope, currentUser]);
 
   // Filter tasks
   const filteredTasks = tasks.filter((task) => {
@@ -240,6 +222,7 @@ export function TasksPage() {
       description: "",
       priority: "Medium",
       dueDate: "",
+      projectId: 0,
       assigneeId: null,
     });
     setShowNew(true);
@@ -251,13 +234,14 @@ export function TasksPage() {
       description: t.description,
       priority: t.priority,
       dueDate: t.dueDate,
+      projectId: t.projectId,
       assigneeId: t.assigneeId,
     });
     setEditTask(t);
   }
 
   async function saveNew() {
-    if (!form.title.trim()) return;
+    if (!form.title.trim() || !form.projectId) return;
     try {
       setError(null);
       const taskData: any = {
@@ -265,9 +249,9 @@ export function TasksPage() {
         description: form.description,
         priority: form.priority,
         dueDate: form.dueDate,
+        projectId: form.projectId,
       };
-      // Only include assigneeId if user has assign permissions
-      if (canAssign) {
+      if (form.assigneeId !== null) {
         taskData.assigneeId = form.assigneeId;
       }
       const newTask = await createTask(taskData);
@@ -345,38 +329,34 @@ export function TasksPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {canViewAll && (
-            <div className="flex items-center bg-muted/40 rounded-lg p-1">
-              <button
-                onClick={() => setScope("all")}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
-                  scope === "all"
-                    ? "bg-white text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                All Tasks
-              </button>
-              <button
-                onClick={() => setScope("mine")}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
-                  scope === "mine"
-                    ? "bg-white text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                My Tasks
-              </button>
-            </div>
-          )}
-          {canCreate && (
+          <div className="flex items-center bg-muted/40 rounded-lg p-1">
             <button
-              onClick={openNew}
-              className="flex items-center gap-1.5 px-3 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+              onClick={() => setScope("all")}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+                scope === "all"
+                  ? "bg-white text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
             >
-              <Plus size={14} /> New Task
+              All Tasks
             </button>
-          )}
+            <button
+              onClick={() => setScope("mine")}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
+                scope === "mine"
+                  ? "bg-white text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              My Tasks
+            </button>
+          </div>
+          <button
+            onClick={openNew}
+            className="flex items-center gap-1.5 px-3 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+          >
+            <Plus size={14} /> New Task
+          </button>
         </div>
       </div>
 
@@ -490,7 +470,9 @@ export function TasksPage() {
                   {monthTasks.map((task) => {
                     const assignee = users.find((u) => u.id === task.assigneeId);
                     const od = isOverdue(task.dueDate, task.status);
-                    const transitions = getValidTransitions(task, permissions, currentUser?.id ?? 0);
+                    const canManageThis = canManageTask(task);
+                    const isAssignee = isTaskAssignee(task);
+                    const project = projectsById[task.projectId];
                     
                     return (
                       <div key={task.id} className="p-4 hover:bg-muted/20 transition-colors">
@@ -524,7 +506,7 @@ export function TasksPage() {
                           </div>
                           <div className="flex items-center gap-2 flex-shrink-0">
                             {assignee && <Av name={assignee.name} size="sm" />}
-                            {canAssign && (
+                            {canManageThis && (
                               <select
                                 value={task.assigneeId ?? ""}
                                 onChange={(e) => {
@@ -542,7 +524,7 @@ export function TasksPage() {
                                 ))}
                               </select>
                             )}
-                            {canEdit && (
+                            {canManageThis && (
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -554,7 +536,7 @@ export function TasksPage() {
                                 <Edit2 size={14} className="text-muted-foreground" />
                               </button>
                             )}
-                            {canEdit && (
+                            {canManageThis && (
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -568,37 +550,38 @@ export function TasksPage() {
                             )}
                           </div>
                         </div>
-                        {transitions.length > 0 && (
+                        {/* Status actions */}
+                        {canManageThis ? (
                           <div className="mt-3 pt-3 border-t border-border">
-                            {transitions.length === 1 ? (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleStatusTransition(task, transitions[0].status);
-                                }}
-                                className="text-xs font-medium text-blue-600 hover:text-blue-800 transition-colors cursor-pointer"
-                              >
-                                {transitions[0].label}
-                              </button>
-                            ) : (
-                              <select
-                                onChange={(e) => {
-                                  e.stopPropagation();
-                                  handleStatusTransition(task, e.target.value as Status);
-                                }}
-                                className="text-xs border border-border rounded px-2 py-1 bg-white text-muted-foreground focus:outline-none focus:border-blue-400 cursor-pointer"
-                                defaultValue=""
-                              >
-                                <option value="" disabled>Move to...</option>
-                                {transitions.map((t) => (
-                                  <option key={t.status} value={t.status}>
-                                    {t.label}
-                                  </option>
-                                ))}
-                              </select>
-                            )}
+                            <select
+                              onChange={(e) => {
+                                e.stopPropagation();
+                                handleStatusTransition(task, e.target.value as Status);
+                              }}
+                              className="text-xs border border-border rounded px-2 py-1 bg-white text-muted-foreground focus:outline-none focus:border-blue-400 cursor-pointer"
+                              defaultValue=""
+                            >
+                              <option value="" disabled>Move to...</option>
+                              {STATUSES.filter((s) => s !== task.status).map((s) => (
+                                <option key={s} value={s}>
+                                  {s}
+                                </option>
+                              ))}
+                            </select>
                           </div>
-                        )}
+                        ) : isAssignee && (task.status === "To Do" || task.status === "Reschedule") ? (
+                          <div className="mt-3 pt-3 border-t border-border">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleStatusTransition(task, "Review");
+                              }}
+                              className="text-xs font-medium text-blue-600 hover:text-blue-800 transition-colors cursor-pointer"
+                            >
+                              Submit for review
+                            </button>
+                          </div>
+                        ) : null}
                       </div>
                     );
                   })}
@@ -638,6 +621,19 @@ export function TasksPage() {
                 }
               />
             </div>
+            <FldSelect
+              label="Project"
+              value={form.projectId.toString()}
+              onChange={(e) => {
+                setForm((f) => ({ ...f, projectId: Number(e.target.value) }));
+              }}
+              options={[
+                { value: "0", label: "Select project" },
+                ...projects
+                  .filter((p) => p.leadId === currentUser?.id)
+                  .map((p) => ({ value: p.id.toString(), label: p.name })),
+              ]}
+            />
             <div className="grid grid-cols-2 gap-3">
               <FldSelect
                 label="Priority"
@@ -656,28 +652,21 @@ export function TasksPage() {
                 }
               />
             </div>
-            {canAssign && (
-              <FldSelect
-                label="Assignee"
-                value={form.assigneeId ?? ""}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setForm((f) => ({
-                    ...f,
-                    assigneeId: val === "" ? null : Number(val),
-                  }));
-                }}
-                options={[
-                  { value: "", label: "Select assignee" },
-                  ...users.map((u) => ({ value: u.id, label: u.name })),
-                ]}
-              />
-            )}
-            {!canAssign && (
-              <div className="text-xs text-muted-foreground">
-                Task will be auto-assigned to you
-              </div>
-            )}
+            <FldSelect
+              label="Assignee"
+              value={form.assigneeId ?? ""}
+              onChange={(e) => {
+                const val = e.target.value;
+                setForm((f) => ({
+                  ...f,
+                  assigneeId: val === "" ? null : Number(val),
+                }));
+              }}
+              options={[
+                { value: "", label: "Auto-assign to you" },
+                ...users.map((u) => ({ value: u.id, label: u.name })),
+              ]}
+            />
           </div>
           <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-border">
             <button

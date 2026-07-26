@@ -176,20 +176,14 @@ def can_create_subtask_in_task(user: User, task: Task) -> bool:
 
 def get_assignable_user_pool(db_users: list[User], selector: User, department_ids: set[int]) -> list[User]:
     """
-    Given a list of candidate users (already filtered to the relevant department(s)),
-    return only those whose Category is in the selector's role.assignable_categories —
-    reusing the existing role_assignable_category restriction instead of inventing new
-    hierarchy logic. selector is the Project Lead or Task Lead doing the picking.
+    Given a list of candidate users, return those in the given department_ids.
+    Team/lead eligibility for projects, tasks, and subtasks is based purely on
+    department membership — not on the selector's assignable_categories, which
+    is a separate, unrelated setting for user-creation permission delegation.
+    The `selector` parameter is kept (but unused) so every existing call site
+    stays exactly as-is with no signature changes needed anywhere else.
     """
-    if selector.role is None:
-        return []
-    assignable_category_ids = {c.id for c in selector.role.assignable_categories}
-    return [
-        u for u in db_users
-        if u.department_id in department_ids
-        and u.role is not None
-        and u.role.category_id in assignable_category_ids
-    ]
+    return [u for u in db_users if u.department_id in department_ids]
 
 
 def can_view_subtask(user: User, subtask: SubTask) -> bool:

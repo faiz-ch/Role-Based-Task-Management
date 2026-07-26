@@ -22,7 +22,6 @@ from app.schemas.task import (
     TaskStatusUpdate,
     TaskAssignRequest,
     RescheduleRequest,
-    TaskAssignLead,
     TaskTeamUpdate,
     AttachmentOut,
 )
@@ -127,7 +126,8 @@ async def create_task(
     await db.commit()
     await db.refresh(task)
     background_tasks.add_task(notification_dispatch.notify_task_assigned, task.id)
-    return _task_to_out(task)
+    task_with_loads = await _get_task_or_404_with_loads(db, task.id)
+    return _task_to_out(task_with_loads)
 
 
 @router.patch("/{task_id}", response_model=TaskOut)
@@ -149,7 +149,8 @@ async def update_task(
 
     await db.commit()
     await db.refresh(task)
-    return _task_to_out(task)
+    task_with_loads = await _get_task_or_404_with_loads(db, task.id)
+    return _task_to_out(task_with_loads)
 
 
 @router.patch("/{task_id}/status", response_model=TaskOut)
@@ -178,7 +179,8 @@ async def update_task_status(
         background_tasks.add_task(notification_dispatch.notify_task_submitted_for_review, task.id)
     elif payload.status == TaskStatus.DONE:
         background_tasks.add_task(notification_dispatch.notify_task_done, task.id)
-    return _task_to_out(task)
+    task_with_loads = await _get_task_or_404_with_loads(db, task.id)
+    return _task_to_out(task_with_loads)
 
 @router.patch("/{task_id}/reschedule", response_model=TaskOut)
 async def reschedule_task(
@@ -210,7 +212,8 @@ async def reschedule_task(
     await db.commit()
     await db.refresh(task)
     background_tasks.add_task(notification_dispatch.notify_task_rescheduled, task.id)
-    return _task_to_out(task)
+    task_with_loads = await _get_task_or_404_with_loads(db, task.id)
+    return _task_to_out(task_with_loads)
 
 @router.patch("/{task_id}/assign", response_model=TaskOut)
 async def assign_task(
@@ -242,7 +245,8 @@ async def assign_task(
     await db.commit()
     await db.refresh(task)
     background_tasks.add_task(notification_dispatch.notify_task_assigned, task.id)
-    return _task_to_out(task)
+    task_with_loads = await _get_task_or_404_with_loads(db, task.id)
+    return _task_to_out(task_with_loads)
 
 
 @router.delete("/{task_id}", status_code=204)
@@ -261,46 +265,6 @@ async def delete_task(
     await db.commit()
 
 
-@router.patch("/{task_id}/assign-lead", response_model=TaskOut)
-async def assign_task_lead(
-    task_id: int,
-    payload: TaskAssignLead,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    from sqlalchemy.orm import selectinload
-    task = await _get_task_or_404_with_loads(db, task_id)
-
-    # Only the task's PROJECT lead can assign a task lead
-    if not is_project_lead(current_user, task.project):
-        raise HTTPException(
-            status_code=403,
-            detail="Only the project lead can assign a task lead"
-        )
-
-    # Validate lead_id belongs to a user in one of task.project's departments
-    lead_result = await db.execute(
-        select(User).where(User.id == payload.lead_id)
-    )
-    lead = lead_result.scalar_one_or_none()
-    if lead is None:
-        raise HTTPException(status_code=404, detail="Lead user not found")
-
-    project_dept_ids = {d.id for d in task.project.departments}
-    if lead.department_id not in project_dept_ids:
-        raise HTTPException(
-            status_code=400,
-            detail="Lead must belong to one of the project's departments"
-        )
-
-    task.lead_id = lead.id
-    await db.commit()
-    await db.refresh(task)
-
-    task_with_loads = await _get_task_or_404_with_loads(db, task.id)
-    return _task_to_out(task_with_loads)
-
-
 @router.put("/{task_id}/team", response_model=TaskOut)
 async def update_task_team(
     task_id: int,
@@ -309,34 +273,46 @@ async def update_task_team(
     current_user: User = Depends(get_current_user),
 ):
     from sqlalchemy.orm import selectinload
-    task = await _get_task_or_404_with_loads(db, task_id)
+    # Load task with project.team_members for validation
+    result = await db.execute(
+        select(Task).options(
+            selectinload(Task.project).selectinload(Project.departments).selectinload(Project.team_members),
+            selectinload(Task.team_members),
+        ).where(Task.id == task_id)
+    )
+    task = result.scalar_one_or_none()
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
 
-    # Only the task's own lead can propose its team
-    if not is_task_lead(current_user, task):
+    # Only the task's PROJECT lead can assign its team
+    if not is_project_lead(current_user, task.project):
         raise HTTPException(
             status_code=403,
-            detail="Only the task lead can propose team changes"
+            detail="Only the project lead can assign task team members"
         )
 
-    # Get candidate pool: users in task.project's departments
-    project_dept_ids = {d.id for d in task.project.departments}
-    candidates_result = await db.execute(
-        select(User).where(User.department_id.in_(project_dept_ids))
-    )
-    candidates = candidates_result.scalars().all()
+    # Candidate pool is the PROJECT's team members
+    project_team_user_ids = {tm.user_id for tm in task.project.team_members}
 
-    # Filter through assignable categories
-    assignable_pool = get_assignable_user_pool(
-        list(candidates), current_user, project_dept_ids
-    )
-    assignable_user_ids = {u.id for u in assignable_pool}
-
-    # Validate all requested user_ids are in the filtered pool
+    # Validate all requested user_ids are in the project team
     for user_id in payload.user_ids:
-        if user_id not in assignable_user_ids:
+        if user_id not in project_team_user_ids:
             raise HTTPException(
                 status_code=400,
-                detail=f"User {user_id} is not in your assignable pool for this task"
+                detail="User must be a member of the project team"
+            )
+
+    # If lead_id is provided, validate it's in the user_ids list and in project team
+    if payload.lead_id is not None:
+        if payload.lead_id not in payload.user_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="Lead must be one of the assigned team members"
+            )
+        if payload.lead_id not in project_team_user_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="Lead must be a member of the project team"
             )
 
     # Delete existing team members
@@ -353,39 +329,11 @@ async def update_task_team(
         )
         db.add(team_member)
 
-    # Reset approval status
-    task.team_approved_by = None
-    task.team_approved_at = None
+    # Set lead_id if provided
+    if payload.lead_id is not None:
+        task.lead_id = payload.lead_id
 
-    await db.commit()
-    await db.refresh(task)
-
-    task_with_loads = await _get_task_or_404_with_loads(db, task.id)
-    return _task_to_out(task_with_loads)
-
-
-@router.post("/{task_id}/approve-team", response_model=TaskOut)
-async def approve_task_team(
-    task_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    from sqlalchemy.orm import selectinload
-    task = await _get_task_or_404_with_loads(db, task_id)
-
-    # Only the task's PROJECT lead approves its team
-    if not is_project_lead(current_user, task.project):
-        raise HTTPException(
-            status_code=403,
-            detail="Only the project lead can approve the task team"
-        )
-
-    if not task.team_members:
-        raise HTTPException(
-            status_code=400,
-            detail="Task has no team members to approve"
-        )
-
+    # Set assignment markers (reusing approval columns)
     task.team_approved_by = current_user.id
     task.team_approved_at = datetime.now(timezone.utc)
 

@@ -1,6 +1,7 @@
 export type Status = "To Do" | "Review" | "Done" | "Reschedule";
 export type Priority = "Low" | "Medium" | "High";
-export type Page = "login" | "register" | "dashboard" | "tasks" | "taskDetail" | "users" | "roles" | "departments" | "categories";
+export type ProjectStatus = "Planning" | "Active" | "Done" | "Archived";
+export type Page = "login" | "register" | "dashboard" | "tasks" | "taskDetail" | "users" | "roles" | "departments" | "categories" | "projects" | "projectDetail";
 
 export interface Department {
   id: number;
@@ -35,6 +36,22 @@ export interface UserType {
   department: Department | null;
 }
 
+export interface Project {
+  id: number;
+  name: string;
+  description: string;
+  status: ProjectStatus;
+  priority: Priority;
+  createdBy: number;
+  leadId: number | null;
+  teamApprovedBy: number | null;
+  teamApprovedAt: string | null;
+  dueDate: string;
+  createdAt: string;
+  departmentIds: number[];
+  teamUserIds: number[];
+}
+
 export interface Task {
   id: number;
   title: string;
@@ -45,7 +62,24 @@ export interface Task {
   createdAt: string;
   creatorId: number;
   assigneeId: number | null;
-  departmentId: number | null;
+  projectId: number;
+  leadId: number | null;
+  teamApprovedBy: number | null;
+  teamApprovedAt: string | null;
+  teamUserIds: number[];
+}
+
+export interface Subtask {
+  id: number;
+  taskId: number;
+  title: string;
+  description: string;
+  status: Status;
+  priority: Priority;
+  dueDate: string;
+  createdBy: number;
+  createdAt: string;
+  assigneeIds: number[];
 }
 
 export interface PermDef {

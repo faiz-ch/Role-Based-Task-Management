@@ -15,7 +15,6 @@ class Department(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, nullable=False)
 
-    # A department can have many users and many tasks.
+    # A department can have many users and many projects.
     users = relationship("User", back_populates="department")
-    tasks = relationship("Task", back_populates="department")
     projects = relationship("Project", secondary="project_department", back_populates="departments")

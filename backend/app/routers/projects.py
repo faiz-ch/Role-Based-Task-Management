@@ -18,7 +18,10 @@ from app.database import get_db
 from app.models.project import Project, ProjectStatus, ProjectTeam, project_department
 from app.models.department import Department
 from app.models.user import User
-from app.schemas.project import ProjectCreate, ProjectOut, ProjectAssignLead, ProjectTeamUpdate
+from app.models.task import Task
+from app.models.role import Role
+from app.schemas.project import ProjectCreate, ProjectOut, ProjectTeamUpdate, ProjectUpdate
+from app.schemas.user import UserOut
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -126,10 +129,61 @@ async def get_project(
     return _project_to_out(project)
 
 
-@router.patch("/{project_id}/assign-lead", response_model=ProjectOut)
-async def assign_project_lead(
+@router.get("/{project_id}/candidates", response_model=list[UserOut])
+async def get_project_candidates(
     project_id: int,
-    payload: ProjectAssignLead,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    project = await _get_project_or_404_with_loads(db, project_id)
+
+    # Check access permissions (same as get_project)
+    has_view_perm = has_permission(current_user, "project:view") or has_permission(current_user, "project:manage")
+    in_scope = False
+    if has_view_perm:
+        scoped_dept_ids = get_scoped_department_ids(current_user)
+        if scoped_dept_ids is None or any(d.id in scoped_dept_ids for d in project.departments):
+            in_scope = True
+
+    is_lead = is_project_lead(current_user, project)
+    is_team_member = any(tm.user_id == current_user.id for tm in project.team_members)
+
+    # Check if user is lead of any task in this project
+    task_lead_result = await db.execute(
+        select(Task.id).where(Task.project_id == project_id, Task.lead_id == current_user.id).limit(1)
+    )
+    is_task_lead_of_something = task_lead_result.scalar_one_or_none() is not None
+
+    if not (in_scope or is_lead or is_team_member or is_task_lead_of_something):
+        raise HTTPException(status_code=403, detail="You do not have permission to view this project")
+
+    # Get candidate users from project's departments
+    project_dept_ids = {d.id for d in project.departments}
+    from app.models.category import Category
+    candidates_result = await db.execute(
+        select(User).options(
+            selectinload(User.role)
+            .selectinload(Role.category)
+            .selectinload(Category.permissions),
+            selectinload(User.role).selectinload(Role.departments),
+            selectinload(User.role).selectinload(Role.assignable_categories).selectinload(Category.permissions),
+        ).where(User.department_id.in_(project_dept_ids))
+    )
+    candidates = candidates_result.scalars().all()
+
+    # Filter through assignable categories
+    assignable_pool = get_assignable_user_pool(
+        list(candidates), current_user, project_dept_ids
+    )
+
+    # Return as UserOut
+    return [UserOut.model_validate(u) for u in assignable_pool]
+
+
+@router.patch("/{project_id}", response_model=ProjectOut)
+async def update_project(
+    project_id: int,
+    payload: ProjectUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission("project:manage")),
 ):
@@ -141,21 +195,37 @@ async def assign_project_lead(
     if scoped_dept_ids is not None and not (project_dept_ids & scoped_dept_ids):
         raise HTTPException(status_code=403, detail="This project is outside your department scope")
 
-    # Validate lead_id belongs to a user in one of the project's departments
-    lead_result = await db.execute(
-        select(User).where(User.id == payload.lead_id)
-    )
-    lead = lead_result.scalar_one_or_none()
-    if lead is None:
-        raise HTTPException(status_code=404, detail="Lead user not found")
+    # Apply provided fields
+    if payload.name is not None:
+        project.name = payload.name
+    if payload.description is not None:
+        project.description = payload.description
+    if payload.priority is not None:
+        project.priority = payload.priority
+    if payload.due_date is not None:
+        project.due_date = payload.due_date
 
-    if lead.department_id not in project_dept_ids:
-        raise HTTPException(
-            status_code=400,
-            detail="Lead must belong to one of the project's departments"
+    # If department_ids is provided, validate and replace
+    if payload.department_ids is not None:
+        # Validate all department_ids exist
+        dept_result = await db.execute(
+            select(Department).where(Department.id.in_(payload.department_ids))
+        )
+        departments = dept_result.scalars().all()
+        if len(departments) != len(payload.department_ids):
+            raise HTTPException(status_code=400, detail="One or more departments not found")
+
+        # Delete existing project_department associations
+        await db.execute(
+            delete(project_department).where(project_department.c.project_id == project_id)
         )
 
-    project.lead_id = lead.id
+        # Insert new project_department associations
+        for dept_id in payload.department_ids:
+            await db.execute(
+                project_department.insert().values(project_id=project_id, department_id=dept_id)
+            )
+
     await db.commit()
     await db.refresh(project)
 
@@ -163,26 +233,54 @@ async def assign_project_lead(
     return _project_to_out(project_with_loads)
 
 
+@router.delete("/{project_id}", status_code=204)
+async def delete_project(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("project:manage")),
+):
+    project = await _get_project_or_404_with_loads(db, project_id)
+
+    # Verify manager's department scope covers this project
+    scoped_dept_ids = get_scoped_department_ids(current_user)
+    project_dept_ids = {d.id for d in project.departments}
+    if scoped_dept_ids is not None and not (project_dept_ids & scoped_dept_ids):
+        raise HTTPException(status_code=403, detail="This project is outside your department scope")
+
+    # Delete the project's tasks first (cascade will handle subtasks and attachments)
+    await db.execute(delete(Task).where(Task.project_id == project_id))
+
+    # Delete the project
+    await db.execute(delete(Project).where(Project.id == project_id))
+
+    await db.commit()
+
+
 @router.put("/{project_id}/team", response_model=ProjectOut)
 async def update_project_team(
     project_id: int,
     payload: ProjectTeamUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("project:manage")),
 ):
     project = await _get_project_or_404_with_loads(db, project_id)
 
-    # Only the project's own lead can propose a team
-    if not is_project_lead(current_user, project):
-        raise HTTPException(
-            status_code=403,
-            detail="Only the project lead can propose team changes"
-        )
+    # Verify manager's department scope covers this project
+    scoped_dept_ids = get_scoped_department_ids(current_user)
+    project_dept_ids = {d.id for d in project.departments}
+    if scoped_dept_ids is not None and not (project_dept_ids & scoped_dept_ids):
+        raise HTTPException(status_code=403, detail="This project is outside your department scope")
 
     # Get candidate pool: users in project's departments
-    project_dept_ids = {d.id for d in project.departments}
+    from app.models.category import Category
     candidates_result = await db.execute(
-        select(User).where(User.department_id.in_(project_dept_ids))
+        select(User).options(
+            selectinload(User.role)
+            .selectinload(Role.category)
+            .selectinload(Category.permissions),
+            selectinload(User.role).selectinload(Role.departments),
+            selectinload(User.role).selectinload(Role.assignable_categories).selectinload(Category.permissions),
+        ).where(User.department_id.in_(project_dept_ids))
     )
     candidates = candidates_result.scalars().all()
 
@@ -200,6 +298,19 @@ async def update_project_team(
                 detail=f"User {user_id} is not in your assignable pool for this project"
             )
 
+    # If lead_id is provided, validate it's in the user_ids list and in assignable pool
+    if payload.lead_id is not None:
+        if payload.lead_id not in payload.user_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="Lead must be one of the assigned team members"
+            )
+        if payload.lead_id not in assignable_user_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="Lead is not in your assignable pool for this project"
+            )
+
     # Delete existing team members
     await db.execute(
         delete(ProjectTeam).where(ProjectTeam.project_id == project_id)
@@ -214,37 +325,11 @@ async def update_project_team(
         )
         db.add(team_member)
 
-    # Reset approval status
-    project.team_approved_by = None
-    project.team_approved_at = None
+    # Set lead_id if provided
+    if payload.lead_id is not None:
+        project.lead_id = payload.lead_id
 
-    await db.commit()
-    await db.refresh(project)
-
-    project_with_loads = await _get_project_with_loads(db, project.id)
-    return _project_to_out(project_with_loads)
-
-
-@router.post("/{project_id}/approve-team", response_model=ProjectOut)
-async def approve_project_team(
-    project_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_permission("project:manage")),
-):
-    project = await _get_project_or_404_with_loads(db, project_id)
-
-    # Verify manager's department scope covers this project
-    scoped_dept_ids = get_scoped_department_ids(current_user)
-    project_dept_ids = {d.id for d in project.departments}
-    if scoped_dept_ids is not None and not (project_dept_ids & scoped_dept_ids):
-        raise HTTPException(status_code=403, detail="This project is outside your department scope")
-
-    if not project.team_members:
-        raise HTTPException(
-            status_code=400,
-            detail="Project has no team members to approve"
-        )
-
+    # Set assignment markers (reusing approval columns)
     project.team_approved_by = current_user.id
     project.team_approved_at = datetime.now(timezone.utc)
 
