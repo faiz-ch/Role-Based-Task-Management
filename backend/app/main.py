@@ -11,6 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.models  # noqa: F401 — registers all models with Base.metadata
+from app.config import settings
 from app.database import engine, Base, get_db
 from app.seed import seed_permissions
 from app.routers import auth, users, roles, tasks, dashboard, departments, categories, projects, subtasks
@@ -31,13 +32,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Task Manager API", version="0.2.0", lifespan=lifespan)
 
+_allowed_origins = {
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+}
+if settings.FRONTEND_URL:
+    _allowed_origins.add(settings.FRONTEND_URL)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "https://fhk9c4kk-5173.inc1.devtunnels.ms",
-    ],
+    allow_origins=list(_allowed_origins),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -1,8 +1,7 @@
-// const API_BASE_URL = "http://localhost:8000";
-
-export const API_BASE_URL = window.location.hostname === "localhost"
-  ? "http://localhost:8000"
-  : "https://fhk9c4kk-8000.inc1.devtunnels.ms";
+// Set VITE_API_BASE_URL in your deployment platform's env vars (e.g. Vercel).
+// Falls back to localhost for local dev.
+export const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
 const ACCESS_TOKEN_KEY = "access_token";
 const REFRESH_TOKEN_KEY = "refresh_token";
