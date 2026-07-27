@@ -1,7 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import FileResponse
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+import os
+import uuid
 
 from app.core.deps import (
     get_current_user,
@@ -20,6 +23,8 @@ from app.models.user import User
 from app.models.task import Task
 from app.models.project import Project
 from app.models.subtask import SubTask, SubTaskAssignee
+from app.models.report import Report
+from app.models.attachment import Attachment
 from app.schemas.subtask import (
     SubtaskCreate,
     SubtaskUpdate,
@@ -27,8 +32,10 @@ from app.schemas.subtask import (
     SubtaskAssigneeUpdate,
     SubtaskOut,
 )
+from app.schemas.report import ReportCreate, ReportOut
 
 router = APIRouter(prefix="/subtasks", tags=["subtasks"])
+UPLOAD_DIR = "uploads"  # relative to backend/ — where uploaded files actually live on disk
 
 
 async def _get_task_or_404_with_loads(db: AsyncSession, task_id: int) -> Task:
@@ -324,3 +331,156 @@ async def delete_subtask(
 
     await db.delete(subtask)
     await db.commit()
+
+
+@router.post("/{subtask_id}/reports", response_model=ReportOut, status_code=201)
+async def create_subtask_report(
+    subtask_id: int,
+    payload: ReportCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a report for a subtask. Only subtask assignees can create reports."""
+    subtask = await _get_subtask_or_404_with_loads(db, subtask_id)
+
+    # Check if user is an assignee
+    is_assignee = any(sa.user_id == current_user.id for sa in subtask.assignees)
+    if not is_assignee:
+        raise HTTPException(status_code=403, detail="Only subtask assignees can create reports")
+
+    report = Report(
+        subtask_id=subtask_id,
+        content=payload.content,
+        created_by=current_user.id,
+    )
+    db.add(report)
+    await db.commit()
+    await db.refresh(report)
+
+    # Load with author for response
+    result = await db.execute(
+        select(Report).options(selectinload(Report.author)).where(Report.id == report.id)
+    )
+    report_with_author = result.scalar_one_or_none()
+    return _report_to_out(report_with_author)
+
+
+@router.get("/{subtask_id}/reports", response_model=list[ReportOut])
+async def list_subtask_reports(
+    subtask_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List all reports for a subtask. Anyone who can view the subtask can view its reports."""
+    subtask = await _get_subtask_or_404_with_loads(db, subtask_id)
+
+    if not can_view_subtask(current_user, subtask):
+        raise HTTPException(status_code=403, detail="You do not have permission to view this subtask")
+
+    # Load reports with author, newest first
+    result = await db.execute(
+        select(Report)
+        .options(selectinload(Report.author))
+        .where(Report.subtask_id == subtask_id)
+        .order_by(Report.created_at.desc())
+    )
+    reports = result.scalars().all()
+
+    return [_report_to_out(r) for r in reports]
+
+
+def _report_to_out(report: Report) -> ReportOut:
+    """Convert Report model to ReportOut schema."""
+    return ReportOut(
+        id=report.id,
+        project_id=report.project_id,
+        task_id=report.task_id,
+        subtask_id=report.subtask_id,
+        content=report.content,
+        created_by=report.created_by,
+        created_at=report.created_at,
+    )
+
+
+@router.post("/{subtask_id}/attachments", response_model=dict)
+async def upload_subtask_attachment(
+    subtask_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Upload an attachment for a subtask. Gated to subtask assignees OR task-lead/project-lead/manager level.
+    Sets both task_id (subtask's parent task) and subtask_id.
+    """
+    subtask = await _get_subtask_or_404_with_loads(db, subtask_id)
+
+    # Check if user is an assignee or has management authority
+    is_assignee = any(sa.user_id == current_user.id for sa in subtask.assignees)
+    has_management_authority = can_manage_task(current_user, subtask.task)
+
+    if not is_assignee and not has_management_authority:
+        raise HTTPException(status_code=403, detail="You do not have permission to upload attachments to this subtask")
+
+    # Use the parent task's directory for storage
+    task_id = subtask.task_id
+    task_dir = os.path.join(UPLOAD_DIR, str(task_id))
+    os.makedirs(task_dir, exist_ok=True)
+
+    stored_name = f"{uuid.uuid4().hex}_{file.filename}"
+    stored_path = os.path.join(task_dir, stored_name)
+
+    content = await file.read()
+    with open(stored_path, "wb") as f:
+        f.write(content)
+
+    attachment = Attachment(
+        task_id=task_id,  # Parent task ID
+        subtask_id=subtask_id,  # Subtask ID
+        filename=file.filename,
+        stored_path=stored_path,
+        content_type=file.content_type or "application/octet-stream",
+        size_bytes=len(content),
+        uploaded_by=current_user.id,
+    )
+    db.add(attachment)
+    await db.commit()
+    await db.refresh(attachment)
+
+    return {
+        "id": attachment.id,
+        "filename": attachment.filename,
+        "size_bytes": attachment.size_bytes,
+        "content_type": attachment.content_type,
+        "uploaded_at": attachment.uploaded_at,
+    }
+
+
+@router.get("/{subtask_id}/attachments", response_model=list[dict])
+async def list_subtask_attachments(
+    subtask_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List all attachments for a subtask. Anyone who can view the subtask can view its attachments."""
+    subtask = await _get_subtask_or_404_with_loads(db, subtask_id)
+
+    if not can_view_subtask(current_user, subtask):
+        raise HTTPException(status_code=403, detail="You do not have permission to view this subtask")
+
+    result = await db.execute(
+        select(Attachment).where(Attachment.subtask_id == subtask_id)
+    )
+    attachments = result.scalars().all()
+
+    return [
+        {
+            "id": a.id,
+            "filename": a.filename,
+            "size_bytes": a.size_bytes,
+            "content_type": a.content_type,
+            "uploaded_at": a.uploaded_at,
+            "uploaded_by": a.uploaded_by,
+        }
+        for a in attachments
+    ]

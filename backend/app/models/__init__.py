@@ -12,3 +12,4 @@ from app.models.category import Category, category_permission
 from app.models.attachment import Attachment
 from app.models.project import Project, ProjectStatus, ProjectPriority, ProjectTeam, project_department
 from app.models.subtask import SubTask, SubTaskAssignee
+from app.models.report import Report

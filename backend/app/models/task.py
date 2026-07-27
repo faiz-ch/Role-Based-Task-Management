@@ -76,3 +76,4 @@ class Task(Base):
         "Attachment", back_populates="task", cascade="all, delete-orphan", lazy="selectin"
     )
     subtasks = relationship("SubTask", back_populates="task", cascade="all, delete-orphan")
+    reports = relationship("Report", back_populates="task", cascade="all, delete-orphan")

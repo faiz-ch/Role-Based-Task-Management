@@ -44,3 +44,4 @@ class SubTask(Base):
     task = relationship("Task", back_populates="subtasks")
     creator = relationship("User", foreign_keys=[created_by])
     assignees = relationship("SubTaskAssignee", back_populates="subtask", cascade="all, delete-orphan")
+    reports = relationship("Report", back_populates="subtask", cascade="all, delete-orphan")

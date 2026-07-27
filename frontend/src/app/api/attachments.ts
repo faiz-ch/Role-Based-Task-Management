@@ -66,3 +66,20 @@ export async function fetchAttachmentPreviewBlobUrl(attachmentId: number): Promi
   const blob = await res.blob();
   return URL.createObjectURL(blob);
 }
+
+export async function uploadSubtaskAttachment(subtaskId: number, file: File): Promise<Attachment> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${API_BASE_URL}/subtasks/${subtaskId}/attachments`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${getAccessToken()}` },
+    body: formData,
+  });
+  if (!res.ok) throw new Error("Failed to upload file");
+  return mapAttachment(await res.json());
+}
+
+export async function getSubtaskAttachments(subtaskId: number): Promise<Attachment[]> {
+  const res = await apiFetch(`/subtasks/${subtaskId}/attachments`);
+  return res.map(mapAttachment);
+}

@@ -78,3 +78,6 @@ class Project(Base):
 
     # One-to-many relationship with tasks
     tasks = relationship("Task", back_populates="project")
+
+    # One-to-many relationship with reports
+    reports = relationship("Report", back_populates="project", cascade="all, delete-orphan")

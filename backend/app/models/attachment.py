@@ -15,6 +15,7 @@ class Attachment(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False)
+    subtask_id = Column(Integer, ForeignKey("subtasks.id", ondelete="CASCADE"), nullable=True)
     filename = Column(String, nullable=False)
     stored_path = Column(String, nullable=False)
     content_type = Column(String, nullable=False)

@@ -21,8 +21,10 @@ from app.models.user import User
 from app.models.task import Task
 from app.models.attachment import Attachment
 from app.models.role import Role
+from app.models.report import Report
 from app.schemas.project import ProjectCreate, ProjectOut, ProjectTeamUpdate, ProjectUpdate
 from app.schemas.user import UserOut
+from app.schemas.report import ReportCreate, ReportOut
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -349,6 +351,71 @@ async def update_project_team(
     return _project_to_out(project_with_loads)
 
 
+@router.post("/{project_id}/reports", response_model=ReportOut, status_code=201)
+async def create_project_report(
+    project_id: int,
+    payload: ReportCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a report for a project. Only the project lead can create reports."""
+    project = await _get_project_or_404_with_loads(db, project_id)
+
+    if not is_project_lead(current_user, project):
+        raise HTTPException(status_code=403, detail="Only the project lead can create reports")
+
+    report = Report(
+        project_id=project_id,
+        content=payload.content,
+        created_by=current_user.id,
+    )
+    db.add(report)
+    await db.commit()
+    await db.refresh(report)
+
+    # Load with author for response
+    result = await db.execute(
+        select(Report).options(selectinload(Report.author)).where(Report.id == report.id)
+    )
+    report_with_author = result.scalar_one_or_none()
+    return _report_to_out(report_with_author)
+
+
+@router.get("/{project_id}/reports", response_model=list[ReportOut])
+async def list_project_reports(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List all reports for a project. Anyone who can view the project can view its reports."""
+    project = await _get_project_or_404_with_loads(db, project_id)
+
+    # Check access permissions (same as get_project)
+    has_view_perm = has_permission(current_user, "project:view") or has_permission(current_user, "project:manage")
+    in_scope = False
+    if has_view_perm:
+        scoped_dept_ids = get_scoped_department_ids(current_user)
+        if scoped_dept_ids is None or any(d.id in scoped_dept_ids for d in project.departments):
+            in_scope = True
+
+    is_lead = is_project_lead(current_user, project)
+    is_team_member = any(tm.user_id == current_user.id for tm in project.team_members)
+
+    if not (in_scope or is_lead or is_team_member):
+        raise HTTPException(status_code=403, detail="You do not have permission to view this project")
+
+    # Load reports with author, newest first
+    result = await db.execute(
+        select(Report)
+        .options(selectinload(Report.author))
+        .where(Report.project_id == project_id)
+        .order_by(Report.created_at.desc())
+    )
+    reports = result.scalars().all()
+
+    return [_report_to_out(r) for r in reports]
+
+
 async def _get_project_or_404(db: AsyncSession, project_id: int) -> Project:
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
@@ -392,4 +459,17 @@ def _project_to_out(project: Project) -> ProjectOut:
         created_at=project.created_at,
         department_ids=[d.id for d in project.departments],
         team_user_ids=[tm.user_id for tm in project.team_members],
+    )
+
+
+def _report_to_out(report: Report) -> ReportOut:
+    """Convert Report model to ReportOut schema."""
+    return ReportOut(
+        id=report.id,
+        project_id=report.project_id,
+        task_id=report.task_id,
+        subtask_id=report.subtask_id,
+        content=report.content,
+        created_by=report.created_by,
+        created_at=report.created_at,
     )

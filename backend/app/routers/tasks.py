@@ -15,6 +15,7 @@ from app.models.task import Task, TaskStatus, TaskTeam
 from app.models.attachment import Attachment
 from app.models.user import User
 from app.models.project import Project
+from app.models.report import Report
 from app.schemas.task import (
     TaskCreate,
     TaskUpdate,
@@ -25,6 +26,7 @@ from app.schemas.task import (
     TaskTeamUpdate,
     AttachmentOut,
 )
+from app.schemas.report import ReportCreate, ReportOut
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 UPLOAD_DIR = "uploads"  # relative to backend/ — where uploaded files actually live on disk
@@ -549,3 +551,72 @@ async def preview_attachment(
     await db.commit()
 
     return Response(content=pdf_bytes, media_type="application/pdf")
+
+
+@router.post("/{task_id}/reports", response_model=ReportOut, status_code=201)
+async def create_task_report(
+    task_id: int,
+    payload: ReportCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a report for a task. Only the task lead can create reports."""
+    from sqlalchemy.orm import selectinload
+    task = await _get_task_or_404_with_loads(db, task_id)
+
+    if not is_task_lead(current_user, task):
+        raise HTTPException(status_code=403, detail="Only the task lead can create reports")
+
+    report = Report(
+        task_id=task_id,
+        content=payload.content,
+        created_by=current_user.id,
+    )
+    db.add(report)
+    await db.commit()
+    await db.refresh(report)
+
+    # Load with author for response
+    result = await db.execute(
+        select(Report).options(selectinload(Report.author)).where(Report.id == report.id)
+    )
+    report_with_author = result.scalar_one_or_none()
+    return _report_to_out(report_with_author)
+
+
+@router.get("/{task_id}/reports", response_model=list[ReportOut])
+async def list_task_reports(
+    task_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List all reports for a task. Anyone who can view the task can view its reports."""
+    from sqlalchemy.orm import selectinload
+    task = await _get_task_or_404_with_loads(db, task_id)
+
+    if not can_view_task(current_user, task):
+        raise HTTPException(status_code=403, detail="You do not have permission to view this task")
+
+    # Load reports with author, newest first
+    result = await db.execute(
+        select(Report)
+        .options(selectinload(Report.author))
+        .where(Report.task_id == task_id)
+        .order_by(Report.created_at.desc())
+    )
+    reports = result.scalars().all()
+
+    return [_report_to_out(r) for r in reports]
+
+
+def _report_to_out(report: Report) -> ReportOut:
+    """Convert Report model to ReportOut schema."""
+    return ReportOut(
+        id=report.id,
+        project_id=report.project_id,
+        task_id=report.task_id,
+        subtask_id=report.subtask_id,
+        content=report.content,
+        created_by=report.created_by,
+        created_at=report.created_at,
+    )

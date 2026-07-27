@@ -8,6 +8,7 @@ import { getUsers } from "../api/users";
 import { getDepartments } from "../api/departments";
 import { getProject, getProjectCandidates } from "../api/projects";
 import { uploadAttachment, getAttachments, getAttachmentDownloadUrl, fetchAttachmentBlobUrl, fetchAttachmentPreviewBlobUrl, deleteAttachment, Attachment } from "../api/attachments";
+import { getTaskReports, createTaskReport, Report } from "../api/reports";
 import { useAuth } from "../context/AuthContext";
 import { StatusBadge } from "../components/StatusBadge";
 import { PriBadge } from "../components/PriBadge";
@@ -57,6 +58,9 @@ export function TaskDetailPage() {
   const [showNewSubtask, setShowNewSubtask] = useState(false);
   const [showEditTask, setShowEditTask] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showNewReport, setShowNewReport] = useState(false);
+  const [reportContent, setReportContent] = useState("");
+  const [reports, setReports] = useState<Report[]>([]);
   const [editTaskForm, setEditTaskForm] = useState({
     title: "",
     description: "",
@@ -122,6 +126,16 @@ export function TaskDetailPage() {
             setSubtasks(subtasksData);
           } catch (err) {
             console.error("Failed to load subtasks:", err);
+          }
+        }
+
+        // Load reports after task is loaded
+        if (taskResult.status === "fulfilled" && taskResult.value) {
+          try {
+            const reportsData = await getTaskReports(taskResult.value.id);
+            setReports(reportsData);
+          } catch (err) {
+            console.error("Failed to load reports:", err);
           }
         }
 
@@ -389,6 +403,19 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
       navigate("/tasks");
     } catch (err: any) {
       setError(err?.message || "Failed to delete task");
+    }
+  }
+
+  async function handleCreateReport() {
+    if (!task || !reportContent.trim()) return;
+    try {
+      setError(null);
+      const newReport = await createTaskReport(task.id, { content: reportContent.trim() });
+      setReports([newReport, ...reports]);
+      setReportContent("");
+      setShowNewReport(false);
+    } catch (err: any) {
+      setError(err?.message || "Failed to create report");
     }
   }
 
@@ -736,6 +763,43 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
                 {task.status === "Review" && "Waiting for review."}
                 {task.status === "Reschedule" && "Rescheduled — waiting for team to resubmit."}
                 {task.status === "Done" && "This task is complete."}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white rounded-xl border border-border p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-foreground">Reports</h2>
+              {currentUser?.id === task?.leadId && (
+                <button
+                  onClick={() => setShowNewReport(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+                >
+                  <Plus size={12} /> New Report
+                </button>
+              )}
+            </div>
+            {reports.length === 0 ? (
+              <div className="text-sm text-muted-foreground text-center py-8">
+                No reports yet
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {reports.map((report) => {
+                  const author = users.find((u) => u.id === report.createdBy);
+                  return (
+                    <div key={report.id} className="border-b border-border pb-4:last:pb-0 last:border-0">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          {author && <Av name={author.name} size="sm" />}
+                          <span className="text-sm font-medium text-foreground">{author?.name || "Unknown"}</span>
+                        </div>
+                        <span className="text-xs text-muted-foreground">{fmtDate(report.createdAt)}</span>
+                      </div>
+                      <p className="text-sm text-muted-foreground whitespace-pre-wrap">{report.content}</p>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1102,6 +1166,38 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
                 Delete
               </button>
             </div>
+          </div>
+        </Dlg>
+      )}
+
+      {showNewReport && (
+        <Dlg title="New Report" onClose={() => setShowNewReport(false)}>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Content</label>
+              <textarea
+                value={reportContent}
+                onChange={(e) => setReportContent(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400 min-h-[120px] resize-y"
+                rows={5}
+                autoFocus
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-border">
+            <button
+              onClick={() => setShowNewReport(false)}
+              className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleCreateReport}
+              disabled={!reportContent.trim()}
+              className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Submit Report
+            </button>
           </div>
         </Dlg>
       )}
