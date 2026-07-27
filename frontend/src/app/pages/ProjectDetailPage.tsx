@@ -79,7 +79,6 @@ export function ProjectDetailPage() {
     description: "",
     priority: "Medium",
     dueDate: "",
-    assigneeId: null as number | null,
     selectedTeamIds: [] as number[],
     selectedLeadId: "" as string,
   });
@@ -161,9 +160,6 @@ export function ProjectDetailPage() {
         dueDate: taskForm.dueDate,
         projectId: project.id,
       };
-      if (taskForm.assigneeId !== null) {
-        taskData.assigneeId = taskForm.assigneeId;
-      }
       const newTask = await createTask(taskData);
       setTasks((prev) => [...prev, newTask]);
 
@@ -186,7 +182,6 @@ export function ProjectDetailPage() {
         description: "",
         priority: "Medium",
         dueDate: "",
-        assigneeId: null,
         selectedTeamIds: [],
         selectedLeadId: "",
       });
@@ -352,12 +347,14 @@ export function ProjectDetailPage() {
           <div className="bg-white rounded-xl border border-border p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-foreground">Tasks</h2>
-              <button
-                onClick={() => setShowNewTask(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
-              >
-                <Plus size={12} /> New Task
-              </button>
+              {currentUser?.id === project?.leadId && (
+                <button
+                  onClick={() => setShowNewTask(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+                >
+                  <Plus size={12} /> New Task
+                </button>
+              )}
             </div>
             {projectTasks.length === 0 ? (
               <div className="text-sm text-muted-foreground text-center py-8">
@@ -366,7 +363,6 @@ export function ProjectDetailPage() {
             ) : (
               <div className="space-y-2">
                 {projectTasks.map((task) => {
-                  const assignee = users.find((u) => u.id === task.assigneeId);
                   return (
                     <div
                       key={task.id}
@@ -380,7 +376,6 @@ export function ProjectDetailPage() {
                           <PriBadge priority={task.priority} />
                         </div>
                       </div>
-                      {assignee && <Av name={assignee.name} size="sm" />}
                     </div>
                   );
                 })}
@@ -513,27 +508,6 @@ export function ProjectDetailPage() {
                   className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400"
                 />
               </div>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Assignee</label>
-              <select
-                value={taskForm.assigneeId ?? ""}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setTaskForm((f) => ({
-                    ...f,
-                    assigneeId: val === "" ? null : Number(val),
-                  }));
-                }}
-                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400"
-              >
-                <option value="">Auto-assign to you</option>
-                {teamMembers.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name}
-                  </option>
-                ))}
-              </select>
             </div>
             <div className="flex flex-col gap-2">
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">

@@ -19,6 +19,7 @@ from app.models.project import Project, ProjectStatus, ProjectTeam, project_depa
 from app.models.department import Department
 from app.models.user import User
 from app.models.task import Task
+from app.models.attachment import Attachment
 from app.models.role import Role
 from app.schemas.project import ProjectCreate, ProjectOut, ProjectTeamUpdate, ProjectUpdate
 from app.schemas.user import UserOut
@@ -247,7 +248,11 @@ async def delete_project(
     if scoped_dept_ids is not None and not (project_dept_ids & scoped_dept_ids):
         raise HTTPException(status_code=403, detail="This project is outside your department scope")
 
-    # Delete the project's tasks first (cascade will handle subtasks and attachments)
+    # Delete attachments for this project's tasks first (no DB-level cascade for attachments)
+    task_ids_subquery = select(Task.id).where(Task.project_id == project_id)
+    await db.execute(delete(Attachment).where(Attachment.task_id.in_(task_ids_subquery)))
+
+    # Delete the project's tasks (subtasks cascade at the DB level via ondelete=CASCADE)
     await db.execute(delete(Task).where(Task.project_id == project_id))
 
     # Delete the project

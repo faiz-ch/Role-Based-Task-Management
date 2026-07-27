@@ -150,6 +150,18 @@ def can_manage_task(user: User, task: Task) -> bool:
     return is_task_lead(user, task)
 
 
+def can_edit_delete_task(user: User, task: Task) -> bool:
+    """
+    Task edit/delete is restricted to project lead OR project:manage (NOT task lead).
+    Task lead manages subtasks and day-to-day work, not the task's own existence/details.
+    """
+    if has_permission(user, "project:manage"):
+        scoped = get_scoped_department_ids(user)
+        if scoped is None or any(d.id in scoped for d in task.project.departments):
+            return True
+    return is_project_lead(user, task.project)
+
+
 def can_view_task(user: User, task: Task) -> bool:
     """
     Authority cascades for viewing: a Manager with project:view scoped to this task's
@@ -170,8 +182,18 @@ def can_view_task(user: User, task: Task) -> bool:
 
 
 def can_create_subtask_in_task(user: User, task: Task) -> bool:
-    """Only the task's lead can create subtasks inside it — pure instance ownership, no permission bypass."""
-    return is_task_lead(user, task)
+    """
+    Allow task lead, project lead, or project:manage (with department scope) to create subtasks.
+    """
+    if is_task_lead(user, task):
+        return True
+    if is_project_lead(user, task.project):
+        return True
+    if has_permission(user, "project:manage"):
+        scoped = get_scoped_department_ids(user)
+        if scoped is None or any(d.id in scoped for d in task.project.departments):
+            return True
+    return False
 
 
 def get_assignable_user_pool(db_users: list[User], selector: User, department_ids: set[int]) -> list[User]:

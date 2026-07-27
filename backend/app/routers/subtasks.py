@@ -7,8 +7,12 @@ from app.core.deps import (
     get_current_user,
     can_view_subtask,
     can_manage_subtask,
+    can_manage_task,
     can_create_subtask_in_task,
     is_task_lead,
+    is_project_lead,
+    has_permission,
+    get_scoped_department_ids,
     get_assignable_user_pool,
 )
 from app.database import get_db
@@ -130,7 +134,11 @@ async def list_subtasks_for_task(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List all subtasks for a task that the user can view."""
+    """
+    List subtasks for a task with visibility filtering:
+    - Task lead, project lead, and project:manage see all subtasks
+    - Plain team members (not leads/managers) only see subtasks where they're an assignee
+    """
     task = await _get_task_or_404_with_loads(db, task_id)
 
     # Load all subtasks for this task with assignees
@@ -141,8 +149,19 @@ async def list_subtasks_for_task(
     )
     subtasks = result.scalars().all()
 
-    # Filter by view permission
-    visible_subtasks = [s for s in subtasks if can_view_subtask(current_user, s)]
+    # Check if user has management authority (task lead, project lead, or project:manage)
+    has_management_authority = can_manage_task(current_user, task)
+
+    if has_management_authority:
+        # Leads and managers see all subtasks they can view
+        visible_subtasks = [s for s in subtasks if can_view_subtask(current_user, s)]
+    else:
+        # Plain team members only see subtasks where they're an assignee
+        visible_subtasks = [
+            s for s in subtasks
+            if can_view_subtask(current_user, s) and any(sa.user_id == current_user.id for sa in s.assignees)
+        ]
+
     return [_subtask_to_out(s) for s in visible_subtasks]
 
 
@@ -192,11 +211,51 @@ async def update_subtask_status(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Update subtask status. Assignees can update their own subtask's status."""
+    """
+    Update subtask status with explicit transition rules:
+    - Subtask assignees can only submit: To Do or Reschedule → Review
+    - Task lead, project lead, or project:manage can approve (Review → Done) or send back (Review → Reschedule)
+    - Nobody else can change a subtask's status
+    """
     subtask = await _get_subtask_or_404_with_loads(db, subtask_id)
 
-    if not can_manage_subtask(current_user, subtask):
-        raise HTTPException(status_code=403, detail="You do not have permission to change this subtask's status")
+    # Check if user is an assignee
+    is_assignee = any(sa.user_id == current_user.id for sa in subtask.assignees)
+
+    # Check if user has management authority (task lead, project lead, or project:manage with scope)
+    has_management_authority = can_manage_task(current_user, subtask.task)
+
+    # Determine what transitions are allowed based on user role
+    if is_assignee and not has_management_authority:
+        # Assignees can only submit: To Do or Reschedule → Review
+        if subtask.status not in ("To Do", "Reschedule"):
+            raise HTTPException(
+                status_code=403,
+                detail="Assignees can only submit subtasks for review when they are in To Do or Reschedule status"
+            )
+        if payload.status != "Review":
+            raise HTTPException(
+                status_code=403,
+                detail="Assignees can only submit subtasks for review (set status to Review)"
+            )
+    elif has_management_authority:
+        # Task lead, project lead, or project:manage can approve (Review → Done) or send back (Review → Reschedule)
+        if subtask.status != "Review":
+            raise HTTPException(
+                status_code=403,
+                detail="Only subtasks in Review status can be approved or sent back"
+            )
+        if payload.status not in ("Done", "Reschedule"):
+            raise HTTPException(
+                status_code=403,
+                detail="Managers can only approve (set to Done) or send back (set to Reschedule) subtasks in Review"
+            )
+    else:
+        # User is neither an assignee nor has management authority
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to change this subtask's status"
+        )
 
     subtask.status = payload.status
     await db.commit()

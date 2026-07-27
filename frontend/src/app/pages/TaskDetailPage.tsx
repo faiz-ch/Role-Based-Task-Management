@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router";
-import { ArrowLeft, AlertTriangle, Plus, Image, FileText, X, Trash2, Users } from "lucide-react";
+import { ArrowLeft, AlertTriangle, Plus, Image, FileText, X, Trash2, Users, Edit2 } from "lucide-react";
 import { Task, UserType, Department, Project, Subtask } from "../types";
-import { getTask, updateTaskStatus, rescheduleTask, updateTaskTeam } from "../api/tasks";
+import { getTask, updateTaskStatus, rescheduleTask, updateTaskTeam, updateTask, deleteTask } from "../api/tasks";
 import { getSubtasks, createSubtask, updateSubtask, updateSubtaskStatus, updateSubtaskAssignees, deleteSubtask } from "../api/subtasks";
 import { getUsers } from "../api/users";
 import { getDepartments } from "../api/departments";
-import { getProject } from "../api/projects";
+import { getProject, getProjectCandidates } from "../api/projects";
 import { uploadAttachment, getAttachments, getAttachmentDownloadUrl, fetchAttachmentBlobUrl, fetchAttachmentPreviewBlobUrl, deleteAttachment, Attachment } from "../api/attachments";
 import { useAuth } from "../context/AuthContext";
 import { StatusBadge } from "../components/StatusBadge";
@@ -41,6 +41,7 @@ export function TaskDetailPage() {
   const [project, setProject] = useState<Project | null>(null);
   const [subtasks, setSubtasks] = useState<Subtask[]>([]);
   const [users, setUsers] = useState<UserType[]>([]);
+  const [candidates, setCandidates] = useState<UserType[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,6 +55,14 @@ export function TaskDetailPage() {
   const [rescheduleDate, setRescheduleDate] = useState("");
   const [rescheduleLoading, setRescheduleLoading] = useState(false);
   const [showNewSubtask, setShowNewSubtask] = useState(false);
+  const [showEditTask, setShowEditTask] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [editTaskForm, setEditTaskForm] = useState({
+    title: "",
+    description: "",
+    priority: "Medium",
+    dueDate: "",
+  });
   const [editSubtask, setEditSubtask] = useState<Subtask | null>(null);
   const [showReassignSubtask, setShowReassignSubtask] = useState<Subtask | null>(null);
   const [reassignUserIds, setReassignUserIds] = useState<number[]>([]);
@@ -93,6 +102,13 @@ export function TaskDetailPage() {
           try {
             const projectData = await getProject(taskResult.value.projectId);
             setProject(projectData);
+            // Load candidates after project is loaded
+            try {
+              const candidatesData = await getProjectCandidates(projectData.id);
+              setCandidates(candidatesData);
+            } catch (err) {
+              console.error("Failed to load candidates:", err);
+            }
           } catch (err) {
             // Project loading failure shouldn't block the page
             console.error("Failed to load project:", err);
@@ -119,13 +135,13 @@ export function TaskDetailPage() {
     loadData();
   }, [taskId]);
 
-  const assignee = users.find((u) => u.id === task?.assigneeId);
-  const taskLead = users.find((u) => u.id === task?.leadId);
-  const projectLead = users.find((u) => u.id === project?.leadId);
-  const teamMembers = users.filter((u) => task?.teamUserIds.includes(u.id));
-  const projectTeamMembers = users.filter((u) => project?.teamUserIds.includes(u.id));
+  const teamMembers = candidates.filter((u) => task?.teamUserIds.includes(u.id));
+  const taskLead = teamMembers.find((u) => u.id === task?.leadId);
+  const projectLead = candidates.find((u) => u.id === project?.leadId);
+  const projectTeamMembers = candidates.filter((u) => project?.teamUserIds.includes(u.id));
 
   const canManage = permissions.includes("project:manage");
+  const isProjectLeadOrManager = canManage || currentUser?.id === project?.leadId;
 
   function canManageTask(): boolean {
     if (!task || !project) return false;
@@ -136,9 +152,7 @@ export function TaskDetailPage() {
     );
   }
 
-  const canDeleteAttachments =
-    currentUser?.id === task?.assigneeId &&
-    (task?.status === "To Do" || task?.status === "Reschedule");
+  const canDeleteAttachments = canManageTask();
 
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -339,6 +353,45 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
     }
   }
 
+  function openEditTask() {
+    if (!task) return;
+    setEditTaskForm({
+      title: task.title,
+      description: task.description,
+      priority: task.priority,
+      dueDate: task.dueDate,
+    });
+    setShowEditTask(true);
+  }
+
+  async function handleEditTask() {
+    if (!task || !editTaskForm.title.trim()) return;
+    try {
+      setError(null);
+      const updated = await updateTask(task.id, {
+        title: editTaskForm.title.trim(),
+        description: editTaskForm.description,
+        priority: editTaskForm.priority,
+        dueDate: editTaskForm.dueDate,
+      });
+      setTask(updated);
+      setShowEditTask(false);
+    } catch (err: any) {
+      setError(err?.message || "Failed to update task");
+    }
+  }
+
+  async function handleDeleteTask() {
+    if (!task) return;
+    try {
+      setError(null);
+      await deleteTask(task.id);
+      navigate("/tasks");
+    } catch (err: any) {
+      setError(err?.message || "Failed to delete task");
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -383,9 +436,29 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
         <div className="flex-1 space-y-4">
           {/* Title + status */}
           <div className="bg-white rounded-xl border border-border p-6">
-            <div className="flex items-center gap-3 mb-2">
-              <h1 className="text-xl font-bold text-foreground">{task.title}</h1>
-              <StatusBadge status={task.status} />
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-3">
+                <h1 className="text-xl font-bold text-foreground">{task.title}</h1>
+                <StatusBadge status={task.status} />
+              </div>
+              {isProjectLeadOrManager && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={openEditTask}
+                    className="p-1.5 hover:bg-muted rounded transition-colors cursor-pointer"
+                    title="Edit task"
+                  >
+                    <Edit2 size={14} className="text-muted-foreground" />
+                  </button>
+                  <button
+                    onClick={() => setShowDeleteConfirm(true)}
+                    className="p-1.5 hover:bg-red-50 rounded transition-colors cursor-pointer"
+                    title="Delete task"
+                  >
+                    <Trash2 size={14} className="text-red-400" />
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -403,22 +476,24 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
           <div className="bg-white rounded-xl border border-border p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-foreground">Attachments</h2>
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {uploading ? (
-                  <>
-                    <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white" />
-                    Uploading...
-                  </>
-                ) : (
-                  <>
-                    <Plus size={12} /> Add file
-                  </>
-                )}
-              </button>
+              {canManageTask() && (
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {uploading ? (
+                    <>
+                      <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white" />
+                      Uploading...
+                    </>
+                  ) : (
+                    <>
+                      <Plus size={12} /> Add file
+                    </>
+                  )}
+                </button>
+              )}
               <input
                 ref={fileInputRef}
                 type="file"
@@ -474,7 +549,7 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
           <div className="bg-white rounded-xl border border-border p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-foreground">Subtasks</h2>
-              {currentUser?.id === task?.leadId && (
+              {(currentUser?.id === task?.leadId || currentUser?.id === project?.leadId || canManage) && (
                 <button
                   onClick={() => setShowNewSubtask(true)}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
@@ -541,20 +616,41 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
                             )}
                           </div>
                         )}
-                        {(canManageThis || isAssignee) && (
-                          <select
-                            value={subtask.status}
-                            onChange={(e) => {
+                        {isAssignee && (subtask.status === "To Do" || subtask.status === "Reschedule") && (
+                          <button
+                            onClick={(e) => {
                               e.stopPropagation();
-                              handleUpdateSubtaskStatus(subtask.id, e.target.value);
+                              handleUpdateSubtaskStatus(subtask.id, "Review");
                             }}
-                            className="text-xs border border-border rounded px-2 py-1 bg-white text-muted-foreground focus:outline-none focus:border-blue-400"
+                            className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors cursor-pointer"
                           >
-                            <option value="To Do">To Do</option>
-                            <option value="Review">Review</option>
-                            <option value="Done">Done</option>
-                            <option value="Reschedule">Reschedule</option>
-                          </select>
+                            Submit
+                          </button>
+                        )}
+                        {canManageTask() && subtask.status === "Review" && (
+                          <div className="flex gap-1">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleUpdateSubtaskStatus(subtask.id, "Done");
+                              }}
+                              className="text-xs px-2 py-1 bg-emerald-600 text-white rounded hover:bg-emerald-700 transition-colors cursor-pointer"
+                            >
+                              Approve
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleUpdateSubtaskStatus(subtask.id, "Reschedule");
+                              }}
+                              className="text-xs px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition-colors cursor-pointer"
+                            >
+                              Send back
+                            </button>
+                          </div>
+                        )}
+                        {!isAssignee && !canManageTask() && (
+                          <StatusBadge status={subtask.status} />
                         )}
                         {currentUser?.id === task?.leadId && (
                           <button
@@ -628,7 +724,7 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
                   </div>
                 )}
               </div>
-            ) : task.assigneeId === currentUser?.id && (task.status === "To Do" || task.status === "Reschedule") ? (
+            ) : currentUser?.id === task?.leadId && (task.status === "To Do" || task.status === "Reschedule") && (subtasks.length === 0 || subtasks.every(s => s.status === "Done")) ? (
               <button
                 onClick={handleSubmitForReview}
                 className="w-full px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
@@ -638,7 +734,7 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
             ) : (
               <div className="text-sm text-muted-foreground text-center">
                 {task.status === "Review" && "Waiting for review."}
-                {task.status === "Reschedule" && "Rescheduled — waiting for the assignee to resubmit."}
+                {task.status === "Reschedule" && "Rescheduled — waiting for team to resubmit."}
                 {task.status === "Done" && "This task is complete."}
               </div>
             )}
@@ -650,12 +746,6 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
           <div className="bg-white rounded-xl border border-border p-6">
             <h2 className="text-sm font-semibold text-foreground mb-4">Details</h2>
             <div className="space-y-4">
-              <div>
-                <span className="text-xs text-muted-foreground uppercase tracking-wider">Assignee</span>
-                <p className="text-sm text-foreground mt-1">
-                  {assignee ? assignee.name : "Unassigned"}
-                </p>
-              </div>
               <div>
                 <span className="text-xs text-muted-foreground uppercase tracking-wider">Priority</span>
                 <div className="mt-1">
@@ -678,24 +768,24 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
                   {taskLead ? taskLead.name : "Unassigned"}
                 </p>
               </div>
-              {currentUser?.id === project?.leadId && (
-                <div>
-                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Task Team</span>
-                  <div className="mt-1">
-                    {teamMembers.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No team members</p>
-                    ) : (
-                      <div className="space-y-1">
-                        {teamMembers.map((member) => (
-                          <div key={member.id} className="text-sm text-foreground">
-                            {member.name}
-                            {member.id === task.leadId && (
-                              <span className="text-xs text-muted-foreground"> (Lead)</span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
+              <div>
+                <span className="text-xs text-muted-foreground uppercase tracking-wider">Task Team</span>
+                <div className="mt-1">
+                  {teamMembers.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No team members</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {teamMembers.map((member) => (
+                        <div key={member.id} className="text-sm text-foreground">
+                          {member.name}
+                          {member.id === task.leadId && (
+                            <span className="text-xs text-muted-foreground"> (Lead)</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {currentUser?.id === project?.leadId && (
                     <button
                       onClick={() => {
                         setSelectedTeamIds(task?.teamUserIds || []);
@@ -706,9 +796,9 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
                     >
                       Manage Team
                     </button>
-                  </div>
+                  )}
                 </div>
-              )}
+              </div>
               {task?.teamApprovedAt && (
                 <div>
                   <span className="text-xs text-muted-foreground uppercase tracking-wider">Team Approved</span>
@@ -924,6 +1014,94 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
             >
               Reassign
             </button>
+          </div>
+        </Dlg>
+      )}
+
+      {showEditTask && (
+        <Dlg title="Edit Task" onClose={() => setShowEditTask(false)}>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Title</label>
+              <input
+                type="text"
+                value={editTaskForm.title}
+                onChange={(e) => setEditTaskForm({ ...editTaskForm, title: e.target.value })}
+                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Description</label>
+              <textarea
+                value={editTaskForm.description}
+                onChange={(e) => setEditTaskForm({ ...editTaskForm, description: e.target.value })}
+                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400 min-h-[80px] resize-y"
+                rows={3}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Priority</label>
+                <select
+                  value={editTaskForm.priority}
+                  onChange={(e) => setEditTaskForm({ ...editTaskForm, priority: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400"
+                >
+                  <option value="Low">Low</option>
+                  <option value="Medium">Medium</option>
+                  <option value="High">High</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Due Date</label>
+                <input
+                  type="datetime-local"
+                  value={editTaskForm.dueDate}
+                  onChange={(e) => setEditTaskForm({ ...editTaskForm, dueDate: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400"
+                />
+              </div>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-border">
+            <button
+              onClick={() => setShowEditTask(false)}
+              className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleEditTask}
+              disabled={!editTaskForm.title.trim()}
+              className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Save Changes
+            </button>
+          </div>
+        </Dlg>
+      )}
+
+      {showDeleteConfirm && (
+        <Dlg title="Delete task" onClose={() => setShowDeleteConfirm(false)}>
+          <div className="space-y-4">
+            <p className="text-sm text-foreground">
+              Are you sure you want to delete this task? This will also delete all subtasks and attachments in this task. This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteTask}
+                className="px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors cursor-pointer"
+              >
+                Delete
+              </button>
+            </div>
           </div>
         </Dlg>
       )}

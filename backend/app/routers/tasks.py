@@ -9,7 +9,7 @@ from app.services import notification_dispatch
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import require_permission, get_current_user, has_permission, get_scoped_department_ids, can_view_task, can_manage_task, can_create_task_in_project, is_project_lead, is_task_lead, get_assignable_user_pool
+from app.core.deps import require_permission, get_current_user, has_permission, get_scoped_department_ids, can_view_task, can_manage_task, can_edit_delete_task, can_create_task_in_project, is_project_lead, is_task_lead, get_assignable_user_pool
 from app.database import get_db
 from app.models.task import Task, TaskStatus, TaskTeam
 from app.models.attachment import Attachment
@@ -69,7 +69,7 @@ async def list_tasks(
 
     # Filter by cascade logic
     visible_tasks = [task for task in tasks if can_view_task(current_user, task)]
-    return visible_tasks
+    return [_task_to_out(task) for task in visible_tasks]
 
 
 @router.get("/{task_id}", response_model=TaskOut)
@@ -140,7 +140,7 @@ async def update_task(
     from sqlalchemy.orm import selectinload
     task = await _get_task_or_404_with_loads(db, task_id)
 
-    if not can_manage_task(current_user, task):
+    if not can_edit_delete_task(current_user, task):
         raise HTTPException(status_code=403, detail="You do not have permission to edit this task")
 
     update_data = payload.model_dump(exclude_unset=True)
@@ -258,7 +258,7 @@ async def delete_task(
     from sqlalchemy.orm import selectinload
     task = await _get_task_or_404_with_loads(db, task_id)
 
-    if not can_manage_task(current_user, task):
+    if not can_edit_delete_task(current_user, task):
         raise HTTPException(status_code=403, detail="You do not have permission to delete this task")
 
     await db.delete(task)
@@ -276,7 +276,8 @@ async def update_task_team(
     # Load task with project.team_members for validation
     result = await db.execute(
         select(Task).options(
-            selectinload(Task.project).selectinload(Project.departments).selectinload(Project.team_members),
+            selectinload(Task.project).selectinload(Project.departments),
+            selectinload(Task.project).selectinload(Project.team_members),
             selectinload(Task.team_members),
         ).where(Task.id == task_id)
     )

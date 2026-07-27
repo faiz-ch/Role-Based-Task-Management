@@ -57,7 +57,7 @@ def task_done_email(task: Task) -> tuple[str, str]:
 
 def task_assigned_supervisor_email(task: Task) -> tuple[str, str]:
     subject = f"Task assigned: {task.title}"
-    body = _wrap("Task assigned", f"{task.assignee.name} was assigned this task in {task.department.name if task.department else 'the system'}.", task)
+    body = _wrap("Task assigned", f"{task.assignee.name} was assigned this task in {task.project.name if task.project else 'the system'}.", task)
     return subject, body
 
 
