@@ -7,6 +7,7 @@ import { getTask } from "../api/tasks";
 import { getProject } from "../api/projects";
 import { getUsers } from "../api/users";
 import { getSubtaskReports, createSubtaskReport, Report } from "../api/reports";
+import { getSubtaskComments, createSubtaskComment, Comment } from "../api/comments";
 import { uploadSubtaskAttachment, getSubtaskAttachments, getAttachmentDownloadUrl, fetchAttachmentBlobUrl, fetchAttachmentPreviewBlobUrl, deleteAttachment, Attachment } from "../api/attachments";
 import { useAuth } from "../context/AuthContext";
 import { StatusBadge } from "../components/StatusBadge";
@@ -34,11 +35,14 @@ export function SubtaskDetailPage() {
   const [project, setProject] = useState<Project | null>(null);
   const [users, setUsers] = useState<UserType[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
+  const [comments, setComments] = useState<Comment[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showNewReport, setShowNewReport] = useState(false);
   const [reportContent, setReportContent] = useState("");
+  const [showNewComment, setShowNewComment] = useState(false);
+  const [commentContent, setCommentContent] = useState("");
   const [uploading, setUploading] = useState(false);
   const [previewFile, setPreviewFile] = useState<{ id: number; url: string; filename: string; isImage: boolean } | null>(null);
 
@@ -68,6 +72,19 @@ export function SubtaskDetailPage() {
       setShowNewReport(false);
     } catch (err: any) {
       setError(err?.message || "Failed to create report");
+    }
+  }
+
+  async function handleCreateComment() {
+    if (!subtask || !commentContent.trim()) return;
+    try {
+      setError(null);
+      const newComment = await createSubtaskComment(subtask.id, { content: commentContent.trim() });
+      setComments([...comments, newComment]);
+      setCommentContent("");
+      setShowNewComment(false);
+    } catch (err: any) {
+      setError(err?.message || "Failed to create comment");
     }
   }
 
@@ -159,6 +176,14 @@ export function SubtaskDetailPage() {
               setReports(reportsData);
             } catch (err) {
               console.error("Failed to load reports:", err);
+            }
+
+            // Load comments
+            try {
+              const commentsData = await getSubtaskComments(subtaskResult.value.id);
+              setComments(commentsData);
+            } catch (err) {
+              console.error("Failed to load comments:", err);
             }
 
             // Load attachments
@@ -277,6 +302,71 @@ export function SubtaskDetailPage() {
                         <span className="text-xs text-muted-foreground">{fmtDate(report.createdAt)}</span>
                       </div>
                       <p className="text-sm text-muted-foreground whitespace-pre-wrap">{report.content}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Comments */}
+          <div className="bg-white rounded-xl border border-border p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-foreground">Comments</h2>
+              <button
+                onClick={() => setShowNewComment(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+              >
+                <Plus size={12} /> New Comment
+              </button>
+            </div>
+            {showNewComment && (
+              <div className="mb-4 p-4 bg-muted rounded-lg">
+                <textarea
+                  value={commentContent}
+                  onChange={(e) => setCommentContent(e.target.value)}
+                  placeholder="Write a comment..."
+                  className="w-full p-2 border border-border rounded-lg text-sm resize-none"
+                  rows={3}
+                />
+                <div className="flex gap-2 mt-2">
+                  <button
+                    onClick={handleCreateComment}
+                    disabled={!commentContent.trim()}
+                    className="px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Post Comment
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowNewComment(false);
+                      setCommentContent("");
+                    }}
+                    className="px-3 py-1.5 bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg hover:bg-gray-300 transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+            {comments.length === 0 ? (
+              <div className="text-sm text-muted-foreground text-center py-8">
+                No comments yet
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {comments.map((comment) => {
+                  const author = users.find((u) => u.id === comment.authorId);
+                  return (
+                    <div key={comment.id} className="border-b border-border pb-4:last:pb-0 last:border-0">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          {author && <Av name={author.name} size="sm" />}
+                          <span className="text-sm font-medium text-foreground">{author?.name || "Unknown"}</span>
+                        </div>
+                        <span className="text-xs text-muted-foreground">{fmtDate(comment.createdAt)}</span>
+                      </div>
+                      <p className="text-sm text-muted-foreground whitespace-pre-wrap">{comment.content}</p>
                     </div>
                   );
                 })}

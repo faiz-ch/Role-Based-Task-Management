@@ -89,10 +89,14 @@ export async function updateTask(
   return mapTask(data);
 }
 
-export async function updateTaskStatus(id: number, status: string): Promise<Task> {
+export async function updateTaskStatus(id: number, status: string, dueDate?: string): Promise<Task> {
+  const payload: any = { status };
+  if (dueDate !== undefined) {
+    payload.due_date = new Date(dueDate).toISOString();
+  }
   const data = await apiFetch(`/tasks/${id}/status`, {
     method: "PATCH",
-    body: JSON.stringify({ status }),
+    body: JSON.stringify(payload),
   });
   return mapTask(data);
 }
@@ -109,17 +113,6 @@ export async function deleteTask(id: number): Promise<void> {
   await apiFetch(`/tasks/${id}`, {
     method: "DELETE",
   });
-}
-
-export async function rescheduleTask(id: number, newDueDate: string): Promise<Task> {
-  const payload = {
-    new_due_date: newDueDate,
-  };
-  const data = await apiFetch(`/tasks/${id}/reschedule`, {
-    method: "PATCH",
-    body: JSON.stringify(payload),
-  });
-  return mapTask(data);
 }
 
 export async function updateTaskTeam(id: number, userIds: number[], leadId?: number): Promise<Task> {

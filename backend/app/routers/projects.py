@@ -1,6 +1,7 @@
+import os
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -18,13 +19,17 @@ from app.database import get_db
 from app.models.project import Project, ProjectStatus, ProjectTeam, project_department
 from app.models.department import Department
 from app.models.user import User
-from app.models.task import Task
+from app.models.task import Task, TaskStatus
 from app.models.attachment import Attachment
 from app.models.role import Role
 from app.models.report import Report
+from app.models.activity_log import ActivityLog
 from app.schemas.project import ProjectCreate, ProjectOut, ProjectTeamUpdate, ProjectUpdate
 from app.schemas.user import UserOut
 from app.schemas.report import ReportCreate, ReportOut
+from app.schemas.activity_log import ActivityLogOut
+from app.services import notification_dispatch
+from app.services.activity_log import log_activity
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -43,6 +48,21 @@ async def create_project(
     if len(departments) != len(payload.department_ids):
         raise HTTPException(status_code=400, detail="One or more departments not found")
 
+    # Check department scope authorization
+    scoped_dept_ids = get_scoped_department_ids(current_user)
+    if scoped_dept_ids is not None:
+        if not scoped_dept_ids:
+            raise HTTPException(
+                status_code=403,
+                detail="You cannot create projects because your role has no departments assigned."
+            )
+        out_of_scope = [dept_id for dept_id in payload.department_ids if dept_id not in scoped_dept_ids]
+        if out_of_scope:
+            raise HTTPException(
+                status_code=403,
+                detail=f"The following department_ids are outside your scope: {out_of_scope}"
+            )
+
     # Create project
     project = Project(
         name=payload.name,
@@ -55,6 +75,7 @@ async def create_project(
     db.add(project)
     await db.commit()
     await db.refresh(project)
+    await log_activity(db, current_user.id, "project_created", "project", project.id, detail=payload.name)
 
     # Insert project_department associations
     for dept_id in payload.department_ids:
@@ -132,6 +153,39 @@ async def get_project(
     return _project_to_out(project)
 
 
+@router.get("/{project_id}/activity", response_model=list[ActivityLogOut])
+async def get_project_activity(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get activity log for a project. Uses same view permission as get_project."""
+    project = await _get_project_or_404_with_loads(db, project_id)
+
+    # Check access permissions (same as get_project)
+    has_view_perm = has_permission(current_user, "project:view") or has_permission(current_user, "project:manage")
+    in_scope = False
+    if has_view_perm:
+        scoped_dept_ids = get_scoped_department_ids(current_user)
+        if scoped_dept_ids is None or any(d.id in scoped_dept_ids for d in project.departments):
+            in_scope = True
+
+    is_lead = is_project_lead(current_user, project)
+    is_team_member = any(tm.user_id == current_user.id for tm in project.team_members)
+
+    if not (in_scope or is_lead or is_team_member):
+        raise HTTPException(status_code=403, detail="You do not have permission to view this project")
+
+    # Load activity logs for this project
+    result = await db.execute(
+        select(ActivityLog)
+        .where(ActivityLog.entity_type == "project", ActivityLog.entity_id == project_id)
+        .order_by(ActivityLog.created_at.desc())
+    )
+    logs = result.scalars().all()
+    return logs
+
+
 @router.get("/{project_id}/candidates", response_model=list[UserOut])
 async def get_project_candidates(
     project_id: int,
@@ -176,7 +230,7 @@ async def get_project_candidates(
 
     # Filter through assignable categories
     assignable_pool = get_assignable_user_pool(
-        list(candidates), current_user, project_dept_ids
+        list(candidates), project_dept_ids
     )
 
     # Return as UserOut
@@ -236,6 +290,48 @@ async def update_project(
     return _project_to_out(project_with_loads)
 
 
+@router.patch("/{project_id}/complete", response_model=ProjectOut)
+async def complete_project(
+    project_id: int,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Mark a project as complete. Only the project creator can do this."""
+    from sqlalchemy.orm import selectinload
+    project = await _get_project_or_404_with_loads(db, project_id)
+
+    # Only the project creator can complete it
+    if current_user.id != project.created_by:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the project creator can mark it as complete"
+        )
+
+    # Check if all tasks are DONE
+    tasks_result = await db.execute(
+        select(Task).where(Task.project_id == project_id)
+    )
+    tasks = tasks_result.scalars().all()
+    for task in tasks:
+        if task.status != TaskStatus.DONE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot complete project: task '{task.title}' is not yet done (status: {task.status.value})"
+            )
+
+    # Mark project as DONE
+    project.status = ProjectStatus.DONE
+    await log_activity(db, current_user.id, "project_completed", "project", project.id, detail="Active -> Done")
+    await db.commit()
+    await db.refresh(project)
+
+    background_tasks.add_task(notification_dispatch.notify_project_completed, project.id)
+
+    project_with_loads = await _get_project_with_loads(db, project.id)
+    return _project_to_out(project_with_loads)
+
+
 @router.delete("/{project_id}", status_code=204)
 async def delete_project(
     project_id: int,
@@ -252,7 +348,24 @@ async def delete_project(
 
     # Delete attachments for this project's tasks first (no DB-level cascade for attachments)
     task_ids_subquery = select(Task.id).where(Task.project_id == project_id)
-    await db.execute(delete(Attachment).where(Attachment.task_id.in_(task_ids_subquery)))
+    attachments_result = await db.execute(select(Attachment).where(Attachment.task_id.in_(task_ids_subquery)))
+    attachments = attachments_result.scalars().all()
+    for attachment in attachments:
+        # Delete file from disk if it exists
+        try:
+            if os.path.exists(attachment.stored_path):
+                os.remove(attachment.stored_path)
+        except Exception:
+            pass  # Missing file shouldn't fail the request
+        # Delete preview file if it exists
+        if attachment.preview_path:
+            try:
+                if os.path.exists(attachment.preview_path):
+                    os.remove(attachment.preview_path)
+            except Exception:
+                pass  # Missing file shouldn't fail the request
+        # Delete from database
+        await db.delete(attachment)
 
     # Delete the project's tasks (subtasks cascade at the DB level via ondelete=CASCADE)
     await db.execute(delete(Task).where(Task.project_id == project_id))
@@ -260,6 +373,7 @@ async def delete_project(
     # Delete the project
     await db.execute(delete(Project).where(Project.id == project_id))
 
+    await log_activity(db, current_user.id, "project_deleted", "project", project_id, detail=project.name)
     await db.commit()
 
 
@@ -267,6 +381,7 @@ async def delete_project(
 async def update_project_team(
     project_id: int,
     payload: ProjectTeamUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission("project:manage")),
 ):
@@ -293,7 +408,7 @@ async def update_project_team(
 
     # Filter through assignable categories
     assignable_pool = get_assignable_user_pool(
-        list(candidates), current_user, project_dept_ids
+        list(candidates), project_dept_ids
     )
     assignable_user_ids = {u.id for u in assignable_pool}
 
@@ -346,6 +461,8 @@ async def update_project_team(
 
     await db.commit()
     await db.refresh(project)
+
+    background_tasks.add_task(notification_dispatch.notify_project_team_assigned, project.id, payload.lead_id or 0, payload.user_ids)
 
     project_with_loads = await _get_project_with_loads(db, project.id)
     return _project_to_out(project_with_loads)

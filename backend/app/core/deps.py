@@ -140,7 +140,19 @@ def can_manage_task(user: User, task: Task) -> bool:
     project's department(s) can manage any task in it; a Project Lead can
     manage any task inside their own project; a Task Lead can manage their
     specific task. No flat task-level permission exists anymore.
+    For standalone tasks (project_id is None), only the creator or global
+    project:manage users can manage (not the assignee, to prevent self-approval).
     """
+    if task.project_id is None:
+        # Standalone task - only creator or global managers can manage
+        if user.id == task.created_by:
+            return True
+        if has_permission(user, "project:manage"):
+            scoped = get_scoped_department_ids(user)
+            if scoped is None:  # Global scope
+                return True
+        return False
+
     if has_permission(user, "project:manage"):
         scoped = get_scoped_department_ids(user)
         if scoped is None or any(d.id in scoped for d in task.project.departments):
@@ -154,7 +166,19 @@ def can_edit_delete_task(user: User, task: Task) -> bool:
     """
     Task edit/delete is restricted to project lead OR project:manage (NOT task lead).
     Task lead manages subtasks and day-to-day work, not the task's own existence/details.
+    For standalone tasks (project_id is None), only the creator or global project:manage
+    users can edit/delete.
     """
+    if task.project_id is None:
+        # Standalone task - only creator or global managers can edit/delete
+        if user.id == task.created_by:
+            return True
+        if has_permission(user, "project:manage"):
+            scoped = get_scoped_department_ids(user)
+            if scoped is None:  # Global scope
+                return True
+        return False
+
     if has_permission(user, "project:manage"):
         scoped = get_scoped_department_ids(user)
         if scoped is None or any(d.id in scoped for d in task.project.departments):
@@ -168,7 +192,23 @@ def can_view_task(user: User, task: Task) -> bool:
     project's department(s) can view any task in it; a Project Lead can view any task
     inside their own project; a Task Lead can view their specific task; a user can view
     tasks they're a team member of.
+    For standalone tasks (project_id is None), only the creator, assignee, task lead,
+    team members, or global project:view users can view.
     """
+    if task.project_id is None:
+        # Standalone task - creator, assignee, lead, team members, or global managers can view
+        if user.id == task.created_by or user.id == task.assigned_to:
+            return True
+        if is_task_lead(user, task):
+            return True
+        if any(tm.user_id == user.id for tm in task.team_members):
+            return True
+        if has_permission(user, "project:view"):
+            scoped = get_scoped_department_ids(user)
+            if scoped is None:  # Global scope
+                return True
+        return False
+
     if has_permission(user, "project:view"):
         scoped = get_scoped_department_ids(user)
         if scoped is None or any(d.id in scoped for d in task.project.departments):
@@ -184,7 +224,19 @@ def can_view_task(user: User, task: Task) -> bool:
 def can_create_subtask_in_task(user: User, task: Task) -> bool:
     """
     Allow task lead, project lead, or project:manage (with department scope) to create subtasks.
+    For standalone tasks (project_id is None), only the task lead or global project:manage
+    users can create subtasks.
     """
+    if task.project_id is None:
+        # Standalone task - only task lead or global managers can create subtasks
+        if is_task_lead(user, task):
+            return True
+        if has_permission(user, "project:manage"):
+            scoped = get_scoped_department_ids(user)
+            if scoped is None:  # Global scope
+                return True
+        return False
+
     if is_task_lead(user, task):
         return True
     if is_project_lead(user, task.project):
@@ -196,14 +248,12 @@ def can_create_subtask_in_task(user: User, task: Task) -> bool:
     return False
 
 
-def get_assignable_user_pool(db_users: list[User], selector: User, department_ids: set[int]) -> list[User]:
+def get_assignable_user_pool(db_users: list[User], department_ids: set[int]) -> list[User]:
     """
     Given a list of candidate users, return those in the given department_ids.
     Team/lead eligibility for projects, tasks, and subtasks is based purely on
     department membership — not on the selector's assignable_categories, which
     is a separate, unrelated setting for user-creation permission delegation.
-    The `selector` parameter is kept (but unused) so every existing call site
-    stays exactly as-is with no signature changes needed anywhere else.
     """
     return [u for u in db_users if u.department_id in department_ids]
 

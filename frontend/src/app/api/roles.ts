@@ -17,10 +17,6 @@ function mapRole(r: any): Role {
     allDepartments: r.all_departments || false,
     departments: Array.isArray(r.departments) ? r.departments.map((d: any) => ({ id: d.id, name: d.name })) : [],
     assignableCategories: Array.isArray(r.assignable_categories) ? r.assignable_categories.map(mapCategory) : [],
-    notifyOnAssign: r.notify_on_assign || false,
-    notifyOnReview: r.notify_on_review || false,
-    notifyOnReschedule: r.notify_on_reschedule || false,
-    notifyOnDone: r.notify_on_done || false,
   };
 }
 
@@ -34,13 +30,9 @@ export async function createRole(
   categoryId: number | null,
   allDepartments: boolean,
   departmentIds: number[],
-  assignableCategoryIds: number[],
-  notifyOnAssign: boolean,
-  notifyOnReview: boolean,
-  notifyOnReschedule: boolean,
-  notifyOnDone: boolean
+  assignableCategoryIds: number[]
 ): Promise<Role> {
-  const body: any = { name, all_departments: allDepartments, department_ids: departmentIds, assignable_category_ids: assignableCategoryIds, notify_on_assign: notifyOnAssign, notify_on_review: notifyOnReview, notify_on_reschedule: notifyOnReschedule, notify_on_done: notifyOnDone };
+  const body: any = { name, all_departments: allDepartments, department_ids: departmentIds, assignable_category_ids: assignableCategoryIds };
   if (categoryId !== null) body.category_id = categoryId;
   
   const data = await apiFetch("/roles", {
@@ -82,25 +74,6 @@ export async function setRoleAssignableCategories(
   const data = await apiFetch(`/roles/${roleId}/assignable-categories`, {
     method: "PATCH",
     body: JSON.stringify({ assignable_category_ids: assignableCategoryIds }),
-  });
-  return mapRole(data);
-}
-
-export async function setRoleNotifications(
-  roleId: number,
-  notifyOnAssign: boolean,
-  notifyOnReview: boolean,
-  notifyOnReschedule: boolean,
-  notifyOnDone: boolean
-): Promise<Role> {
-  const data = await apiFetch(`/roles/${roleId}/notifications`, {
-    method: "PATCH",
-    body: JSON.stringify({
-      notify_on_assign: notifyOnAssign,
-      notify_on_review: notifyOnReview,
-      notify_on_reschedule: notifyOnReschedule,
-      notify_on_done: notifyOnDone,
-    }),
   });
   return mapRole(data);
 }

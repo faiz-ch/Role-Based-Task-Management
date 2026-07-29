@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -11,7 +11,12 @@ from app.models.role import Role
 from app.models.department import Department
 from app.models.task import Task
 from app.models.category import Category
+from app.models.project import Project, ProjectTeam
+from app.models.subtask import SubTask, SubTaskAssignee
+from app.models.report import Report
+from app.models.attachment import Attachment
 from app.schemas.user import UserOut, UserUpdate, AssignRoleRequest, AssignDepartmentRequest, UserCreate
+from app.services import notification_dispatch
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -43,6 +48,7 @@ async def list_users(
 @router.post("", response_model=UserOut, status_code=201)
 async def create_user(
     payload: UserCreate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -107,6 +113,9 @@ async def create_user(
     )
     db.add(user)
     await db.commit()
+    
+    background_tasks.add_task(notification_dispatch.notify_user_created, user.id)
+    
     # Re-fetch with eager load to avoid MissingGreenlet error
     result = await db.execute(
         select(User)
@@ -167,6 +176,7 @@ async def get_user(
 async def update_user(
     user_id: int,
     payload: UserUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -183,6 +193,11 @@ async def update_user(
     if scoped_dept_ids is not None:
         if user.department_id not in scoped_dept_ids:
             raise HTTPException(status_code=404, detail="User not found")
+
+    # Capture old values for comparison
+    old_name = user.name
+    old_email = user.email
+    old_is_active = user.is_active
 
     if payload.name is not None:
         user.name = payload.name
@@ -219,6 +234,17 @@ async def update_user(
         user.department_id = payload.department_id if payload.department_id != 0 else None
 
     await db.commit()
+
+    # Send notifications for changed fields
+    if payload.name is not None and payload.name != old_name:
+        background_tasks.add_task(notification_dispatch.notify_user_name_changed, user.id)
+    if payload.email is not None and payload.email != old_email:
+        background_tasks.add_task(notification_dispatch.notify_user_email_changed, user.id)
+    if payload.password is not None:
+        background_tasks.add_task(notification_dispatch.notify_user_password_changed, user.id)
+    if payload.is_active is not None and old_is_active == True and payload.is_active == False:
+        background_tasks.add_task(notification_dispatch.notify_user_deactivated, user.id)
+
     result = await db.execute(
         select(User)
         .options(selectinload(User.role).selectinload(Role.category).selectinload(Category.permissions),
@@ -317,7 +343,7 @@ async def delete_user(
     if user.id == current_user.id:
         raise HTTPException(status_code=400, detail="You cannot delete your own account")
 
-    # Check if user created any tasks
+    # Block if user created any tasks
     tasks_created_result = await db.execute(
         select(Task).where(Task.created_by == user_id)
     )
@@ -327,7 +353,106 @@ async def delete_user(
             detail="This user created tasks that still exist. Reassign or delete those tasks before deleting the user."
         )
 
-    # Unassign tasks where this user is the assignee
+    # Block if user created any projects
+    projects_created_result = await db.execute(
+        select(Project).where(Project.created_by == user_id)
+    )
+    if projects_created_result.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="This user created projects that still exist. Reassign or delete those projects before deleting the user."
+        )
+
+    # Block if user created any subtasks
+    subtasks_created_result = await db.execute(
+        select(SubTask).where(SubTask.created_by == user_id)
+    )
+    if subtasks_created_result.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="This user created subtasks that still exist. Reassign or delete those subtasks before deleting the user."
+        )
+
+    # Block if user authored any reports
+    reports_created_result = await db.execute(
+        select(Report).where(Report.created_by == user_id)
+    )
+    if reports_created_result.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="This user authored reports that still exist. Delete those reports before deleting the user."
+        )
+
+    # Block if user uploaded any attachments
+    attachments_uploaded_result = await db.execute(
+        select(Attachment).where(Attachment.uploaded_by == user_id)
+    )
+    if attachments_uploaded_result.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="This user uploaded attachments that still exist. Delete those attachments before deleting the user."
+        )
+
+    # Null out nullable role columns
+    # Project.lead_id
+    projects_lead_result = await db.execute(
+        select(Project).where(Project.lead_id == user_id)
+    )
+    projects_lead = projects_lead_result.scalars().all()
+    for project in projects_lead:
+        project.lead_id = None
+
+    # Task.lead_id
+    tasks_lead_result = await db.execute(
+        select(Task).where(Task.lead_id == user_id)
+    )
+    tasks_lead = tasks_lead_result.scalars().all()
+    for task in tasks_lead:
+        task.lead_id = None
+
+    # Project.team_approved_by
+    projects_approved_result = await db.execute(
+        select(Project).where(Project.team_approved_by == user_id)
+    )
+    projects_approved = projects_approved_result.scalars().all()
+    for project in projects_approved:
+        project.team_approved_by = None
+
+    # Task.team_approved_by
+    tasks_approved_result = await db.execute(
+        select(Task).where(Task.team_approved_by == user_id)
+    )
+    tasks_approved = tasks_approved_result.scalars().all()
+    for task in tasks_approved:
+        task.team_approved_by = None
+
+    # Reassign NOT NULL audit trail columns to current_user
+    # ProjectTeam.added_by
+    project_teams_result = await db.execute(
+        select(ProjectTeam).where(ProjectTeam.added_by == user_id)
+    )
+    project_teams = project_teams_result.scalars().all()
+    for pt in project_teams:
+        pt.added_by = current_user.id
+
+    # TaskTeam.added_by
+    from app.models.task import TaskTeam
+    task_teams_result = await db.execute(
+        select(TaskTeam).where(TaskTeam.added_by == user_id)
+    )
+    task_teams = task_teams_result.scalars().all()
+    for tt in task_teams:
+        tt.added_by = current_user.id
+
+    # SubTaskAssignee.assigned_by
+    subtask_assignees_result = await db.execute(
+        select(SubTaskAssignee).where(SubTaskAssignee.assigned_by == user_id)
+    )
+    subtask_assignees = subtask_assignees_result.scalars().all()
+    for sa in subtask_assignees:
+        sa.assigned_by = current_user.id
+
+    # Unassign tasks where this user is the assignee (existing logic)
     assigned_tasks_result = await db.execute(
         select(Task).where(Task.assigned_to == user_id)
     )

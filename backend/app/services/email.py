@@ -31,6 +31,8 @@ async def send_email(to: str, subject: str, html_body: str) -> None:
     message["From"] = settings.EMAIL_ADDRESS
     message["To"] = to
     message["Subject"] = subject
+    if settings.EMAIL_REPLY_TO:
+        message["Reply-To"] = settings.EMAIL_REPLY_TO
     message.set_content("Please view this email in an HTML-capable client.")
     message.add_alternative(html_body, subtype="html")
 
@@ -38,7 +40,7 @@ async def send_email(to: str, subject: str, html_body: str) -> None:
         await aiosmtplib.send(
             message,
             hostname=settings.SMTP_HOST,
-            port=587,
+            port=settings.SMTP_PORT,
             username=settings.EMAIL_ADDRESS,
             password=settings.EMAIL_PASSWORD,
             start_tls=True,

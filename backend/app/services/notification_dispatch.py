@@ -1,50 +1,42 @@
 """
-Decides WHO should get emailed for each task event, based on the Role
-notification toggles (notify_on_assign/review/reschedule/done), then sends
-those emails.
+Decides WHO should get emailed for each task/subtask/project/user event,
+based on direct involvement (assignee, creator, team members) instead of
+role-level broadcast flags.
 
 Each function here opens its OWN fresh database session instead of reusing
 the request's session, since these run as FastAPI BackgroundTasks — AFTER
 the API response has already been sent back to the frontend.
 """
-from sqlalchemy import select, or_, exists, and_
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.database import AsyncSessionLocal
 from app.models.task import Task
+from app.models.subtask import SubTask, SubTaskAssignee
 from app.models.user import User
-from app.models.role import Role, role_department
-from app.models.project import Project
+from app.models.project import Project, ProjectTeam
 from app.services.email import send_email
 from app.services import email_templates
 
+
+# Task notifications (involvement-based)
 
 async def notify_task_assigned(task_id: int) -> None:
     async with AsyncSessionLocal() as db:
         task = await _load_task(db, task_id)
         if task is None or task.assignee is None:
             return
-        # Send assignee their email unconditionally
         subject, body = email_templates.task_assigned_email(task)
         await send_email(task.assignee.email, subject, body)
-        # Send supervisor broadcast to users with notify_on_assign flag
-        department_ids = {d.id for d in task.project.departments}
-        supervisors = await _get_users_with_flag(db, department_ids, "notify_on_assign", exclude_user_id=task.assignee.id)
-        supervisor_subject, supervisor_body = email_templates.task_assigned_supervisor_email(task)
-        for supervisor in supervisors:
-            await send_email(supervisor.email, supervisor_subject, supervisor_body)
 
 
 async def notify_task_submitted_for_review(task_id: int) -> None:
     async with AsyncSessionLocal() as db:
         task = await _load_task(db, task_id)
-        if task is None:
+        if task is None or task.creator is None:
             return
-        department_ids = {d.id for d in task.project.departments}
-        reviewers = await _get_users_with_flag(db, department_ids, "notify_on_review")
         subject, body = email_templates.task_submitted_for_review_email(task)
-        for reviewer in reviewers:
-            await send_email(reviewer.email, subject, body)
+        await send_email(task.creator.email, subject, body)
 
 
 async def notify_task_rescheduled(task_id: int) -> None:
@@ -52,69 +44,184 @@ async def notify_task_rescheduled(task_id: int) -> None:
         task = await _load_task(db, task_id)
         if task is None or task.assignee is None:
             return
-        # Send assignee their email unconditionally
         subject, body = email_templates.task_rescheduled_email(task)
         await send_email(task.assignee.email, subject, body)
-        # Send supervisor broadcast to users with notify_on_reschedule flag
-        department_ids = {d.id for d in task.project.departments}
-        supervisors = await _get_users_with_flag(db, department_ids, "notify_on_reschedule", exclude_user_id=task.assignee.id)
-        supervisor_subject, supervisor_body = email_templates.task_rescheduled_supervisor_email(task)
-        for supervisor in supervisors:
-            await send_email(supervisor.email, supervisor_subject, supervisor_body)
 
 
 async def notify_task_done(task_id: int) -> None:
     async with AsyncSessionLocal() as db:
         task = await _load_task(db, task_id)
-        if task is None or task.assignee is None:
+        if task is None:
             return
-        # Send assignee their email unconditionally
         subject, body = email_templates.task_done_email(task)
-        await send_email(task.assignee.email, subject, body)
-        # Send supervisor broadcast to users with notify_on_done flag
-        department_ids = {d.id for d in task.project.departments}
-        supervisors = await _get_users_with_flag(db, department_ids, "notify_on_done", exclude_user_id=task.assignee.id)
-        supervisor_subject, supervisor_body = email_templates.task_done_supervisor_email(task)
-        for supervisor in supervisors:
-            await send_email(supervisor.email, supervisor_subject, supervisor_body)
+        # Email assignee
+        if task.assignee:
+            await send_email(task.assignee.email, subject, body)
+        # Email creator
+        if task.creator:
+            await send_email(task.creator.email, subject, body)
 
+
+# Subtask notifications (involvement-based)
+
+async def notify_subtask_assigned(subtask_id: int) -> None:
+    async with AsyncSessionLocal() as db:
+        subtask = await _load_subtask(db, subtask_id)
+        if subtask is None:
+            return
+        subject, body = email_templates.subtask_assigned_email(subtask)
+        for assignee in subtask.assignees:
+            await send_email(assignee.user.email, subject, body)
+
+
+async def notify_subtask_submitted_for_review(subtask_id: int) -> None:
+    async with AsyncSessionLocal() as db:
+        subtask = await _load_subtask(db, subtask_id)
+        if subtask is None or subtask.creator is None:
+            return
+        subject, body = email_templates.subtask_submitted_for_review_email(subtask)
+        await send_email(subtask.creator.email, subject, body)
+
+
+async def notify_subtask_rescheduled(subtask_id: int) -> None:
+    async with AsyncSessionLocal() as db:
+        subtask = await _load_subtask(db, subtask_id)
+        if subtask is None:
+            return
+        subject, body = email_templates.subtask_rescheduled_email(subtask)
+        for assignee in subtask.assignees:
+            await send_email(assignee.user.email, subject, body)
+
+
+async def notify_subtask_done(subtask_id: int) -> None:
+    async with AsyncSessionLocal() as db:
+        subtask = await _load_subtask(db, subtask_id)
+        if subtask is None:
+            return
+        subject, body = email_templates.subtask_done_email(subtask)
+        # Email assignees
+        for assignee in subtask.assignees:
+            await send_email(assignee.user.email, subject, body)
+        # Email creator
+        if subtask.creator:
+            await send_email(subtask.creator.email, subject, body)
+
+
+# Project notifications (involvement-based)
+
+async def notify_project_team_assigned(project_id: int, lead_id: int, team_user_ids: list[int]) -> None:
+    async with AsyncSessionLocal() as db:
+        project = await _load_project(db, project_id)
+        if project is None:
+            return
+        subject, body = email_templates.project_team_assigned_email(project)
+        # Email the new lead
+        if project.lead:
+            await send_email(project.lead.email, subject, body)
+        # Email all team members
+        for team_member in project.team_members:
+            await send_email(team_member.user.email, subject, body)
+
+
+async def notify_project_completed(project_id: int) -> None:
+    async with AsyncSessionLocal() as db:
+        project = await _load_project(db, project_id)
+        if project is None:
+            return
+        subject, body = email_templates.project_completed_email(project)
+        # Email the lead
+        if project.lead:
+            await send_email(project.lead.email, subject, body)
+        # Email all current team members
+        for team_member in project.team_members:
+            await send_email(team_member.user.email, subject, body)
+
+
+# User notifications
+
+async def notify_user_created(user_id: int) -> None:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            return
+        subject, body = email_templates.user_created_email(user)
+        await send_email(user.email, subject, body)
+
+
+async def notify_user_name_changed(user_id: int) -> None:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            return
+        subject, body = email_templates.user_name_changed_email(user)
+        await send_email(user.email, subject, body)
+
+
+async def notify_user_email_changed(user_id: int) -> None:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            return
+        subject, body = email_templates.user_email_changed_email(user)
+        await send_email(user.email, subject, body)
+
+
+async def notify_user_password_changed(user_id: int) -> None:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            return
+        subject, body = email_templates.user_password_changed_email(user)
+        await send_email(user.email, subject, body)
+
+
+async def notify_user_deactivated(user_id: int) -> None:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            return
+        subject, body = email_templates.user_deactivated_email(user)
+        await send_email(user.email, subject, body)
+
+
+# Helper functions
 
 async def _load_task(db, task_id: int) -> Task | None:
     result = await db.execute(
         select(Task)
         .options(
-            selectinload(Task.assignee).selectinload(User.role),
-            selectinload(Task.project).selectinload(Project.departments),
+            selectinload(Task.assignee),
+            selectinload(Task.creator),
         )
         .where(Task.id == task_id)
     )
     return result.scalar_one_or_none()
 
 
-async def _get_users_with_flag(db, department_ids: set[int], flag_name: str, exclude_user_id: int | None = None) -> list[User]:
-    """Get all users whose role has the given notification flag enabled and whose
-    department scope covers ANY of the given department ids. Optionally exclude a specific user.
-    """
-    department_match = (
-        Role.all_departments == True
-        if not department_ids
-        else or_(
-            Role.all_departments == True,
-            exists().where(
-                and_(
-                    role_department.c.role_id == Role.id,
-                    role_department.c.department_id.in_(department_ids),
-                )
-            ),
+async def _load_subtask(db, subtask_id: int) -> SubTask | None:
+    result = await db.execute(
+        select(SubTask)
+        .options(
+            selectinload(SubTask.assignees).selectinload(SubTaskAssignee.user),
+            selectinload(SubTask.creator),
         )
+        .where(SubTask.id == subtask_id)
     )
-    query = (
-        select(User)
-        .join(Role, User.role_id == Role.id)
-        .where(getattr(Role, flag_name) == True)
-        .where(department_match)
+    return result.scalar_one_or_none()
+
+
+async def _load_project(db, project_id: int) -> Project | None:
+    result = await db.execute(
+        select(Project)
+        .options(
+            selectinload(Project.lead),
+            selectinload(Project.team_members).selectinload(ProjectTeam.user),
+        )
+        .where(Project.id == project_id)
     )
-    if exclude_user_id is not None:
-        query = query.where(User.id != exclude_user_id)
-    result = await db.execute(query)
-    return list(result.scalars().unique().all())
+    return result.scalar_one_or_none()

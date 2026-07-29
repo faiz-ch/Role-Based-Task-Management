@@ -2,13 +2,14 @@ import React, { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router";
 import { ArrowLeft, AlertTriangle, Plus, Image, FileText, X, Trash2, Users, Edit2 } from "lucide-react";
 import { Task, UserType, Department, Project, Subtask } from "../types";
-import { getTask, updateTaskStatus, rescheduleTask, updateTaskTeam, updateTask, deleteTask } from "../api/tasks";
+import { getTask, updateTaskStatus, updateTaskTeam, updateTask, deleteTask } from "../api/tasks";
 import { getSubtasks, createSubtask, updateSubtask, updateSubtaskStatus, updateSubtaskAssignees, deleteSubtask } from "../api/subtasks";
 import { getUsers } from "../api/users";
 import { getDepartments } from "../api/departments";
 import { getProject, getProjectCandidates } from "../api/projects";
 import { uploadAttachment, getAttachments, getAttachmentDownloadUrl, fetchAttachmentBlobUrl, fetchAttachmentPreviewBlobUrl, deleteAttachment, Attachment } from "../api/attachments";
 import { getTaskReports, createTaskReport, Report } from "../api/reports";
+import { getTaskComments, createTaskComment, Comment } from "../api/comments";
 import { useAuth } from "../context/AuthContext";
 import { StatusBadge } from "../components/StatusBadge";
 import { PriBadge } from "../components/PriBadge";
@@ -61,6 +62,9 @@ export function TaskDetailPage() {
   const [showNewReport, setShowNewReport] = useState(false);
   const [reportContent, setReportContent] = useState("");
   const [reports, setReports] = useState<Report[]>([]);
+  const [showNewComment, setShowNewComment] = useState(false);
+  const [commentContent, setCommentContent] = useState("");
+  const [comments, setComments] = useState<Comment[]>([]);
   const [editTaskForm, setEditTaskForm] = useState({
     title: "",
     description: "",
@@ -136,6 +140,13 @@ export function TaskDetailPage() {
             setReports(reportsData);
           } catch (err) {
             console.error("Failed to load reports:", err);
+          }
+
+          try {
+            const commentsData = await getTaskComments(taskResult.value.id);
+            setComments(commentsData);
+          } catch (err) {
+            console.error("Failed to load comments:", err);
           }
         }
 
@@ -233,7 +244,7 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
       setRescheduleLoading(true);
       setError(null);
       const isoDate = new Date(rescheduleDate).toISOString();
-      const updated = await rescheduleTask(task.id, isoDate);
+      const updated = await updateTaskStatus(task.id, "Reschedule", isoDate);
       setTask(updated);
       setShowReschedule(false);
       setRescheduleDate("");
@@ -263,6 +274,10 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
   }
 
   function toggleTeamMember(userId: number) {
+    // Prevent unchecking the current assignee
+    if (task?.assigneeId === userId && selectedTeamIds.includes(userId)) {
+      return; // Don't allow removing the current assignee
+    }
     setSelectedTeamIds((prev) =>
       prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
     );
@@ -416,6 +431,19 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
       setShowNewReport(false);
     } catch (err: any) {
       setError(err?.message || "Failed to create report");
+    }
+  }
+
+  async function handleCreateComment() {
+    if (!task || !commentContent.trim()) return;
+    try {
+      setError(null);
+      const newComment = await createTaskComment(task.id, { content: commentContent.trim() });
+      setComments([...comments, newComment]);
+      setCommentContent("");
+      setShowNewComment(false);
+    } catch (err: any) {
+      setError(err?.message || "Failed to create comment");
     }
   }
 
@@ -751,13 +779,23 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
                   </div>
                 )}
               </div>
-            ) : currentUser?.id === task?.leadId && (task.status === "To Do" || task.status === "Reschedule") && (subtasks.length === 0 || subtasks.every(s => s.status === "Done")) ? (
-              <button
-                onClick={handleSubmitForReview}
-                className="w-full px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
-              >
-                Submit for review
-              </button>
+            ) : currentUser?.id === task?.assigneeId && (task.status === "To Do" || task.status === "Reschedule") ? (
+              subtasks.length === 0 || subtasks.every(s => s.status === "Done") ? (
+                <button
+                  onClick={handleSubmitForReview}
+                  className="w-full px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+                >
+                  Submit for review
+                </button>
+              ) : (
+                <button
+                  disabled
+                  className="w-full px-4 py-2 bg-gray-300 text-gray-500 text-sm font-semibold rounded-lg cursor-not-allowed"
+                  title="Cannot submit for review — all subtasks must be Done first"
+                >
+                  Submit for review (subtasks incomplete)
+                </button>
+              )
             ) : (
               <div className="text-sm text-muted-foreground text-center">
                 {task.status === "Review" && "Waiting for review."}
@@ -797,6 +835,70 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
                         <span className="text-xs text-muted-foreground">{fmtDate(report.createdAt)}</span>
                       </div>
                       <p className="text-sm text-muted-foreground whitespace-pre-wrap">{report.content}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white rounded-xl border border-border p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-foreground">Comments</h2>
+              <button
+                onClick={() => setShowNewComment(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+              >
+                <Plus size={12} /> New Comment
+              </button>
+            </div>
+            {showNewComment && (
+              <div className="mb-4 p-4 bg-muted rounded-lg">
+                <textarea
+                  value={commentContent}
+                  onChange={(e) => setCommentContent(e.target.value)}
+                  placeholder="Write a comment..."
+                  className="w-full p-2 border border-border rounded-lg text-sm resize-none"
+                  rows={3}
+                />
+                <div className="flex gap-2 mt-2">
+                  <button
+                    onClick={handleCreateComment}
+                    disabled={!commentContent.trim()}
+                    className="px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Post Comment
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowNewComment(false);
+                      setCommentContent("");
+                    }}
+                    className="px-3 py-1.5 bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg hover:bg-gray-300 transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+            {comments.length === 0 ? (
+              <div className="text-sm text-muted-foreground text-center py-8">
+                No comments yet
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {comments.map((comment) => {
+                  const author = users.find((u) => u.id === comment.authorId);
+                  return (
+                    <div key={comment.id} className="border-b border-border pb-4:last:pb-0 last:border-0">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          {author && <Av name={author.name} size="sm" />}
+                          <span className="text-sm font-medium text-foreground">{author?.name || "Unknown"}</span>
+                        </div>
+                        <span className="text-xs text-muted-foreground">{fmtDate(comment.createdAt)}</span>
+                      </div>
+                      <p className="text-sm text-muted-foreground whitespace-pre-wrap">{comment.content}</p>
                     </div>
                   );
                 })}
@@ -852,7 +954,12 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
                   {currentUser?.id === project?.leadId && (
                     <button
                       onClick={() => {
-                        setSelectedTeamIds(task?.teamUserIds || []);
+                        const teamIds = [...(task?.teamUserIds || [])];
+                        // Ensure current assignee is always in the team selection
+                        if (task?.assigneeId && !teamIds.includes(task.assigneeId)) {
+                          teamIds.push(task.assigneeId);
+                        }
+                        setSelectedTeamIds(teamIds);
                         setSelectedLeadId(task?.leadId?.toString() || "");
                         setShowManageTeam(true);
                       }}
@@ -881,6 +988,11 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Select Team Members (from project team)
               </span>
+              {task?.assigneeId && (
+                <p className="text-xs text-amber-600 bg-amber-50 px-3 py-2 rounded-lg border border-amber-200">
+                  The current assignee must remain in the team. You can reassign the task before changing the team if needed.
+                </p>
+              )}
               <div className="space-y-2 max-h-48 overflow-y-auto">
                 {projectTeamMembers.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-4">

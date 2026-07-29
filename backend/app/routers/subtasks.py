@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.responses import FileResponse
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +16,6 @@ from app.core.deps import (
     is_project_lead,
     has_permission,
     get_scoped_department_ids,
-    get_assignable_user_pool,
 )
 from app.database import get_db
 from app.models.user import User
@@ -25,6 +24,8 @@ from app.models.project import Project
 from app.models.subtask import SubTask, SubTaskAssignee
 from app.models.report import Report
 from app.models.attachment import Attachment
+from app.models.activity_log import ActivityLog
+from app.models.comment import Comment
 from app.schemas.subtask import (
     SubtaskCreate,
     SubtaskUpdate,
@@ -33,6 +34,10 @@ from app.schemas.subtask import (
     SubtaskOut,
 )
 from app.schemas.report import ReportCreate, ReportOut
+from app.schemas.activity_log import ActivityLogOut
+from app.schemas.comment import CommentCreate, CommentOut
+from app.services.activity_log import log_activity
+from app.services import notification_dispatch
 
 router = APIRouter(prefix="/subtasks", tags=["subtasks"])
 UPLOAD_DIR = "uploads"  # relative to backend/ — where uploaded files actually live on disk
@@ -87,6 +92,7 @@ def _subtask_to_out(subtask: SubTask) -> SubtaskOut:
 async def create_subtask(
     task_id: int,
     payload: SubtaskCreate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -117,6 +123,8 @@ async def create_subtask(
     db.add(subtask)
     await db.commit()
     await db.refresh(subtask)
+    await log_activity(db, current_user.id, "subtask_created", "subtask", subtask.id, detail=payload.title)
+    await db.commit()
 
     # Insert assignee relationships
     for assignee_id in payload.assignee_ids:
@@ -132,6 +140,7 @@ async def create_subtask(
 
     # Reload with assignees for response
     subtask_with_loads = await _get_subtask_or_404_with_loads(db, subtask.id)
+    background_tasks.add_task(notification_dispatch.notify_subtask_assigned, subtask.id)
     return _subtask_to_out(subtask_with_loads)
 
 
@@ -187,6 +196,73 @@ async def get_subtask(
     return _subtask_to_out(subtask)
 
 
+@router.get("/{subtask_id}/activity", response_model=list[ActivityLogOut])
+async def get_subtask_activity(
+    subtask_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get activity log for a subtask. Uses same view permission as get_subtask."""
+    subtask = await _get_subtask_or_404_with_loads(db, subtask_id)
+
+    if not can_view_subtask(current_user, subtask):
+        raise HTTPException(status_code=404, detail="Subtask not found")
+
+    # Load activity logs for this subtask
+    result = await db.execute(
+        select(ActivityLog)
+        .where(ActivityLog.entity_type == "subtask", ActivityLog.entity_id == subtask_id)
+        .order_by(ActivityLog.created_at.desc())
+    )
+    logs = result.scalars().all()
+    return logs
+
+
+@router.post("/{subtask_id}/comments", response_model=CommentOut, status_code=201)
+async def create_subtask_comment(
+    subtask_id: int,
+    payload: CommentCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Add a comment to a subtask. Gated by can_view_subtask (if you can see it, you can comment on it)."""
+    subtask = await _get_subtask_or_404_with_loads(db, subtask_id)
+    if not can_view_subtask(current_user, subtask):
+        raise HTTPException(status_code=404, detail="Subtask not found")
+
+    comment = Comment(
+        author_id=current_user.id,
+        entity_type="subtask",
+        entity_id=subtask_id,
+        content=payload.content,
+    )
+    db.add(comment)
+    await log_activity(db, current_user.id, "comment_added", "subtask", subtask_id, detail=payload.content[:100])
+    await db.commit()
+    await db.refresh(comment)
+    return comment
+
+
+@router.get("/{subtask_id}/comments", response_model=list[CommentOut])
+async def get_subtask_comments(
+    subtask_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get all comments for a subtask, ordered by created_at ascending (oldest first). Gated by can_view_subtask."""
+    subtask = await _get_subtask_or_404_with_loads(db, subtask_id)
+    if not can_view_subtask(current_user, subtask):
+        raise HTTPException(status_code=404, detail="Subtask not found")
+
+    result = await db.execute(
+        select(Comment)
+        .where(Comment.entity_type == "subtask", Comment.entity_id == subtask_id)
+        .order_by(Comment.created_at.asc())
+    )
+    comments = result.scalars().all()
+    return comments
+
+
 @router.patch("/{subtask_id}", response_model=SubtaskOut)
 async def update_subtask(
     subtask_id: int,
@@ -215,58 +291,78 @@ async def update_subtask(
 async def update_subtask_status(
     subtask_id: int,
     payload: SubtaskStatusUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
     Update subtask status with explicit transition rules:
-    - Subtask assignees can only submit: To Do or Reschedule → Review
-    - Task lead, project lead, or project:manage can approve (Review → Done) or send back (Review → Reschedule)
-    - Nobody else can change a subtask's status
+    - Submit (To Do/Reschedule -> Review): allowed for any user in subtask.assignees (regardless of other authority)
+    - Approve (Review -> Done or Review -> Reschedule): allowed only for subtask.created_by
+    - Manager override: can_manage_task() users who aren't the creator can still act, logged as override
     """
     subtask = await _get_subtask_or_404_with_loads(db, subtask_id)
 
     # Check if user is an assignee
     is_assignee = any(sa.user_id == current_user.id for sa in subtask.assignees)
 
-    # Check if user has management authority (task lead, project lead, or project:manage with scope)
+    # Check if user is the creator
+    is_creator = current_user.id == subtask.created_by
+
+    # Check if user has management authority
     has_management_authority = can_manage_task(current_user, subtask.task)
 
-    # Determine what transitions are allowed based on user role
-    if is_assignee and not has_management_authority:
-        # Assignees can only submit: To Do or Reschedule → Review
-        if subtask.status not in ("To Do", "Reschedule"):
-            raise HTTPException(
-                status_code=403,
-                detail="Assignees can only submit subtasks for review when they are in To Do or Reschedule status"
-            )
-        if payload.status != "Review":
-            raise HTTPException(
-                status_code=403,
-                detail="Assignees can only submit subtasks for review (set status to Review)"
-            )
-    elif has_management_authority:
-        # Task lead, project lead, or project:manage can approve (Review → Done) or send back (Review → Reschedule)
-        if subtask.status != "Review":
-            raise HTTPException(
-                status_code=403,
-                detail="Only subtasks in Review status can be approved or sent back"
-            )
-        if payload.status not in ("Done", "Reschedule"):
-            raise HTTPException(
-                status_code=403,
-                detail="Managers can only approve (set to Done) or send back (set to Reschedule) subtasks in Review"
-            )
+    # Determine if this is a manager override (has authority but is not the creator)
+    is_manager_override = has_management_authority and not is_creator
+
+    # Handle submit transition (To Do/Reschedule -> Review)
+    if subtask.status in ("To Do", "Reschedule") and payload.status == "Review":
+        if not is_assignee:
+            if is_manager_override:
+                print(f"status changed by non-owner {current_user.id} via manager override")
+            else:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only subtask assignees can submit it for review"
+                )
+
+    # Handle approve transitions (Review -> Done or Review -> Reschedule)
+    elif subtask.status == "Review" and payload.status in ("Done", "Reschedule"):
+        if not is_creator:
+            if is_manager_override:
+                print(f"status changed by non-owner {current_user.id} via manager override")
+            else:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only the subtask's creator can approve it or send it back"
+                )
+
+    # Reject any other transition
     else:
-        # User is neither an assignee nor has management authority
+        valid_transitions = []
+        if subtask.status in ("To Do", "Reschedule"):
+            valid_transitions.append("Review (by assignee)")
+        if subtask.status == "Review":
+            valid_transitions.append("Done (by creator)")
+            valid_transitions.append("Reschedule (by creator)")
         raise HTTPException(
             status_code=403,
-            detail="You do not have permission to change this subtask's status"
+            detail=f"Invalid transition. From {subtask.status}, valid transitions are: {', '.join(valid_transitions)}"
         )
 
+    old_status = subtask.status
     subtask.status = payload.status
+    await log_activity(db, current_user.id, "subtask_status_changed", "subtask", subtask.id, detail=f"{old_status} -> {payload.status}")
     await db.commit()
     await db.refresh(subtask)
+
+    # Send notifications based on status change
+    if payload.status == "Review":
+        background_tasks.add_task(notification_dispatch.notify_subtask_submitted_for_review, subtask.id)
+    elif payload.status == "Reschedule":
+        background_tasks.add_task(notification_dispatch.notify_subtask_rescheduled, subtask.id)
+    elif payload.status == "Done":
+        background_tasks.add_task(notification_dispatch.notify_subtask_done, subtask.id)
 
     subtask_with_loads = await _get_subtask_or_404_with_loads(db, subtask.id)
     return _subtask_to_out(subtask_with_loads)
@@ -276,6 +372,7 @@ async def update_subtask_status(
 async def update_subtask_assignees(
     subtask_id: int,
     payload: SubtaskAssigneeUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -310,6 +407,8 @@ async def update_subtask_assignees(
 
     await db.commit()
     await db.refresh(subtask)
+
+    background_tasks.add_task(notification_dispatch.notify_subtask_assigned, subtask.id)
 
     subtask_with_loads = await _get_subtask_or_404_with_loads(db, subtask.id)
     return _subtask_to_out(subtask_with_loads)

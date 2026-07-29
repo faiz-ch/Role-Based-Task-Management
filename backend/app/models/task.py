@@ -54,7 +54,7 @@ class Task(Base):
 
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     assigned_to = Column(Integer, ForeignKey("users.id"), nullable=True)
-    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True)
     lead_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     team_approved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     team_approved_at = Column(DateTime(timezone=True), nullable=True)

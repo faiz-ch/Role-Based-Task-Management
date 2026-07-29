@@ -18,8 +18,10 @@ class Settings(BaseSettings):
     ENV: str = "development"
     GOTENBERG_URL: str = "http://localhost:3000"
     SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
     EMAIL_ADDRESS: str = ""
     EMAIL_PASSWORD: str = ""
+    EMAIL_REPLY_TO: str = ""
     FRONTEND_URL: str = "http://localhost:5173"
 
     class Config:

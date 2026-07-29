@@ -11,7 +11,7 @@ import {
   assignTask,
   deleteTask,
 } from "../api/tasks";
-import { getProjects } from "../api/projects";
+import { getProjects, getProjectCandidates } from "../api/projects";
 import { getUsers } from "../api/users";
 import { getDepartments } from "../api/departments";
 import { Av } from "../components/Av";
@@ -66,6 +66,7 @@ export function TasksPage() {
   const [users, setUsers] = useState<UserType[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [projectCandidates, setProjectCandidates] = useState<UserType[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -216,7 +217,7 @@ export function TasksPage() {
     });
   }
 
-  function openNew() {
+  async function openNew() {
     setForm({
       title: "",
       description: "",
@@ -225,6 +226,7 @@ export function TasksPage() {
       projectId: 0,
       assigneeId: null,
     });
+    setProjectCandidates([]);
     setShowNew(true);
   }
 
@@ -624,8 +626,20 @@ export function TasksPage() {
             <FldSelect
               label="Project"
               value={form.projectId.toString()}
-              onChange={(e) => {
-                setForm((f) => ({ ...f, projectId: Number(e.target.value) }));
+              onChange={async (e) => {
+                const newProjectId = Number(e.target.value);
+                setForm((f) => ({ ...f, projectId: newProjectId }));
+                if (newProjectId > 0) {
+                  try {
+                    const candidates = await getProjectCandidates(newProjectId);
+                    setProjectCandidates(candidates);
+                  } catch (err) {
+                    console.error("Failed to load project candidates:", err);
+                    setProjectCandidates([]);
+                  }
+                } else {
+                  setProjectCandidates([]);
+                }
               }}
               options={[
                 { value: "0", label: "Select project" },
@@ -664,7 +678,7 @@ export function TasksPage() {
               }}
               options={[
                 { value: "", label: "Auto-assign to you" },
-                ...users.map((u) => ({ value: u.id, label: u.name })),
+                ...(form.projectId > 0 ? projectCandidates : users).map((u) => ({ value: u.id, label: u.name })),
               ]}
             />
           </div>

@@ -8,7 +8,7 @@ from app.database import get_db
 from app.models.role import Role, Permission
 from app.models.category import Category
 from app.models.user import User
-from app.schemas.role import RoleCreate, RoleOut, SetRoleCategoryRequest, SetRoleNotificationsRequest, PermissionOut
+from app.schemas.role import RoleCreate, RoleOut, SetRoleCategoryRequest, PermissionOut
 
 router = APIRouter(prefix="/roles", tags=["roles"])
 
@@ -42,10 +42,6 @@ async def create_role(
         name=payload.name, 
         category_id=payload.category_id,
         all_departments=payload.all_departments,
-        notify_on_assign=payload.notify_on_assign,
-        notify_on_review=payload.notify_on_review,
-        notify_on_reschedule=payload.notify_on_reschedule,
-        notify_on_done=payload.notify_on_done,
     )
     db.add(role)
     await db.commit()
@@ -186,39 +182,6 @@ async def set_role_assignable_categories(
 
     await db.commit()
     # Re-fetch to ensure relationships are loaded
-    result = await db.execute(
-        select(Role).options(
-            selectinload(Role.category).selectinload(Category.permissions),
-            selectinload(Role.departments),
-            selectinload(Role.assignable_categories).selectinload(Category.permissions)
-        ).where(Role.id == role_id)
-    )
-    return result.scalar_one()
-
-@router.patch("/{role_id}/notifications", response_model=RoleOut)
-async def set_role_notifications(
-    role_id: int,
-    payload: SetRoleNotificationsRequest,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_permission("role:manage")),
-):
-    result = await db.execute(
-        select(Role).options(
-            selectinload(Role.category).selectinload(Category.permissions),
-            selectinload(Role.departments),
-            selectinload(Role.assignable_categories).selectinload(Category.permissions)
-        ).where(Role.id == role_id)
-    )
-    role = result.scalar_one_or_none()
-    if role is None:
-        raise HTTPException(status_code=404, detail="Role not found")
-
-    role.notify_on_assign = payload.notify_on_assign
-    role.notify_on_review = payload.notify_on_review
-    role.notify_on_reschedule = payload.notify_on_reschedule
-    role.notify_on_done = payload.notify_on_done
-
-    await db.commit()
     result = await db.execute(
         select(Role).options(
             selectinload(Role.category).selectinload(Category.permissions),

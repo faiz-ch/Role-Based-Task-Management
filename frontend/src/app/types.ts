@@ -21,10 +21,6 @@ export interface Role {
   allDepartments: boolean;
   departments: Department[];
   assignableCategories: Category[];
-  notifyOnAssign: boolean;
-  notifyOnReview: boolean;
-  notifyOnReschedule: boolean;
-  notifyOnDone: boolean;
 }
 
 export interface UserType {

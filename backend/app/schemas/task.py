@@ -11,7 +11,7 @@ class TaskCreate(BaseModel):
     description: str | None = None
     priority: TaskPriority = TaskPriority.MEDIUM
     due_date: datetime | None = None
-    project_id: int
+    project_id: int | None = None
     assigned_to: int | None = None
 
 
@@ -24,13 +24,11 @@ class TaskUpdate(BaseModel):
 
 class TaskStatusUpdate(BaseModel):
     status: TaskStatus
+    due_date: datetime | None = None
 
 
 class TaskAssignRequest(BaseModel):
     assigned_to: int | None = None
-
-class RescheduleRequest(BaseModel):
-    new_due_date: datetime
 
 
 class TaskTeamUpdate(BaseModel):
@@ -60,7 +58,7 @@ class TaskOut(BaseModel):
     created_at: datetime
     created_by: int
     assigned_to: int | None
-    project_id: int
+    project_id: int | None
     lead_id: int | None
     team_approved_by: int | None
     team_approved_at: datetime | None

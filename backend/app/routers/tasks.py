@@ -6,27 +6,31 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Backgro
 from fastapi.responses import FileResponse, Response
 from app.services.conversion import convert_to_pdf
 from app.services import notification_dispatch
+from app.services.activity_log import log_activity
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import require_permission, get_current_user, has_permission, get_scoped_department_ids, can_view_task, can_manage_task, can_edit_delete_task, can_create_task_in_project, is_project_lead, is_task_lead, get_assignable_user_pool
+from app.core.deps import require_permission, get_current_user, has_permission, get_scoped_department_ids, can_view_task, can_manage_task, can_edit_delete_task, can_create_task_in_project, is_project_lead, is_task_lead
 from app.database import get_db
 from app.models.task import Task, TaskStatus, TaskTeam
 from app.models.attachment import Attachment
 from app.models.user import User
 from app.models.project import Project
 from app.models.report import Report
+from app.models.activity_log import ActivityLog
+from app.models.comment import Comment
 from app.schemas.task import (
     TaskCreate,
     TaskUpdate,
     TaskOut,
     TaskStatusUpdate,
     TaskAssignRequest,
-    RescheduleRequest,
     TaskTeamUpdate,
     AttachmentOut,
 )
 from app.schemas.report import ReportCreate, ReportOut
+from app.schemas.activity_log import ActivityLogOut
+from app.schemas.comment import CommentCreate, CommentOut
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 UPLOAD_DIR = "uploads"  # relative to backend/ — where uploaded files actually live on disk
@@ -87,6 +91,72 @@ async def get_task(
     return _task_to_out(task)
 
 
+@router.get("/{task_id}/activity", response_model=list[ActivityLogOut])
+async def get_task_activity(
+    task_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get activity log for a task. Uses same view permission as get_task."""
+    task = await _get_task_or_404_with_loads(db, task_id)
+    if not can_view_task(current_user, task):
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Load activity logs for this task
+    result = await db.execute(
+        select(ActivityLog)
+        .where(ActivityLog.entity_type == "task", ActivityLog.entity_id == task_id)
+        .order_by(ActivityLog.created_at.desc())
+    )
+    logs = result.scalars().all()
+    return logs
+
+
+@router.post("/{task_id}/comments", response_model=CommentOut, status_code=201)
+async def create_task_comment(
+    task_id: int,
+    payload: CommentCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Add a comment to a task. Gated by can_view_task (if you can see it, you can comment on it)."""
+    task = await _get_task_or_404_with_loads(db, task_id)
+    if not can_view_task(current_user, task):
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    comment = Comment(
+        author_id=current_user.id,
+        entity_type="task",
+        entity_id=task_id,
+        content=payload.content,
+    )
+    db.add(comment)
+    await log_activity(db, current_user.id, "comment_added", "task", task_id, detail=payload.content[:100])
+    await db.commit()
+    await db.refresh(comment)
+    return comment
+
+
+@router.get("/{task_id}/comments", response_model=list[CommentOut])
+async def get_task_comments(
+    task_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get all comments for a task, ordered by created_at ascending (oldest first). Gated by can_view_task."""
+    task = await _get_task_or_404_with_loads(db, task_id)
+    if not can_view_task(current_user, task):
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    result = await db.execute(
+        select(Comment)
+        .where(Comment.entity_type == "task", Comment.entity_id == task_id)
+        .order_by(Comment.created_at.asc())
+    )
+    comments = result.scalars().all()
+    return comments
+
+
 @router.post("", response_model=TaskOut, status_code=201)
 async def create_task(
     payload: TaskCreate,
@@ -94,18 +164,6 @@ async def create_task(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Load project and check if user can create tasks in it
-    from sqlalchemy.orm import selectinload
-    project_result = await db.execute(
-        select(Project).options(selectinload(Project.departments)).where(Project.id == payload.project_id)
-    )
-    project = project_result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    if not can_create_task_in_project(current_user, project):
-        raise HTTPException(status_code=403, detail="You can only create tasks in projects you lead")
-
     # Resolve assignee - if not provided, auto-assign to self
     final_assignee_id = payload.assigned_to if payload.assigned_to is not None else current_user.id
 
@@ -114,6 +172,23 @@ async def create_task(
     assignee = assignee_result.scalar_one_or_none()
     if assignee is None:
         raise HTTPException(status_code=404, detail="Assignee user not found")
+
+    # Handle project_id - if provided, check project lead permissions
+    if payload.project_id is not None:
+        from sqlalchemy.orm import selectinload
+        project_result = await db.execute(
+            select(Project).options(selectinload(Project.departments)).where(Project.id == payload.project_id)
+        )
+        project = project_result.scalar_one_or_none()
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        if not can_create_task_in_project(current_user, project):
+            raise HTTPException(status_code=403, detail="You can only create tasks in projects you lead")
+    else:
+        # Standalone task - require project:manage permission
+        if not has_permission(current_user, "project:manage"):
+            raise HTTPException(status_code=403, detail="You need project:manage permission to create standalone tasks")
 
     task = Task(
         title=payload.title,
@@ -127,6 +202,8 @@ async def create_task(
     db.add(task)
     await db.commit()
     await db.refresh(task)
+    await log_activity(db, current_user.id, "task_created", "task", task.id, detail=payload.title)
+    await db.commit()
     background_tasks.add_task(notification_dispatch.notify_task_assigned, task.id)
     task_with_loads = await _get_task_or_404_with_loads(db, task.id)
     return _task_to_out(task_with_loads)
@@ -164,56 +241,93 @@ async def update_task_status(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Status changes are now unified: anyone with can_manage_task can change status.
-    This includes Managers with project:manage, Project Leads, and Task Leads.
-    No separate reviewer concept anymore.
+    Status changes with explicit transition rules:
+    - Submit (To Do/Reschedule -> Review): allowed only for task.assigned_to
+    - Approve (Review -> Done or Review -> Reschedule): allowed only for task.created_by
+    - Manager override: can_manage_task() users who aren't the assignee or creator can still act, logged as override
     """
     from sqlalchemy.orm import selectinload
     task = await _get_task_or_404_with_loads(db, task_id)
 
-    if not can_manage_task(current_user, task):
-        raise HTTPException(status_code=403, detail="You do not have permission to change this task's status")
+    # Check if user is the assignee
+    is_assignee = current_user.id == task.assigned_to
 
+    # Check if user is the creator
+    is_creator = current_user.id == task.created_by
+
+    # Check if user has management authority
+    has_management_authority = can_manage_task(current_user, task)
+
+    # Determine if this is a manager override (has authority but is not the creator)
+    is_manager_override = has_management_authority and not is_creator
+
+    # Handle submit transition (To Do/Reschedule -> Review)
+    if task.status in (TaskStatus.TODO, TaskStatus.RESCHEDULE) and payload.status == TaskStatus.REVIEW:
+        # Check that all subtasks are Done before allowing submission (if task has subtasks)
+        if task.subtasks:
+            incomplete_subtasks = [
+                f"'{subtask.title}' ({subtask.status.value})"
+                for subtask in task.subtasks
+                if subtask.status != "Done"
+            ]
+            if incomplete_subtasks:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot submit for review — the following subtasks are not yet Done: {', '.join(incomplete_subtasks)}."
+                )
+
+        if not is_assignee:
+            if task.assigned_to is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Task has no assignee."
+                )
+            if is_manager_override:
+                print(f"status changed by non-owner {current_user.id} via manager override")
+            else:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only the task's assignee can submit it for review"
+                )
+
+    # Handle approve transitions (Review -> Done or Review -> Reschedule)
+    elif task.status == TaskStatus.REVIEW and payload.status in (TaskStatus.DONE, TaskStatus.RESCHEDULE):
+        if not is_creator:
+            if is_manager_override:
+                print(f"status changed by non-owner {current_user.id} via manager override")
+            else:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only the task's creator can approve it or send it back"
+                )
+
+    # Reject any other transition
+    else:
+        valid_transitions = []
+        if task.status in (TaskStatus.TODO, TaskStatus.RESCHEDULE):
+            valid_transitions.append("Review (by assignee)")
+        if task.status == TaskStatus.REVIEW:
+            valid_transitions.append("Done (by creator)")
+            valid_transitions.append("Reschedule (by creator)")
+        raise HTTPException(
+            status_code=403,
+            detail=f"Invalid transition. From {task.status.value}, valid transitions are: {', '.join(valid_transitions)}"
+        )
+
+    old_status = task.status
     task.status = payload.status
+    # If transitioning to RESCHEDULE and a due_date is provided, update it
+    if payload.status == TaskStatus.RESCHEDULE and payload.due_date is not None:
+        task.due_date = payload.due_date
+    await log_activity(db, current_user.id, "task_status_changed", "task", task.id, detail=f"{old_status.value} -> {payload.status.value}")
     await db.commit()
     await db.refresh(task)
     if payload.status == TaskStatus.REVIEW:
         background_tasks.add_task(notification_dispatch.notify_task_submitted_for_review, task.id)
+    elif payload.status == TaskStatus.RESCHEDULE:
+        background_tasks.add_task(notification_dispatch.notify_task_rescheduled, task.id)
     elif payload.status == TaskStatus.DONE:
         background_tasks.add_task(notification_dispatch.notify_task_done, task.id)
-    task_with_loads = await _get_task_or_404_with_loads(db, task.id)
-    return _task_to_out(task_with_loads)
-
-@router.patch("/{task_id}/reschedule", response_model=TaskOut)
-async def reschedule_task(
-    task_id: int,
-    payload: RescheduleRequest,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    The one and only way a task moves Review -> Reschedule. Separate from
-    update_task_status because this transition requires extra data (the new
-    due date) that the generic status endpoint has no way to carry.
-    """
-    from sqlalchemy.orm import selectinload
-    task = await _get_task_or_404_with_loads(db, task_id)
-
-    if not can_manage_task(current_user, task):
-        raise HTTPException(status_code=403, detail="You do not have permission to reschedule this task")
-
-    if task.status != TaskStatus.REVIEW:
-        raise HTTPException(
-            status_code=400,
-            detail="Only tasks currently in Review can be rescheduled.",
-        )
-
-    task.status = TaskStatus.RESCHEDULE
-    task.due_date = payload.new_due_date
-    await db.commit()
-    await db.refresh(task)
-    background_tasks.add_task(notification_dispatch.notify_task_rescheduled, task.id)
     task_with_loads = await _get_task_or_404_with_loads(db, task.id)
     return _task_to_out(task_with_loads)
 
@@ -263,6 +377,27 @@ async def delete_task(
     if not can_edit_delete_task(current_user, task):
         raise HTTPException(status_code=403, detail="You do not have permission to delete this task")
 
+    # Delete attachments for this task first (no DB-level cascade for attachments)
+    attachments_result = await db.execute(select(Attachment).where(Attachment.task_id == task_id))
+    attachments = attachments_result.scalars().all()
+    for attachment in attachments:
+        # Delete file from disk if it exists
+        try:
+            if os.path.exists(attachment.stored_path):
+                os.remove(attachment.stored_path)
+        except Exception:
+            pass  # Missing file shouldn't fail the request
+        # Delete preview file if it exists
+        if attachment.preview_path:
+            try:
+                if os.path.exists(attachment.preview_path):
+                    os.remove(attachment.preview_path)
+            except Exception:
+                pass  # Missing file shouldn't fail the request
+        # Delete from database
+        await db.delete(attachment)
+
+    await log_activity(db, current_user.id, "task_deleted", "task", task_id, detail=task.title)
     await db.delete(task)
     await db.commit()
 
@@ -278,6 +413,7 @@ async def update_task_team(
     # Load task with project.team_members for validation
     result = await db.execute(
         select(Task).options(
+            selectinload(Task.assignee),
             selectinload(Task.project).selectinload(Project.departments),
             selectinload(Task.project).selectinload(Project.team_members),
             selectinload(Task.team_members),
@@ -286,6 +422,13 @@ async def update_task_team(
     task = result.scalar_one_or_none()
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
+
+    # Standalone tasks cannot have team members (no project to draw from)
+    if task.project_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot assign team members to standalone tasks (tasks without a project)"
+        )
 
     # Only the task's PROJECT lead can assign its team
     if not is_project_lead(current_user, task.project):
@@ -318,6 +461,14 @@ async def update_task_team(
                 detail="Lead must be a member of the project team"
             )
 
+    # Check if the current assignee is in the new team
+    if task.assigned_to is not None and task.assigned_to not in payload.user_ids:
+        assignee_name = task.assignee.name if task.assignee else "unknown"
+        raise HTTPException(
+            status_code=400,
+            detail=f"The task's current assignee ({assignee_name}) is not in the submitted team — either include them or reassign the task first."
+        )
+
     # Delete existing team members
     await db.execute(
         delete(TaskTeam).where(TaskTeam.task_id == task_id)
@@ -340,6 +491,7 @@ async def update_task_team(
     task.team_approved_by = current_user.id
     task.team_approved_at = datetime.now(timezone.utc)
 
+    await log_activity(db, current_user.id, "task_team_updated", "task", task_id, detail=f"Team updated: {len(payload.user_ids)} members")
     await db.commit()
     await db.refresh(task)
 
@@ -362,6 +514,7 @@ async def _get_task_or_404_with_loads(db: AsyncSession, task_id: int) -> Task:
         select(Task).options(
             selectinload(Task.project).selectinload(Project.departments),
             selectinload(Task.team_members),
+            selectinload(Task.subtasks),
         ).where(Task.id == task_id)
     )
     task = result.scalar_one_or_none()

@@ -83,6 +83,7 @@ export function ProjectDetailPage() {
     description: "",
     priority: "Medium",
     dueDate: "",
+    assigneeId: null as number | null,
     selectedTeamIds: [] as number[],
     selectedLeadId: "" as string,
   });
@@ -165,6 +166,7 @@ export function ProjectDetailPage() {
         priority: taskForm.priority,
         dueDate: taskForm.dueDate,
         projectId: project.id,
+        assigneeId: taskForm.assigneeId,
       };
       const newTask = await createTask(taskData);
       setTasks((prev) => [...prev, newTask]);
@@ -188,6 +190,7 @@ export function ProjectDetailPage() {
         description: "",
         priority: "Medium",
         dueDate: "",
+        assigneeId: null,
         selectedTeamIds: [],
         selectedLeadId: "",
       });
@@ -254,12 +257,36 @@ export function ProjectDetailPage() {
   }
 
   function toggleTaskTeamMember(userId: number) {
-    setTaskForm((prev) => ({
-      ...prev,
-      selectedTeamIds: prev.selectedTeamIds.includes(userId)
+    setTaskForm((prev) => {
+      const newTeamIds = prev.selectedTeamIds.includes(userId)
         ? prev.selectedTeamIds.filter((id) => id !== userId)
-        : [...prev.selectedTeamIds, userId],
-    }));
+        : [...prev.selectedTeamIds, userId];
+      
+      // If user unchecks the current assignee (who is also the lead), reset both
+      if (prev.assigneeId === userId && prev.selectedLeadId === userId.toString()) {
+        return {
+          ...prev,
+          selectedTeamIds: newTeamIds,
+          assigneeId: null,
+          selectedLeadId: "",
+        };
+      }
+      
+      return { ...prev, selectedTeamIds: newTeamIds };
+    });
+  }
+
+  function openNewTask() {
+    setTaskForm({
+      title: "",
+      description: "",
+      priority: "Medium",
+      dueDate: "",
+      assigneeId: null,
+      selectedTeamIds: [],
+      selectedLeadId: "",
+    });
+    setShowNewTask(true);
   }
 
   function openEditProject() {
@@ -368,7 +395,7 @@ export function ProjectDetailPage() {
               <h2 className="text-sm font-semibold text-foreground">Tasks</h2>
               {currentUser?.id === project?.leadId && (
                 <button
-                  onClick={() => setShowNewTask(true)}
+                  onClick={openNewTask}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
                 >
                   <Plus size={12} /> New Task
@@ -597,7 +624,18 @@ export function ProjectDetailPage() {
               <FldSelect
                 label="Select Task Lead"
                 value={taskForm.selectedLeadId}
-                onChange={(e) => setTaskForm((f) => ({ ...f, selectedLeadId: e.target.value }))}
+                onChange={(e) => {
+                  const leadId = e.target.value;
+                  const leadIdNum = leadId === "" ? null : Number(leadId);
+                  setTaskForm((prev) => ({
+                    ...prev,
+                    selectedLeadId: leadId,
+                    assigneeId: leadIdNum,
+                    selectedTeamIds: leadIdNum && !prev.selectedTeamIds.includes(leadIdNum)
+                      ? [...prev.selectedTeamIds, leadIdNum]
+                      : prev.selectedTeamIds,
+                  }));
+                }}
                 options={[
                   { value: "", label: "Select lead" },
                   ...teamMembers
