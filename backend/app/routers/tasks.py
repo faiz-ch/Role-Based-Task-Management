@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse, Response
 from app.services.conversion import convert_to_pdf
 from app.services import notification_dispatch
 from app.services.activity_log import log_activity
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import require_permission, get_current_user, has_permission, get_scoped_department_ids, can_view_task, can_manage_task, can_edit_delete_task, can_create_task_in_project, is_project_lead, is_task_lead
@@ -277,15 +277,15 @@ async def update_task_status(
                 )
 
         # Check for required report and attachment before allowing submission
-        report_result = await db.execute(
-            select(Report).where(Report.task_id == task_id)
+        report_count_result = await db.execute(
+            select(func.count()).select_from(Report).where(Report.task_id == task_id)
         )
-        has_report = report_result.scalar_one_or_none() is not None
+        has_report = report_count_result.scalar() > 0
 
-        attachment_result = await db.execute(
-            select(Attachment).where(Attachment.task_id == task_id)
+        attachment_count_result = await db.execute(
+            select(func.count()).select_from(Attachment).where(Attachment.task_id == task_id)
         )
-        has_attachment = attachment_result.scalar_one_or_none() is not None
+        has_attachment = attachment_count_result.scalar() > 0
 
         if not has_report and not has_attachment:
             raise HTTPException(

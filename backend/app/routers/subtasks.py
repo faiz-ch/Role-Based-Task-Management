@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.responses import FileResponse
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 import os
@@ -293,15 +293,15 @@ async def update_subtask_status(
     # Handle submit transition (To Do/Reschedule -> Review)
     if subtask.status in ("To Do", "Reschedule") and payload.status == "Review":
         # Check for required report and attachment before allowing submission
-        report_result = await db.execute(
-            select(Report).where(Report.subtask_id == subtask_id)
+        report_count_result = await db.execute(
+            select(func.count()).select_from(Report).where(Report.subtask_id == subtask_id)
         )
-        has_report = report_result.scalar_one_or_none() is not None
+        has_report = report_count_result.scalar() > 0
 
-        attachment_result = await db.execute(
-            select(Attachment).where(Attachment.subtask_id == subtask_id)
+        attachment_count_result = await db.execute(
+            select(func.count()).select_from(Attachment).where(Attachment.subtask_id == subtask_id)
         )
-        has_attachment = attachment_result.scalar_one_or_none() is not None
+        has_attachment = attachment_count_result.scalar() > 0
 
         if not has_report and not has_attachment:
             raise HTTPException(
