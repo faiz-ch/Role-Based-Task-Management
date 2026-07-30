@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router";
-import { ArrowLeft, AlertTriangle, Plus, Image, FileText, X, Trash2, Users, Edit2 } from "lucide-react";
+import { ArrowLeft, AlertTriangle, Plus, Image, FileText, X, Trash2, Users, Edit2, Paperclip, MessageCircle } from "lucide-react";
 import { Task, UserType, Department, Project, Subtask } from "../types";
 import { getTask, updateTaskStatus, updateTaskTeam, updateTask, deleteTask } from "../api/tasks";
 import { getSubtasks, createSubtask, updateSubtask, updateSubtaskStatus, updateSubtaskAssignees, deleteSubtask } from "../api/subtasks";
@@ -8,8 +8,9 @@ import { getUsers } from "../api/users";
 import { getDepartments } from "../api/departments";
 import { getProject, getProjectCandidates } from "../api/projects";
 import { uploadAttachment, getAttachments, getAttachmentDownloadUrl, fetchAttachmentBlobUrl, fetchAttachmentPreviewBlobUrl, deleteAttachment, Attachment } from "../api/attachments";
-import { getTaskReports, createTaskReport, Report } from "../api/reports";
-import { getTaskComments, createTaskComment, Comment } from "../api/comments";
+import { getTaskReports, createTaskReport, Report, getSubtaskReports } from "../api/reports";
+import { getSubtaskAttachments } from "../api/attachments";
+import { getTaskComments, Comment } from "../api/comments";
 import { useAuth } from "../context/AuthContext";
 import { StatusBadge } from "../components/StatusBadge";
 import { PriBadge } from "../components/PriBadge";
@@ -54,17 +55,20 @@ export function TaskDetailPage() {
   const [selectedLeadId, setSelectedLeadId] = useState<string>("");
   const [selectedTeamIds, setSelectedTeamIds] = useState<number[]>([]);
   const [showReschedule, setShowReschedule] = useState(false);
+  const [showApproveComment, setShowApproveComment] = useState(true);
   const [rescheduleDate, setRescheduleDate] = useState("");
   const [rescheduleLoading, setRescheduleLoading] = useState(false);
+  const [approveComment, setApproveComment] = useState("");
+  const [rescheduleComment, setRescheduleComment] = useState("");
   const [showNewSubtask, setShowNewSubtask] = useState(false);
   const [showEditTask, setShowEditTask] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showNewReport, setShowNewReport] = useState(false);
   const [reportContent, setReportContent] = useState("");
   const [reports, setReports] = useState<Report[]>([]);
-  const [showNewComment, setShowNewComment] = useState(false);
-  const [commentContent, setCommentContent] = useState("");
   const [comments, setComments] = useState<Comment[]>([]);
+  const [subtaskReports, setSubtaskReports] = useState<Record<number, Report[]>>({});
+  const [subtaskAttachments, setSubtaskAttachments] = useState<Record<number, Attachment[]>>({});
   const [editTaskForm, setEditTaskForm] = useState({
     title: "",
     description: "",
@@ -74,6 +78,14 @@ export function TaskDetailPage() {
   const [editSubtask, setEditSubtask] = useState<Subtask | null>(null);
   const [showReassignSubtask, setShowReassignSubtask] = useState<Subtask | null>(null);
   const [reassignUserIds, setReassignUserIds] = useState<number[]>([]);
+  const [showSubtaskApproveDialog, setShowSubtaskApproveDialog] = useState<Subtask | null>(null);
+  const [subtaskApproveComment, setSubtaskApproveComment] = useState("");
+  const [showSubtaskRescheduleDialog, setShowSubtaskRescheduleDialog] = useState<Subtask | null>(null);
+  const [subtaskRescheduleComment, setSubtaskRescheduleComment] = useState("");
+  const [teamMemberSearch, setTeamMemberSearch] = useState("");
+  const [subtaskAssigneeSearch, setSubtaskAssigneeSearch] = useState("");
+  const [reassignUserSearch, setReassignUserSearch] = useState("");
+  const [activeTab, setActiveTab] = useState<"overview" | "subtasks">("overview");
   const [subtaskForm, setSubtaskForm] = useState({
     title: "",
     description: "",
@@ -128,6 +140,30 @@ export function TaskDetailPage() {
           try {
             const subtasksData = await getSubtasks(taskResult.value.id);
             setSubtasks(subtasksData);
+
+            // Load reports and attachments for each subtask
+            const reportsMap: Record<number, Report[]> = {};
+            const attachmentsMap: Record<number, Attachment[]> = {};
+            await Promise.all(
+              subtasksData.map(async (subtask) => {
+                try {
+                  const subtaskReportsData = await getSubtaskReports(subtask.id);
+                  reportsMap[subtask.id] = subtaskReportsData;
+                } catch (err) {
+                  console.error(`Failed to load reports for subtask ${subtask.id}:`, err);
+                  reportsMap[subtask.id] = [];
+                }
+                try {
+                  const subtaskAttachmentsData = await getSubtaskAttachments(subtask.id);
+                  attachmentsMap[subtask.id] = subtaskAttachmentsData;
+                } catch (err) {
+                  console.error(`Failed to load attachments for subtask ${subtask.id}:`, err);
+                  attachmentsMap[subtask.id] = [];
+                }
+              })
+            );
+            setSubtaskReports(reportsMap);
+            setSubtaskAttachments(attachmentsMap);
           } catch (err) {
             console.error("Failed to load subtasks:", err);
           }
@@ -229,10 +265,15 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
 
   async function handleApprove() {
     if (!task) return;
+    if (!approveComment.trim()) {
+      setError("A comment is required when approving a task.");
+      return;
+    }
     try {
       setError(null);
-      const updated = await updateTaskStatus(task.id, "Done");
+      const updated = await updateTaskStatus(task.id, "Done", undefined, approveComment.trim());
       setTask(updated);
+      setApproveComment("");
     } catch (err: any) {
       setError(err?.message || "Failed to approve task");
     }
@@ -240,14 +281,19 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
 
   async function handleReschedule() {
     if (!task || !rescheduleDate) return;
+    if (!rescheduleComment.trim()) {
+      setError("A comment is required when rescheduling a task.");
+      return;
+    }
     try {
       setRescheduleLoading(true);
       setError(null);
       const isoDate = new Date(rescheduleDate).toISOString();
-      const updated = await updateTaskStatus(task.id, "Reschedule", isoDate);
+      const updated = await updateTaskStatus(task.id, "Reschedule", isoDate, rescheduleComment.trim());
       setTask(updated);
       setShowReschedule(false);
       setRescheduleDate("");
+      setRescheduleComment("");
     } catch (err: any) {
       setError(err?.message || "Failed to reschedule task");
     } finally {
@@ -256,6 +302,7 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
   }
 
   async function handleManageTeam() {
+    setTeamMemberSearch("");
     if (!task) return;
     try {
       setError(null);
@@ -316,10 +363,10 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
     }
   }
 
-  async function handleUpdateSubtaskStatus(subtaskId: number, status: string) {
+  async function handleUpdateSubtaskStatus(subtaskId: number, status: string, comment?: string) {
     try {
       setError(null);
-      const updated = await updateSubtaskStatus(subtaskId, status);
+      const updated = await updateSubtaskStatus(subtaskId, status, comment);
       setSubtasks((prev) => prev.map((s) => (s.id === subtaskId ? updated : s)));
     } catch (err: any) {
       setError(err?.message || "Failed to update subtask status");
@@ -421,6 +468,34 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
     }
   }
 
+  function canSubmitForReview(): boolean {
+    return (
+      currentUser?.id === task?.assigneeId &&
+      (task?.status === "To Do" || task?.status === "Reschedule") &&
+      reports.length > 0 &&
+      attachments.length > 0 &&
+      (subtasks.length === 0 || subtasks.every(s => s.status === "Done"))
+    );
+  }
+
+  function getSubmitDisableReason(): string {
+    if (currentUser?.id !== task?.assigneeId) return "";
+    if (task?.status !== "To Do" && task?.status !== "Reschedule") return "";
+    if (subtasks.length > 0 && !subtasks.every(s => s.status === "Done")) {
+      return "Cannot submit for review — all subtasks must be Done first";
+    }
+    if (reports.length === 0 && attachments.length === 0) {
+      return "Cannot submit for review — both a report and an attachment are required before submitting.";
+    }
+    if (reports.length === 0) {
+      return "Cannot submit for review — a report is required before submitting.";
+    }
+    if (attachments.length === 0) {
+      return "Cannot submit for review — an attachment is required before submitting.";
+    }
+    return "";
+  }
+
   async function handleCreateReport() {
     if (!task || !reportContent.trim()) return;
     try {
@@ -431,19 +506,6 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
       setShowNewReport(false);
     } catch (err: any) {
       setError(err?.message || "Failed to create report");
-    }
-  }
-
-  async function handleCreateComment() {
-    if (!task || !commentContent.trim()) return;
-    try {
-      setError(null);
-      const newComment = await createTaskComment(task.id, { content: commentContent.trim() });
-      setComments([...comments, newComment]);
-      setCommentContent("");
-      setShowNewComment(false);
-    } catch (err: any) {
-      setError(err?.message || "Failed to create comment");
     }
   }
 
@@ -486,278 +548,257 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
         </button>
       </div>
 
-      <div className="flex gap-6">
-        {/* Main content */}
-        <div className="flex-1 space-y-4">
-          {/* Title + status */}
-          <div className="bg-white rounded-xl border border-border p-6">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-3">
-                <h1 className="text-xl font-bold text-foreground">{task.title}</h1>
-                <StatusBadge status={task.status} />
-              </div>
-              {isProjectLeadOrManager && (
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={openEditTask}
-                    className="p-1.5 hover:bg-muted rounded transition-colors cursor-pointer"
-                    title="Edit task"
-                  >
-                    <Edit2 size={14} className="text-muted-foreground" />
-                  </button>
-                  <button
-                    onClick={() => setShowDeleteConfirm(true)}
-                    className="p-1.5 hover:bg-red-50 rounded transition-colors cursor-pointer"
-                    title="Delete task"
-                  >
-                    <Trash2 size={14} className="text-red-400" />
-                  </button>
+      {/* Tab switcher */}
+      <div className="mb-6">
+        <div className="flex gap-2 border-b border-border">
+          <button
+            onClick={() => setActiveTab("overview")}
+            className={`px-4 py-2 text-sm font-medium transition-colors cursor-pointer border-b-2 ${
+              activeTab === "overview"
+                ? "border-blue-600 text-blue-600"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Overview
+          </button>
+          <button
+            onClick={() => setActiveTab("subtasks")}
+            className={`px-4 py-2 text-sm font-medium transition-colors cursor-pointer border-b-2 ${
+              activeTab === "subtasks"
+                ? "border-blue-600 text-blue-600"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Subtasks
+          </button>
+        </div>
+      </div>
+
+      {activeTab === "overview" && (
+        <div className="flex gap-6">
+          {/* Main content */}
+          <div className="flex-1 space-y-4">
+            {/* Title + status */}
+            <div className="bg-white rounded-xl border border-border p-6">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-3">
+                  <h1 className="text-xl font-bold text-foreground">{task.title}</h1>
+                  <StatusBadge status={task.status} />
+                  {currentUser?.id === task?.assigneeId && (task.status === "To Do" || task.status === "Reschedule") ? (
+                    canSubmitForReview() ? (
+                      <button
+                        onClick={handleSubmitForReview}
+                        className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+                      >
+                        Submit for review
+                      </button>
+                    ) : (
+                      <button
+                        disabled
+                        className="px-4 py-2 bg-gray-300 text-gray-500 text-sm font-semibold rounded-lg cursor-not-allowed"
+                        title={getSubmitDisableReason()}
+                      >
+                        Submit for review
+                      </button>
+                    )
+                  ) : null}
                 </div>
-              )}
+                {isProjectLeadOrManager && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={openEditTask}
+                      className="p-1.5 hover:bg-muted rounded transition-colors cursor-pointer"
+                      title="Edit task"
+                    >
+                      <Edit2 size={14} className="text-muted-foreground" />
+                    </button>
+                    <button
+                      onClick={() => setShowDeleteConfirm(true)}
+                      className="p-1.5 hover:bg-red-50 rounded transition-colors cursor-pointer"
+                      title="Delete task"
+                    >
+                      <Trash2 size={14} className="text-red-400" />
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
 
           {/* Description */}
-          <div className="bg-white rounded-xl border border-border p-6">
-            <h2 className="text-sm font-semibold text-foreground mb-3">Description</h2>
-            {task.description ? (
+          {task.description ? (
+            <div className="bg-white rounded-xl border border-border p-4">
+              <h2 className="text-sm font-semibold text-foreground mb-3">Description</h2>
               <p className="text-sm text-muted-foreground whitespace-pre-wrap">{task.description}</p>
-            ) : (
-              <p className="text-sm text-muted-foreground italic">No description</p>
-            )}
-          </div>
-
-          {/* Attachments */}
-          <div className="bg-white rounded-xl border border-border p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-foreground">Attachments</h2>
-              {canManageTask() && (
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploading}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {uploading ? (
-                    <>
-                      <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white" />
-                      Uploading...
-                    </>
-                  ) : (
-                    <>
-                      <Plus size={12} /> Add file
-                    </>
-                  )}
-                </button>
-              )}
-              <input
-                ref={fileInputRef}
-                type="file"
-                onChange={handleFileUpload}
-                className="hidden"
-              />
             </div>
-            {attachments.length === 0 ? (
-              <div className="text-sm text-muted-foreground text-center py-8">
-                No attachments yet
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {attachments.map((attachment) => {
-                  const uploader = users.find((u) => u.id === attachment.uploadedBy);
-                  return (
-                    <div
-                      key={attachment.id}
-                      onClick={() => handleAttachmentClick(attachment)}
-                      className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-muted/40 transition-colors cursor-pointer"
-                    >
-                      {attachment.contentType.startsWith("image/") ? (
-                        <Image size={16} className="text-muted-foreground flex-shrink-0" />
-                      ) : (
-                        <FileText size={16} className="text-muted-foreground flex-shrink-0" />
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-foreground truncate">{attachment.filename}</p>
-                        <p className="text-xs text-muted-foreground">
-                          Uploaded by {uploader?.name || "Unknown"} · {formatFileSize(attachment.sizeBytes)}
-                        </p>
-                      </div>
-                      {canDeleteAttachments && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteAttachment(attachment.id);
-                          }}
-                          className="p-1.5 hover:bg-red-50 rounded transition-colors cursor-pointer"
-                          title="Delete attachment"
-                        >
-                          <Trash2 size={14} className="text-red-400" />
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Subtasks */}
-          <div className="bg-white rounded-xl border border-border p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-foreground">Subtasks</h2>
-              {(currentUser?.id === task?.leadId || currentUser?.id === project?.leadId || canManage) && (
-                <button
-                  onClick={() => setShowNewSubtask(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
-                >
-                  <Plus size={12} /> New Subtask
-                </button>
-              )}
+          ) : (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
+              <FileText size={12} />
+              <span>No description</span>
             </div>
-            {subtasks.length > 0 && (
-              <div className="mb-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-muted-foreground">Progress</span>
-                  <span className="text-xs text-muted-foreground">
-                    {subtasks.filter((s) => s.status === "Done").length} of {subtasks.length} subtasks done · {Math.round((subtasks.filter((s) => s.status === "Done").length / subtasks.length) * 100)}%
-                  </span>
+          )}
+
+          {/* Attachments and Reports side by side */}
+          <div className="grid grid-cols-2 gap-4">
+            {/* Attachments */}
+            <div className="bg-white rounded-xl border border-border p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Paperclip size={14} className="text-muted-foreground" />
+                  <h2 className="text-sm font-semibold text-foreground">Attachments</h2>
                 </div>
-                <div className="h-2 bg-muted rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-blue-500 transition-all"
-                    style={{
-                      width: `${Math.round((subtasks.filter((s) => s.status === "Done").length / subtasks.length) * 100)}%`,
-                    }}
-                  />
+                {canManageTask() && (
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploading}
+                    className="flex items-center gap-1.5 px-2 py-1 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {uploading ? (
+                      <>
+                        <div className="animate-spin rounded-full h-2 w-2 border-b-2 border-white" />
+                      </>
+                    ) : (
+                      <Plus size={10} />
+                    )}
+                  </button>
+                )}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+              </div>
+              {attachments.length === 0 ? (
+                <div className="text-xs text-muted-foreground text-center py-4">
+                  No attachments yet
                 </div>
-              </div>
-            )}
-            {subtasks.length === 0 ? (
-              <div className="text-sm text-muted-foreground text-center py-8">
-                No subtasks yet
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {subtasks.map((subtask) => {
-                  const assignees = users.filter((u) => subtask.assigneeIds.includes(u.id));
-                  const canManageThis = canManageSubtask(subtask);
-                  const isAssignee = isSubtaskAssignee(subtask);
-                  
-                  return (
-                    <div
-                      key={subtask.id}
-                      onClick={() => navigate(`/subtasks/${subtask.id}`)}
-                      className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-muted/40 transition-colors cursor-pointer"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <p className="text-sm font-medium text-foreground truncate">{subtask.title}</p>
-                          <StatusBadge status={subtask.status} />
-                          <PriBadge priority={subtask.priority} />
+              ) : (
+                <div className="space-y-2">
+                  {attachments.map((attachment) => {
+                    const uploader = users.find((u) => u.id === attachment.uploadedBy);
+                    return (
+                      <div
+                        key={attachment.id}
+                        onClick={() => handleAttachmentClick(attachment)}
+                        className="flex items-center gap-2 p-2 rounded-lg border border-border hover:bg-muted/40 transition-colors cursor-pointer"
+                      >
+                        {attachment.contentType.startsWith("image/") ? (
+                          <Image size={14} className="text-muted-foreground flex-shrink-0" />
+                        ) : (
+                          <FileText size={14} className="text-muted-foreground flex-shrink-0" />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-foreground truncate">{attachment.filename}</p>
+                          <p className="text-[10px] text-muted-foreground">
+                            {uploader?.name || "Unknown"} · {formatFileSize(attachment.sizeBytes)}
+                          </p>
                         </div>
-                        {subtask.dueDate && (
-                          <p className="text-xs text-muted-foreground">{fmtDate(subtask.dueDate)}</p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        {assignees.length > 0 && (
-                          <div className="flex -space-x-2">
-                            {assignees.slice(0, 3).map((a) => (
-                              <Av key={a.id} name={a.name} size="sm" />
-                            ))}
-                            {assignees.length > 3 && (
-                              <span className="w-7 h-7 rounded-full bg-gray-200 text-xs flex items-center justify-center text-gray-600">
-                                +{assignees.length - 3}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                        {isAssignee && (subtask.status === "To Do" || subtask.status === "Reschedule") && (
+                        {attachment.uploadedBy === currentUser?.id && (
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleUpdateSubtaskStatus(subtask.id, "Review");
+                              handleDeleteAttachment(attachment.id);
                             }}
-                            className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors cursor-pointer"
+                            className="p-1 hover:bg-red-50 rounded transition-colors cursor-pointer"
+                            title="Delete attachment"
                           >
-                            Submit
-                          </button>
-                        )}
-                        {canManageTask() && subtask.status === "Review" && (
-                          <div className="flex gap-1">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleUpdateSubtaskStatus(subtask.id, "Done");
-                              }}
-                              className="text-xs px-2 py-1 bg-emerald-600 text-white rounded hover:bg-emerald-700 transition-colors cursor-pointer"
-                            >
-                              Approve
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleUpdateSubtaskStatus(subtask.id, "Reschedule");
-                              }}
-                              className="text-xs px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition-colors cursor-pointer"
-                            >
-                              Send back
-                            </button>
-                          </div>
-                        )}
-                        {!isAssignee && !canManageTask() && (
-                          <StatusBadge status={subtask.status} />
-                        )}
-                        {currentUser?.id === task?.leadId && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setShowReassignSubtask(subtask);
-                              setReassignUserIds(subtask.assigneeIds);
-                            }}
-                            className="p-1.5 hover:bg-muted rounded transition-colors cursor-pointer"
-                            title="Reassign"
-                          >
-                            <Users size={14} className="text-muted-foreground" />
-                          </button>
-                        )}
-                        {canManageTask() && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteSubtask(subtask.id);
-                            }}
-                            className="p-1.5 hover:bg-red-50 rounded transition-colors cursor-pointer"
-                            title="Delete subtask"
-                          >
-                            <Trash2 size={14} className="text-red-400" />
+                            <Trash2 size={12} className="text-red-400" />
                           </button>
                         )}
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Reports */}
+            <div className="bg-white rounded-xl border border-border p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <FileText size={14} className="text-muted-foreground" />
+                  <h2 className="text-sm font-semibold text-foreground">Reports</h2>
+                </div>
+                {currentUser?.id === task?.leadId && (
+                  <button
+                    onClick={() => setShowNewReport(true)}
+                    className="flex items-center gap-1.5 px-2 py-1 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+                  >
+                    <Plus size={10} />
+                  </button>
+                )}
               </div>
-            )}
+              {reports.length === 0 ? (
+                <div className="text-xs text-muted-foreground text-center py-4">
+                  No reports yet
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {reports.map((report) => {
+                    const author = users.find((u) => u.id === report.createdBy);
+                    return (
+                      <div key={report.id} className="border-b border-border pb-2:last:pb-0 last:border-0">
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-1.5">
+                            {author && <Av name={author.name} size="sm" />}
+                            <span className="text-xs font-medium text-foreground">{author?.name || "Unknown"}</span>
+                          </div>
+                          <span className="text-[10px] text-muted-foreground">{fmtDate(report.createdAt)}</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground whitespace-pre-wrap line-clamp-2">{report.content}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Action area */}
-          <div className="bg-white rounded-xl border border-border p-6">
-            {canManageTask() && task.status === "Review" ? (
+          <div className="bg-white rounded-xl border border-border p-4">
+            {currentUser?.id === task?.creatorId && task.status === "Review" ? (
               <div className="space-y-3">
                 <div className="flex gap-2">
                   <button
-                    onClick={handleApprove}
+                    onClick={() => {
+                      setShowApproveComment(true);
+                      setShowReschedule(false);
+                    }}
                     className="flex-1 px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition-colors cursor-pointer"
                   >
                     Approve
                   </button>
                   <button
-                    onClick={() => setShowReschedule(!showReschedule)}
+                    onClick={() => {
+                      setShowReschedule(!showReschedule);
+                      setShowApproveComment(false);
+                    }}
                     className="flex-1 px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors cursor-pointer"
                   >
                     Reschedule
                   </button>
                 </div>
+                {showApproveComment && (
+                  <div className="pt-3 border-t border-border">
+                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">
+                      Comment (required for approval)
+                    </label>
+                    <textarea
+                      value={approveComment}
+                      onChange={(e) => setApproveComment(e.target.value)}
+                      placeholder="Add a comment explaining your approval decision..."
+                      className="w-full p-2 border border-border rounded-lg text-sm resize-none"
+                      rows={2}
+                    />
+                    <button
+                      onClick={handleApprove}
+                      disabled={!approveComment.trim()}
+                      className="mt-2 w-full px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Confirm approval
+                    </button>
+                  </div>
+                )}
                 {showReschedule && (
                   <div className="pt-3 border-t border-border">
                     <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">
@@ -769,9 +810,19 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
                       onChange={(e) => setRescheduleDate(e.target.value)}
                       className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground"
                     />
+                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 mt-3 block">
+                      Comment (required for reschedule)
+                    </label>
+                    <textarea
+                      value={rescheduleComment}
+                      onChange={(e) => setRescheduleComment(e.target.value)}
+                      placeholder="Add a comment explaining why you're rescheduling..."
+                      className="w-full p-2 border border-border rounded-lg text-sm resize-none"
+                      rows={2}
+                    />
                     <button
                       onClick={handleReschedule}
-                      disabled={!rescheduleDate || rescheduleLoading}
+                      disabled={!rescheduleDate || !rescheduleComment.trim() || rescheduleLoading}
                       className="mt-2 w-full px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {rescheduleLoading ? "Confirming..." : "Confirm reschedule"}
@@ -779,23 +830,6 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
                   </div>
                 )}
               </div>
-            ) : currentUser?.id === task?.assigneeId && (task.status === "To Do" || task.status === "Reschedule") ? (
-              subtasks.length === 0 || subtasks.every(s => s.status === "Done") ? (
-                <button
-                  onClick={handleSubmitForReview}
-                  className="w-full px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
-                >
-                  Submit for review
-                </button>
-              ) : (
-                <button
-                  disabled
-                  className="w-full px-4 py-2 bg-gray-300 text-gray-500 text-sm font-semibold rounded-lg cursor-not-allowed"
-                  title="Cannot submit for review — all subtasks must be Done first"
-                >
-                  Submit for review (subtasks incomplete)
-                </button>
-              )
             ) : (
               <div className="text-sm text-muted-foreground text-center">
                 {task.status === "Review" && "Waiting for review."}
@@ -805,100 +839,39 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
             )}
           </div>
 
-          <div className="bg-white rounded-xl border border-border p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-foreground">Reports</h2>
-              {currentUser?.id === task?.leadId && (
-                <button
-                  onClick={() => setShowNewReport(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
-                >
-                  <Plus size={12} /> New Report
-                </button>
-              )}
+          {/* Comments */}
+          <div className="bg-white rounded-xl border border-border p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <MessageCircle size={14} className="text-muted-foreground" />
+                <h2 className="text-sm font-semibold text-foreground">Comments</h2>
+              </div>
             </div>
-            {reports.length === 0 ? (
-              <div className="text-sm text-muted-foreground text-center py-8">
-                No reports yet
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {reports.map((report) => {
-                  const author = users.find((u) => u.id === report.createdBy);
-                  return (
-                    <div key={report.id} className="border-b border-border pb-4:last:pb-0 last:border-0">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          {author && <Av name={author.name} size="sm" />}
-                          <span className="text-sm font-medium text-foreground">{author?.name || "Unknown"}</span>
-                        </div>
-                        <span className="text-xs text-muted-foreground">{fmtDate(report.createdAt)}</span>
-                      </div>
-                      <p className="text-sm text-muted-foreground whitespace-pre-wrap">{report.content}</p>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          <div className="bg-white rounded-xl border border-border p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-foreground">Comments</h2>
-              <button
-                onClick={() => setShowNewComment(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
-              >
-                <Plus size={12} /> New Comment
-              </button>
-            </div>
-            {showNewComment && (
-              <div className="mb-4 p-4 bg-muted rounded-lg">
-                <textarea
-                  value={commentContent}
-                  onChange={(e) => setCommentContent(e.target.value)}
-                  placeholder="Write a comment..."
-                  className="w-full p-2 border border-border rounded-lg text-sm resize-none"
-                  rows={3}
-                />
-                <div className="flex gap-2 mt-2">
-                  <button
-                    onClick={handleCreateComment}
-                    disabled={!commentContent.trim()}
-                    className="px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Post Comment
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowNewComment(false);
-                      setCommentContent("");
-                    }}
-                    className="px-3 py-1.5 bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg hover:bg-gray-300 transition-colors cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
+            <p className="text-[10px] text-muted-foreground mb-3">From approve/reschedule decisions</p>
             {comments.length === 0 ? (
-              <div className="text-sm text-muted-foreground text-center py-8">
+              <div className="text-xs text-muted-foreground text-center py-4">
                 No comments yet
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-3">
                 {comments.map((comment) => {
                   const author = users.find((u) => u.id === comment.authorId);
                   return (
-                    <div key={comment.id} className="border-b border-border pb-4:last:pb-0 last:border-0">
-                      <div className="flex items-center justify-between mb-2">
+                    <div key={comment.id} className="border-b border-border pb-2:last:pb-0 last:border-0">
+                      <div className="flex items-center justify-between mb-1">
                         <div className="flex items-center gap-2">
                           {author && <Av name={author.name} size="sm" />}
-                          <span className="text-sm font-medium text-foreground">{author?.name || "Unknown"}</span>
+                          <span className="text-xs font-medium text-foreground">{author?.name || "Unknown"}</span>
+                          {comment.action === "approved" && (
+                            <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-medium rounded">Approved</span>
+                          )}
+                          {comment.action === "rescheduled" && (
+                            <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-medium rounded">Rescheduled</span>
+                          )}
                         </div>
-                        <span className="text-xs text-muted-foreground">{fmtDate(comment.createdAt)}</span>
+                        <span className="text-[10px] text-muted-foreground">{fmtDate(comment.createdAt)}</span>
                       </div>
-                      <p className="text-sm text-muted-foreground whitespace-pre-wrap">{comment.content}</p>
+                      <p className="text-xs text-muted-foreground whitespace-pre-wrap">{comment.content}</p>
                     </div>
                   );
                 })}
@@ -907,79 +880,174 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
           </div>
         </div>
 
-        {/* Sidebar */}
-        <div className="w-72 space-y-4">
-          <div className="bg-white rounded-xl border border-border p-6">
-            <h2 className="text-sm font-semibold text-foreground mb-4">Details</h2>
-            <div className="space-y-4">
-              <div>
-                <span className="text-xs text-muted-foreground uppercase tracking-wider">Priority</span>
-                <div className="mt-1">
-                  <PriBadge priority={task.priority} />
-                </div>
-              </div>
-              <div>
-                <span className="text-xs text-muted-foreground uppercase tracking-wider">Due Date</span>
-                <p className="text-sm text-foreground mt-1">{fmtDate(task.dueDate)}</p>
-              </div>
-              <div>
-                <span className="text-xs text-muted-foreground uppercase tracking-wider">Project</span>
-                <p className="text-sm text-foreground mt-1">
-                  {project ? project.name : "None"}
-                </p>
-              </div>
-              <div>
-                <span className="text-xs text-muted-foreground uppercase tracking-wider">Task Lead</span>
-                <p className="text-sm text-foreground mt-1">
-                  {taskLead ? taskLead.name : "Unassigned"}
-                </p>
-              </div>
-              <div>
-                <span className="text-xs text-muted-foreground uppercase tracking-wider">Task Team</span>
-                <div className="mt-1">
-                  {teamMembers.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No team members</p>
-                  ) : (
-                    <div className="space-y-1">
-                      {teamMembers.map((member) => (
-                        <div key={member.id} className="text-sm text-foreground">
-                          {member.name}
-                          {member.id === task.leadId && (
-                            <span className="text-xs text-muted-foreground"> (Lead)</span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {currentUser?.id === project?.leadId && (
-                    <button
-                      onClick={() => {
-                        const teamIds = [...(task?.teamUserIds || [])];
-                        // Ensure current assignee is always in the team selection
-                        if (task?.assigneeId && !teamIds.includes(task.assigneeId)) {
-                          teamIds.push(task.assigneeId);
-                        }
-                        setSelectedTeamIds(teamIds);
-                        setSelectedLeadId(task?.leadId?.toString() || "");
-                        setShowManageTeam(true);
-                      }}
-                      className="mt-2 text-xs text-blue-600 hover:text-blue-800 cursor-pointer"
-                    >
-                      Manage Team
-                    </button>
-                  )}
-                </div>
-              </div>
-              {task?.teamApprovedAt && (
+          {/* Sidebar */}
+          <div className="w-72 space-y-4">
+            <div className="bg-white rounded-xl border border-border p-4">
+              <h2 className="text-sm font-semibold text-foreground mb-3">Details</h2>
+              <div className="space-y-3">
                 <div>
-                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Team Approved</span>
-                  <p className="text-sm text-emerald-600 mt-1">{fmtDate(task.teamApprovedAt)}</p>
+                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Priority</span>
+                  <div className="mt-1">
+                    <PriBadge priority={task.priority} />
+                  </div>
                 </div>
-              )}
+                <div>
+                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Due Date</span>
+                  <p className="text-sm text-foreground mt-1">{fmtDate(task.dueDate)}</p>
+                </div>
+                <div>
+                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Project</span>
+                  <p className="text-sm text-foreground mt-1">
+                    {project ? project.name : "None"}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Task Lead</span>
+                  <p className="text-sm text-foreground mt-1">
+                    {taskLead ? taskLead.name : "Unassigned"}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Task Team</span>
+                  <div className="mt-1">
+                    {teamMembers.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No team members</p>
+                    ) : (
+                      <div className="space-y-1">
+                        {teamMembers.map((member) => (
+                          <div key={member.id} className="text-sm text-foreground">
+                            {member.name}
+                            {member.id === task.leadId && (
+                              <span className="text-xs text-muted-foreground"> (Lead)</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {currentUser?.id === project?.leadId && (
+                      <button
+                        onClick={() => {
+                          const teamIds = [...(task?.teamUserIds || [])];
+                          // Ensure current assignee is always in the team selection
+                          if (task?.assigneeId && !teamIds.includes(task.assigneeId)) {
+                            teamIds.push(task.assigneeId);
+                          }
+                          setSelectedTeamIds(teamIds);
+                          setSelectedLeadId(task?.leadId?.toString() || "");
+                          setShowManageTeam(true);
+                        }}
+                        className="mt-2 text-xs text-blue-600 hover:text-blue-800 cursor-pointer"
+                      >
+                        Manage Team
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {task?.teamApprovedAt && (
+                  <div>
+                    <span className="text-xs text-muted-foreground uppercase tracking-wider">Team Approved</span>
+                    <p className="text-sm text-emerald-600 mt-1">{fmtDate(task.teamApprovedAt)}</p>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
+
+      {activeTab === "subtasks" && (
+        <div className="space-y-6">
+          {/* Header with New Subtask button */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <h2 className="text-lg font-semibold text-foreground">Subtasks</h2>
+              {subtasks.length > 0 && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <span>Progress:</span>
+                  <span className="font-medium text-foreground">
+                    {subtasks.filter((s) => s.status === "Done").length} of {subtasks.length} done
+                  </span>
+                  <span className="text-muted-foreground">
+                    ({Math.round((subtasks.filter((s) => s.status === "Done").length / subtasks.length) * 100)}%)
+                  </span>
+                </div>
+              )}
+            </div>
+            {(currentUser?.id === task?.leadId || currentUser?.id === project?.leadId || canManage) && (
+              <button
+                onClick={() => setShowNewSubtask(true)}
+                className="flex items-center gap-1.5 px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+              >
+                <Plus size={14} /> New Subtask
+              </button>
+            )}
+          </div>
+
+          {/* Kanban Board */}
+          {subtasks.length === 0 ? (
+            <div className="bg-white rounded-xl border border-border p-12 text-center">
+              <p className="text-sm text-muted-foreground">No subtasks yet</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-4 gap-4">
+              {["To Do", "Review", "Done", "Reschedule"].map((status) => {
+                const columnSubtasks = subtasks.filter((s) => s.status === status);
+                return (
+                  <div key={status} className="bg-gray-50 rounded-xl p-4">
+                    {/* Column Header */}
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-sm font-semibold text-foreground">{status}</h3>
+                      <span className="px-2 py-0.5 bg-gray-200 text-gray-700 text-xs font-medium rounded-full">
+                        {columnSubtasks.length}
+                      </span>
+                    </div>
+
+                    {/* Column Cards */}
+                    <div className="space-y-3">
+                      {columnSubtasks.map((subtask) => {
+                        const assignees = users.filter((u) => subtask.assigneeIds.includes(u.id));
+                        return (
+                          <div
+                            key={subtask.id}
+                            onClick={() => navigate(`/subtasks/${subtask.id}`)}
+                            className="bg-white rounded-lg border border-border p-4 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+                          >
+                            <div className="flex items-start justify-between mb-2">
+                              <h4 className="text-sm font-medium text-foreground flex-1 pr-2">
+                                {subtask.title}
+                              </h4>
+                              <PriBadge priority={subtask.priority} />
+                            </div>
+                            {assignees.length > 0 && (
+                              <div className="flex items-center gap-1 mt-3">
+                                <div className="flex -space-x-2">
+                                  {assignees.slice(0, 3).map((a) => (
+                                    <Av key={a.id} name={a.name} size="sm" />
+                                  ))}
+                                  {assignees.length > 3 && (
+                                    <span className="w-7 h-7 rounded-full bg-gray-200 text-xs flex items-center justify-center text-gray-600">
+                                      +{assignees.length - 3}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {columnSubtasks.length === 0 && (
+                        <div className="text-center py-8">
+                          <p className="text-xs text-muted-foreground">No subtasks</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {showManageTeam && (
         <Dlg title="Manage Task Team" onClose={() => setShowManageTeam(false)}>
@@ -993,13 +1061,22 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
                   The current assignee must remain in the team. You can reassign the task before changing the team if needed.
                 </p>
               )}
+              <input
+                type="text"
+                placeholder="Search team members..."
+                value={teamMemberSearch}
+                onChange={(e) => setTeamMemberSearch(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 mb-2"
+              />
               <div className="space-y-2 max-h-48 overflow-y-auto">
                 {projectTeamMembers.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-4">
                     No project team members available. Add team members to the project first.
                   </p>
                 ) : (
-                  projectTeamMembers.map((user) => (
+                  projectTeamMembers
+                    .filter((user) => user.name.toLowerCase().includes(teamMemberSearch.toLowerCase()))
+                    .map((user) => (
                     <label
                       key={user.id}
                       className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg hover:bg-muted/30 cursor-pointer"
@@ -1102,13 +1179,22 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">
                 Assignees (from task team)
               </span>
+              <input
+                type="text"
+                placeholder="Search assignees..."
+                value={subtaskAssigneeSearch}
+                onChange={(e) => setSubtaskAssigneeSearch(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 mb-2"
+              />
               <div className="space-y-2 max-h-48 overflow-y-auto">
                 {teamMembers.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-4">
                     No task team members available. Add team members to the task first.
                   </p>
                 ) : (
-                  teamMembers.map((user) => (
+                  teamMembers
+                    .filter((user) => user.name.toLowerCase().includes(subtaskAssigneeSearch.toLowerCase()))
+                    .map((user) => (
                     <label
                       key={user.id}
                       className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg hover:bg-muted/30 cursor-pointer"
@@ -1152,13 +1238,22 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">
                 Assignees (from task team)
               </span>
+              <input
+                type="text"
+                placeholder="Search assignees..."
+                value={reassignUserSearch}
+                onChange={(e) => setReassignUserSearch(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 mb-2"
+              />
               <div className="space-y-2 max-h-48 overflow-y-auto">
                 {teamMembers.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-4">
                     No task team members available. Add team members to the task first.
                   </p>
                 ) : (
-                  teamMembers.map((user) => (
+                  teamMembers
+                    .filter((user) => user.name.toLowerCase().includes(reassignUserSearch.toLowerCase()))
+                    .map((user) => (
                     <label
                       key={user.id}
                       className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg hover:bg-muted/30 cursor-pointer"
@@ -1278,6 +1373,96 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
                 Delete
               </button>
             </div>
+          </div>
+        </Dlg>
+      )}
+
+      {showSubtaskApproveDialog && (
+        <Dlg title="Approve subtask" onClose={() => setShowSubtaskApproveDialog(null)}>
+          <div className="space-y-4">
+            <p className="text-sm text-foreground">
+              Approving this subtask will mark it as Done. Please provide a comment explaining your decision.
+            </p>
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Comment (required)</label>
+              <textarea
+                value={subtaskApproveComment}
+                onChange={(e) => setSubtaskApproveComment(e.target.value)}
+                placeholder="Add a comment explaining your approval decision..."
+                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400 min-h-[120px] resize-y"
+                rows={4}
+                autoFocus
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-border">
+            <button
+              onClick={() => {
+                setShowSubtaskApproveDialog(null);
+                setSubtaskApproveComment("");
+              }}
+              className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                if (showSubtaskApproveDialog && subtaskApproveComment.trim()) {
+                  handleUpdateSubtaskStatus(showSubtaskApproveDialog.id, "Done", subtaskApproveComment.trim());
+                  setShowSubtaskApproveDialog(null);
+                  setSubtaskApproveComment("");
+                }
+              }}
+              disabled={!subtaskApproveComment.trim()}
+              className="px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Approve
+            </button>
+          </div>
+        </Dlg>
+      )}
+
+      {showSubtaskRescheduleDialog && (
+        <Dlg title="Reschedule subtask" onClose={() => setShowSubtaskRescheduleDialog(null)}>
+          <div className="space-y-4">
+            <p className="text-sm text-foreground">
+              Rescheduling this subtask will send it back to the assignee. Please provide a comment explaining why.
+            </p>
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Comment (required)</label>
+              <textarea
+                value={subtaskRescheduleComment}
+                onChange={(e) => setSubtaskRescheduleComment(e.target.value)}
+                placeholder="Add a comment explaining why you're rescheduling..."
+                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400 min-h-[120px] resize-y"
+                rows={4}
+                autoFocus
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-border">
+            <button
+              onClick={() => {
+                setShowSubtaskRescheduleDialog(null);
+                setSubtaskRescheduleComment("");
+              }}
+              className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                if (showSubtaskRescheduleDialog && subtaskRescheduleComment.trim()) {
+                  handleUpdateSubtaskStatus(showSubtaskRescheduleDialog.id, "Reschedule", subtaskRescheduleComment.trim());
+                  setShowSubtaskRescheduleDialog(null);
+                  setSubtaskRescheduleComment("");
+                }
+              }}
+              disabled={!subtaskRescheduleComment.trim()}
+              className="px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Send back
+            </button>
           </div>
         </Dlg>
       )}

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import require_permission, get_current_user, has_permission, get_scoped_department_ids, can_view_task, can_manage_task, can_edit_delete_task, can_create_task_in_project, is_project_lead, is_task_lead
 from app.database import get_db
 from app.models.task import Task, TaskStatus, TaskTeam
+from app.models.subtask import SubTask
 from app.models.attachment import Attachment
 from app.models.user import User
 from app.models.project import Project
@@ -112,31 +113,6 @@ async def get_task_activity(
     return logs
 
 
-@router.post("/{task_id}/comments", response_model=CommentOut, status_code=201)
-async def create_task_comment(
-    task_id: int,
-    payload: CommentCreate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Add a comment to a task. Gated by can_view_task (if you can see it, you can comment on it)."""
-    task = await _get_task_or_404_with_loads(db, task_id)
-    if not can_view_task(current_user, task):
-        raise HTTPException(status_code=404, detail="Task not found")
-
-    comment = Comment(
-        author_id=current_user.id,
-        entity_type="task",
-        entity_id=task_id,
-        content=payload.content,
-    )
-    db.add(comment)
-    await log_activity(db, current_user.id, "comment_added", "task", task_id, detail=payload.content[:100])
-    await db.commit()
-    await db.refresh(comment)
-    return comment
-
-
 @router.get("/{task_id}/comments", response_model=list[CommentOut])
 async def get_task_comments(
     task_id: int,
@@ -164,15 +140,6 @@ async def create_task(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Resolve assignee - if not provided, auto-assign to self
-    final_assignee_id = payload.assigned_to if payload.assigned_to is not None else current_user.id
-
-    # Validate assignee exists
-    assignee_result = await db.execute(select(User).where(User.id == final_assignee_id))
-    assignee = assignee_result.scalar_one_or_none()
-    if assignee is None:
-        raise HTTPException(status_code=404, detail="Assignee user not found")
-
     # Handle project_id - if provided, check project lead permissions
     if payload.project_id is not None:
         from sqlalchemy.orm import selectinload
@@ -185,10 +152,43 @@ async def create_task(
 
         if not can_create_task_in_project(current_user, project):
             raise HTTPException(status_code=403, detail="You can only create tasks in projects you lead")
+        
+        # For project tasks, resolve assignee - if not provided, auto-assign to self
+        final_assignee_id = payload.assigned_to if payload.assigned_to is not None else current_user.id
     else:
-        # Standalone task - require project:manage permission
-        if not has_permission(current_user, "project:manage"):
-            raise HTTPException(status_code=403, detail="You need project:manage permission to create standalone tasks")
+        # Standalone task - apply permission rules
+        if has_permission(current_user, "project:manage"):
+            # project:manage users can assign to anyone within their department scope
+            final_assignee_id = payload.assigned_to if payload.assigned_to is not None else current_user.id
+            
+            # Validate assignee exists and is within scope
+            assignee_result = await db.execute(select(User).where(User.id == final_assignee_id))
+            assignee = assignee_result.scalar_one_or_none()
+            if assignee is None:
+                raise HTTPException(status_code=404, detail="Assignee user not found")
+            
+            # Check if assignee is within user's department scope
+            scoped = get_scoped_department_ids(current_user)
+            if scoped is not None and assignee.department_id not in scoped:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You can only assign standalone tasks to users within your department scope"
+                )
+        else:
+            # Users without project:manage can only create standalone tasks for themselves
+            if payload.assigned_to is not None and payload.assigned_to != current_user.id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You can only create standalone tasks for yourself"
+                )
+            final_assignee_id = current_user.id
+
+    # Validate assignee exists (for project tasks, already validated above)
+    if payload.project_id is not None:
+        assignee_result = await db.execute(select(User).where(User.id == final_assignee_id))
+        assignee = assignee_result.scalar_one_or_none()
+        if assignee is None:
+            raise HTTPException(status_code=404, detail="Assignee user not found")
 
     task = Task(
         title=payload.title,
@@ -276,6 +276,33 @@ async def update_task_status(
                     detail=f"Cannot submit for review — the following subtasks are not yet Done: {', '.join(incomplete_subtasks)}."
                 )
 
+        # Check for required report and attachment before allowing submission
+        report_result = await db.execute(
+            select(Report).where(Report.task_id == task_id)
+        )
+        has_report = report_result.scalar_one_or_none() is not None
+
+        attachment_result = await db.execute(
+            select(Attachment).where(Attachment.task_id == task_id)
+        )
+        has_attachment = attachment_result.scalar_one_or_none() is not None
+
+        if not has_report and not has_attachment:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot submit for review — both a report and an attachment are required before submitting."
+            )
+        elif not has_report:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot submit for review — a report is required before submitting."
+            )
+        elif not has_attachment:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot submit for review — an attachment is required before submitting."
+            )
+
         if not is_assignee:
             if task.assigned_to is None:
                 raise HTTPException(
@@ -301,6 +328,13 @@ async def update_task_status(
                     detail="Only the task's creator can approve it or send it back"
                 )
 
+        # Require comment for approve/reschedule actions
+        if not payload.comment or not payload.comment.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="A comment is required when approving or rescheduling a task."
+            )
+
     # Reject any other transition
     else:
         valid_transitions = []
@@ -319,6 +353,18 @@ async def update_task_status(
     # If transitioning to RESCHEDULE and a due_date is provided, update it
     if payload.status == TaskStatus.RESCHEDULE and payload.due_date is not None:
         task.due_date = payload.due_date
+
+    # Create comment for approve/reschedule actions (Review -> Done or Review -> Reschedule)
+    if old_status == TaskStatus.REVIEW and payload.status in (TaskStatus.DONE, TaskStatus.RESCHEDULE):
+        comment = Comment(
+            author_id=current_user.id,
+            entity_type="task",
+            entity_id=task_id,
+            content=payload.comment,
+            action="approved" if payload.status == TaskStatus.DONE else "rescheduled",
+        )
+        db.add(comment)
+
     await log_activity(db, current_user.id, "task_status_changed", "task", task.id, detail=f"{old_status.value} -> {payload.status.value}")
     await db.commit()
     await db.refresh(task)
@@ -513,6 +559,7 @@ async def _get_task_or_404_with_loads(db: AsyncSession, task_id: int) -> Task:
     result = await db.execute(
         select(Task).options(
             selectinload(Task.project).selectinload(Project.departments),
+            selectinload(Task.creator),
             selectinload(Task.team_members),
             selectinload(Task.subtasks),
         ).where(Task.id == task_id)
@@ -627,33 +674,43 @@ async def delete_attachment(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Delete an attachment. Only the task's assignee can delete attachments,
-    and only while the task is in an editable state (To Do or Reschedule).
-    Once a task is submitted for review (Review or Done status), attachments
-    are locked until the task is sent back to Reschedule.
+    Delete an attachment. Only the person who uploaded the attachment can delete it,
+    and only while the associated task/subtask is in an editable state (To Do or Reschedule).
     """
     result = await db.execute(select(Attachment).where(Attachment.id == attachment_id))
     attachment = result.scalar_one_or_none()
     if attachment is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
-    task = await _get_task_or_404_with_loads(db, attachment.task_id)
-    if not can_view_task(current_user, task):
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
-    # Only the assignee can delete attachments
-    if current_user.id != task.assigned_to:
+    # Only the uploader can delete their own attachment
+    if current_user.id != attachment.uploaded_by:
         raise HTTPException(
             status_code=403,
-            detail="Only the task's assignee can delete attachments"
+            detail="Only the person who uploaded an attachment can delete it"
         )
 
-    # Can only delete when task is in editable state
-    if task.status not in (TaskStatus.TODO, TaskStatus.RESCHEDULE):
-        raise HTTPException(
-            status_code=400,
-            detail="Attachments can't be removed once the task is submitted for review"
-        )
+    # Check editable state based on whether this is a task or subtask attachment
+    if attachment.subtask_id is not None:
+        # Subtask attachment - check subtask status
+        subtask_result = await db.execute(select(SubTask).where(SubTask.id == attachment.subtask_id))
+        subtask = subtask_result.scalar_one_or_none()
+        if subtask is None:
+            raise HTTPException(status_code=404, detail="Subtask not found")
+        if subtask.status not in ("To Do", "Reschedule"):
+            raise HTTPException(
+                status_code=400,
+                detail="Attachments can't be removed once the subtask is submitted for review"
+            )
+    else:
+        # Task attachment - check task status
+        task = await _get_task_or_404_with_loads(db, attachment.task_id)
+        if not can_view_task(current_user, task):
+            raise HTTPException(status_code=404, detail="Attachment not found")
+        if task.status not in (TaskStatus.TODO, TaskStatus.RESCHEDULE):
+            raise HTTPException(
+                status_code=400,
+                detail="Attachments can't be removed once the task is submitted for review"
+            )
 
     # Delete file from disk if it exists
     if os.path.exists(attachment.stored_path):

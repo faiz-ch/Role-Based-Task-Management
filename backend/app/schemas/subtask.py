@@ -23,6 +23,8 @@ class SubtaskUpdate(BaseModel):
 
 class SubtaskStatusUpdate(BaseModel):
     status: TaskStatus
+    comment: str | None = None
+    due_date: datetime | None = None
 
 
 class SubtaskAssigneeUpdate(BaseModel):

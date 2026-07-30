@@ -1,66 +1,64 @@
 import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router";
 import {
   CheckSquare,
+  Layers,
+  FolderKanban,
   AlertTriangle,
   Clock,
-  TrendingUp,
-  CheckCircle2,
+  Globe,
+  Building2,
 } from "lucide-react";
-import {
-  BarChart,
-  Bar,
-  PieChart,
-  Pie,
-  Cell,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
-import { Task, UserType, Status, Priority } from "../types";
-import { getTasks } from "../api/tasks";
-import { getUsers } from "../api/users";
 import { getDashboardSummary, DashboardSummary } from "../api/dashboard";
-import { Av } from "../components/Av";
-import { StatusBadge } from "../components/StatusBadge";
-import { PriBadge } from "../components/PriBadge";
 
-const STATUSES: Status[] = ["To Do", "In Progress", "Review", "Done"];
-const PRIORITIES: Priority[] = ["Low", "Medium", "High"];
+const STATUS_COLORS: Record<string, string> = {
+  "To Do": "bg-slate-100 text-slate-700 border-slate-200",
+  "Review": "bg-amber-100 text-amber-700 border-amber-200",
+  "Done": "bg-emerald-100 text-emerald-700 border-emerald-200",
+  "Reschedule": "bg-red-100 text-red-700 border-red-200",
+};
+
+const STATUS_BAR_COLORS: Record<string, string> = {
+  "To Do": "bg-slate-400",
+  "Review": "bg-amber-400",
+  "Done": "bg-emerald-400",
+  "Reschedule": "bg-red-400",
+};
 
 function fmtDate(d: string) {
   if (!d) return "—";
-  const dt = new Date(d + "T12:00:00");
-  return dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const dt = new Date(d);
+  return dt.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
-function isOverdue(dueDate: string, status: Status) {
-  return (
-    status !== "Done" &&
-    !!dueDate &&
-    new Date(dueDate + "T23:59:59") < new Date()
-  );
+function getDueDateColor(dueDate: string): string {
+  if (!dueDate) return "text-muted-foreground";
+  const now = new Date();
+  const due = new Date(dueDate);
+  const diffDays = (due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+  
+  if (diffDays < 0) return "text-red-600 font-semibold";
+  if (diffDays <= 2) return "text-amber-600 font-semibold";
+  return "text-muted-foreground";
 }
 
 export function DashboardPage() {
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [users, setUsers] = useState<UserType[]>([]);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     async function loadData() {
       try {
         setLoading(true);
         setError(null);
-        const [fetchedTasks, fetchedUsers, fetchedSummary] = await Promise.all([
-          getTasks(),
-          getUsers(),
-          getDashboardSummary(),
-        ]);
-        setTasks(fetchedTasks);
-        setUsers(fetchedUsers);
+        const fetchedSummary = await getDashboardSummary();
         setSummary(fetchedSummary);
       } catch (err: any) {
         setError(err?.message || "Failed to load dashboard data.");
@@ -91,215 +89,214 @@ export function DashboardPage() {
     );
   }
 
-  const total = tasks.length;
-  const byStatus = STATUSES.map((s) => ({
-    name: s,
-    count: tasks.filter((t) => t.status === s).length,
-  }));
-  const byPri = PRIORITIES.map((p) => ({
-    name: p,
-    count: tasks.filter((t) => t.priority === p).length,
-  }));
-  
-  // Use backend summary overdue count, or fallback to client-side calculation
-  const overdue = summary ? summary.overdue_count : tasks.filter((t) => isOverdue(t.dueDate, t.status)).length;
+  if (!summary) return null;
 
-  const PIE_COLORS = ["#94a3b8", "#3b82f6", "#f59e0b", "#10b981"];
-  const PRI_COLORS: Record<Priority, string> = {
-    Low: "#10b981",
-    Medium: "#f59e0b",
-    High: "#ef4444",
-  };
-
-  const statCards = [
-    { label: "Total", value: total, color: "text-foreground", Icon: CheckSquare },
-    { label: "To Do", value: byStatus[0].count, color: "text-slate-500", Icon: null, dot: "bg-slate-400" },
-    {
-      label: "In Progress",
-      value: byStatus[1].count,
-      color: "text-blue-600",
-      Icon: Clock,
-      dot: "bg-blue-500",
-    },
-    {
-      label: "In Review",
-      value: byStatus[2].count,
-      color: "text-amber-600",
-      Icon: TrendingUp,
-      dot: "bg-amber-500",
-    },
-    {
-      label: "Done",
-      value: byStatus[3].count,
-      color: "text-emerald-600",
-      Icon: CheckCircle2,
-      dot: "bg-emerald-500",
-    },
-  ] as const;
+  const isManager = summary.user_type === "manager";
 
   return (
-    <div className="p-6 max-w-6xl space-y-6">
-      <div>
-        <h1 className="text-xl font-bold text-foreground">Dashboard</h1>
-        <p className="text-sm text-muted-foreground">Project health overview</p>
-      </div>
-
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        {statCards.map(({ label, value, color, Icon, dot }) => (
-          <div
-            key={label}
-            className="bg-white rounded-xl border border-border p-4 hover:shadow-sm transition-shadow"
-          >
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-medium text-muted-foreground">{label}</span>
-              {Icon ? (
-                <Icon size={13} className={color} />
-              ) : (
-                <span className={`w-2 h-2 rounded-full ${dot}`} />
-              )}
-            </div>
-            <p className={`text-2xl font-bold tabular-nums font-mono ${color}`}>{value}</p>
-          </div>
-        ))}
-      </div>
-
-      {overdue > 0 && (
-        <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm">
-          <AlertTriangle size={14} className="text-red-500 flex-shrink-0" />
-          <span className="text-red-700 font-semibold">
-            {overdue} task{overdue !== 1 ? "s" : ""} overdue
-          </span>
-          <span className="text-red-500">— past due date and not yet done</span>
+    <div className="p-6 max-w-7xl space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
+          <p className="text-sm text-muted-foreground">
+            {isManager ? "Overview of your department scope" : "Your assigned tasks and subtasks"}
+          </p>
         </div>
-      )}
+        {isManager && summary.scope && (
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-lg">
+            {summary.scope === "global" ? (
+              <>
+                <Globe size={14} className="text-blue-600" />
+                <span className="text-xs font-medium text-blue-700">Showing: All Departments</span>
+              </>
+            ) : (
+              <>
+                <Building2 size={14} className="text-blue-600" />
+                <span className="text-xs font-medium text-blue-700">Showing: Department Scope</span>
+              </>
+            )}
+          </div>
+        )}
+      </div>
 
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="bg-white rounded-xl border border-border p-5">
-          <h3 className="text-sm font-semibold text-foreground mb-1">Tasks by Status</h3>
-          <p className="text-xs text-muted-foreground mb-4">Distribution across 4 stages</p>
-          <ResponsiveContainer width="100%" height={200}>
-            <PieChart>
-              <Pie
-                data={byStatus}
-                dataKey="count"
-                nameKey="name"
-                cx="50%"
-                cy="50%"
-                outerRadius={75}
-                innerRadius={35}
-                paddingAngle={2}
-              >
-                {byStatus.map((_, i) => (
-                  <Cell key={i} fill={PIE_COLORS[i]} />
-                ))}
-              </Pie>
-              <Tooltip
-                formatter={(v: number, n: string) => [v + " tasks", n]}
-                contentStyle={{
-                  fontSize: 12,
-                  borderRadius: 8,
-                  border: "1px solid #e5e7eb",
-                }}
-              />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="flex flex-wrap gap-3 mt-2 justify-center">
-            {byStatus.map((s, i) => (
-              <div
-                key={s.name}
-                className="flex items-center gap-1.5 text-xs text-muted-foreground"
-              >
-                <span
-                  className="w-2 h-2 rounded-full flex-shrink-0"
-                  style={{ background: PIE_COLORS[i] }}
-                />
-                {s.name} ({s.count})
+      {/* Stat Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {/* Tasks Card */}
+        <div className="bg-white rounded-xl border border-border p-5 shadow-sm">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 bg-blue-50 rounded-lg">
+              <CheckSquare size={20} className="text-blue-600" />
+            </div>
+            <div>
+              <p className="text-xs font-medium text-muted-foreground">Total Tasks</p>
+              <p className="text-2xl font-bold text-foreground">{summary.tasks.total}</p>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {Object.entries(summary.tasks.by_status).map(([status, count]) => (
+              <div key={status} className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">{status}</span>
+                <span className="font-medium text-foreground">{count}</span>
               </div>
             ))}
           </div>
         </div>
 
-        <div className="bg-white rounded-xl border border-border p-5">
-          <h3 className="text-sm font-semibold text-foreground mb-1">Tasks by Priority</h3>
-          <p className="text-xs text-muted-foreground mb-4">Urgency breakdown</p>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart
-              data={byPri}
-              barSize={40}
-              margin={{ top: 0, bottom: 0, left: -20 }}
-            >
-              <XAxis
-                dataKey="name"
-                axisLine={false}
-                tickLine={false}
-                tick={{ fontSize: 12, fill: "#6b7280" }}
-              />
-              <YAxis
-                allowDecimals={false}
-                axisLine={false}
-                tickLine={false}
-                tick={{ fontSize: 12, fill: "#6b7280" }}
-              />
-              <Tooltip
-                cursor={{ fill: "#f1f3f7" }}
-                formatter={(v: number) => [v + " tasks", "Count"]}
-                contentStyle={{
-                  fontSize: 12,
-                  borderRadius: 8,
-                  border: "1px solid #e5e7eb",
-                }}
-              />
-              <Bar dataKey="count" radius={[4, 4, 0, 0]}>
-                {byPri.map((entry) => (
-                  <Cell
-                    key={entry.name}
-                    fill={PRI_COLORS[entry.name as Priority]}
-                  />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+        {/* Subtasks Card */}
+        <div className="bg-white rounded-xl border border-border p-5 shadow-sm">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 bg-purple-50 rounded-lg">
+              <Layers size={20} className="text-purple-600" />
+            </div>
+            <div>
+              <p className="text-xs font-medium text-muted-foreground">Total Subtasks</p>
+              <p className="text-2xl font-bold text-foreground">{summary.subtasks.total}</p>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {Object.entries(summary.subtasks.by_status).map(([status, count]) => (
+              <div key={status} className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">{status}</span>
+                <span className="font-medium text-foreground">{count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Projects Card (Manager Only) */}
+        {isManager && summary.projects && (
+          <div className="bg-white rounded-xl border border-border p-5 shadow-sm">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-emerald-50 rounded-lg">
+                <FolderKanban size={20} className="text-emerald-600" />
+              </div>
+              <div>
+                <p className="text-xs font-medium text-muted-foreground">Total Projects</p>
+                <p className="text-2xl font-bold text-foreground">{summary.projects.total}</p>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {Object.entries(summary.projects.by_status).map(([status, count]) => (
+                <div key={status} className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">{status}</span>
+                  <span className="font-medium text-foreground">{count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Status Breakdown */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Tasks Status Breakdown */}
+        <div className="bg-white rounded-xl border border-border p-5 shadow-sm">
+          <h3 className="text-sm font-semibold text-foreground mb-4">Tasks by Status</h3>
+          <div className="space-y-3">
+            {Object.entries(summary.tasks.by_status).map(([status, count]) => {
+              const percentage = summary.tasks.total > 0 ? (count / summary.tasks.total) * 100 : 0;
+              return (
+                <div key={status}>
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-muted-foreground">{status}</span>
+                    <span className="font-medium text-foreground">{count}</span>
+                  </div>
+                  <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full ${STATUS_BAR_COLORS[status] || "bg-gray-400"} rounded-full transition-all`}
+                      style={{ width: `${percentage}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Subtasks Status Breakdown */}
+        <div className="bg-white rounded-xl border border-border p-5 shadow-sm">
+          <h3 className="text-sm font-semibold text-foreground mb-4">Subtasks by Status</h3>
+          <div className="space-y-3">
+            {Object.entries(summary.subtasks.by_status).map(([status, count]) => {
+              const percentage = summary.subtasks.total > 0 ? (count / summary.subtasks.total) * 100 : 0;
+              return (
+                <div key={status}>
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-muted-foreground">{status}</span>
+                    <span className="font-medium text-foreground">{count}</span>
+                  </div>
+                  <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full ${STATUS_BAR_COLORS[status] || "bg-gray-400"} rounded-full transition-all`}
+                      style={{ width: `${percentage}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 
-      {/* Recent tasks */}
-      <div className="bg-white rounded-xl border border-border overflow-hidden">
-        <div className="px-5 py-3.5 border-b border-border">
-          <h3 className="text-sm font-semibold text-foreground">All Tasks</h3>
+      {/* Upcoming Due */}
+      <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-border">
+          <h3 className="text-sm font-semibold text-foreground">Upcoming Due</h3>
+          <p className="text-xs text-muted-foreground">Items due soon (top 10)</p>
         </div>
-        <div className="divide-y divide-border">
-          {tasks.map((task) => {
-            const assignee = users.find((u) => u.id === task.assigneeId);
-            const od = isOverdue(task.dueDate, task.status);
-            return (
+        {summary.upcoming_due.length === 0 ? (
+          <div className="p-8 text-center">
+            <Clock size={32} className="text-muted-foreground mx-auto mb-2" />
+            <p className="text-sm text-muted-foreground">No upcoming due items</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-border">
+            {summary.upcoming_due.map((item) => (
               <div
-                key={task.id}
-                className="flex items-center gap-4 px-5 py-3 hover:bg-muted/20 transition-colors"
+                key={`${item.type}-${item.id}`}
+                className="flex items-center gap-4 px-5 py-3 hover:bg-muted/20 transition-colors cursor-pointer"
+                onClick={() => {
+                  if (item.type === "task") {
+                    navigate(`/tasks/${item.id}`);
+                  } else {
+                    navigate(`/subtasks/${item.id}`);
+                  }
+                }}
               >
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-foreground truncate">
-                    {task.title}
+                  <div className="flex items-center gap-2 mb-1">
+                    <span
+                      className={`text-xs font-medium px-2 py-0.5 rounded border ${
+                        item.type === "task"
+                          ? "bg-blue-50 text-blue-700 border-blue-200"
+                          : "bg-purple-50 text-purple-700 border-purple-200"
+                      }`}
+                    >
+                      {item.type === "task" ? "Task" : "Subtask"}
+                    </span>
+                    <p className="text-sm font-medium text-foreground truncate">{item.title}</p>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                    {item.project_name && <span>{item.project_name}</span>}
+                    {item.task_title && <span>→ {item.task_title}</span>}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  <p className={`text-xs font-mono ${getDueDateColor(item.due_date)}`}>
+                    {fmtDate(item.due_date)}
                   </p>
-                  <p
-                    className={`text-xs font-mono ${
-                      od ? "text-red-500" : "text-muted-foreground"
+                  <span
+                    className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium border ${
+                      STATUS_COLORS[item.status] || "bg-gray-100 text-gray-700 border-gray-200"
                     }`}
                   >
-                    {fmtDate(task.dueDate)}
-                    {od ? " — overdue" : ""}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2.5 flex-shrink-0">
-                  <PriBadge priority={task.priority} />
-                  <StatusBadge status={task.status} />
-                  {assignee && <Av name={assignee.name} />}
+                    {item.status}
+                  </span>
                 </div>
               </div>
-            );
-          })}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

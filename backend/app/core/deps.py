@@ -166,16 +166,20 @@ def can_edit_delete_task(user: User, task: Task) -> bool:
     """
     Task edit/delete is restricted to project lead OR project:manage (NOT task lead).
     Task lead manages subtasks and day-to-day work, not the task's own existence/details.
-    For standalone tasks (project_id is None), only the creator or global project:manage
-    users can edit/delete.
+    For standalone tasks (project_id is None), the creator can edit/delete, and
+    project:manage users can edit/delete if the creator is within their department scope.
     """
     if task.project_id is None:
-        # Standalone task - only creator or global managers can edit/delete
+        # Standalone task - creator can always edit/delete
         if user.id == task.created_by:
             return True
+        # project:manage users can edit/delete if creator is in their department scope
         if has_permission(user, "project:manage"):
             scoped = get_scoped_department_ids(user)
             if scoped is None:  # Global scope
+                return True
+            # Check if task creator is within the user's department scope
+            if task.creator and task.creator.department_id in scoped:
                 return True
         return False
 

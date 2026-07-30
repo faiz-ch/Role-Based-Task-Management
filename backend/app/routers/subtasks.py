@@ -218,31 +218,6 @@ async def get_subtask_activity(
     return logs
 
 
-@router.post("/{subtask_id}/comments", response_model=CommentOut, status_code=201)
-async def create_subtask_comment(
-    subtask_id: int,
-    payload: CommentCreate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Add a comment to a subtask. Gated by can_view_subtask (if you can see it, you can comment on it)."""
-    subtask = await _get_subtask_or_404_with_loads(db, subtask_id)
-    if not can_view_subtask(current_user, subtask):
-        raise HTTPException(status_code=404, detail="Subtask not found")
-
-    comment = Comment(
-        author_id=current_user.id,
-        entity_type="subtask",
-        entity_id=subtask_id,
-        content=payload.content,
-    )
-    db.add(comment)
-    await log_activity(db, current_user.id, "comment_added", "subtask", subtask_id, detail=payload.content[:100])
-    await db.commit()
-    await db.refresh(comment)
-    return comment
-
-
 @router.get("/{subtask_id}/comments", response_model=list[CommentOut])
 async def get_subtask_comments(
     subtask_id: int,
@@ -317,6 +292,33 @@ async def update_subtask_status(
 
     # Handle submit transition (To Do/Reschedule -> Review)
     if subtask.status in ("To Do", "Reschedule") and payload.status == "Review":
+        # Check for required report and attachment before allowing submission
+        report_result = await db.execute(
+            select(Report).where(Report.subtask_id == subtask_id)
+        )
+        has_report = report_result.scalar_one_or_none() is not None
+
+        attachment_result = await db.execute(
+            select(Attachment).where(Attachment.subtask_id == subtask_id)
+        )
+        has_attachment = attachment_result.scalar_one_or_none() is not None
+
+        if not has_report and not has_attachment:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot submit for review — both a report and an attachment are required before submitting."
+            )
+        elif not has_report:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot submit for review — a report is required before submitting."
+            )
+        elif not has_attachment:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot submit for review — an attachment is required before submitting."
+            )
+
         if not is_assignee:
             if is_manager_override:
                 print(f"status changed by non-owner {current_user.id} via manager override")
@@ -337,6 +339,13 @@ async def update_subtask_status(
                     detail="Only the subtask's creator can approve it or send it back"
                 )
 
+        # Require comment for approve/reschedule actions
+        if not payload.comment or not payload.comment.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="A comment is required when approving or rescheduling a subtask."
+            )
+
     # Reject any other transition
     else:
         valid_transitions = []
@@ -352,6 +361,21 @@ async def update_subtask_status(
 
     old_status = subtask.status
     subtask.status = payload.status
+    # If transitioning to RESCHEDULE and a due_date is provided, update it
+    if payload.status == "Reschedule" and payload.due_date is not None:
+        subtask.due_date = payload.due_date
+
+    # Create comment for approve/reschedule actions (Review -> Done or Review -> Reschedule)
+    if old_status == "Review" and payload.status in ("Done", "Reschedule"):
+        comment = Comment(
+            author_id=current_user.id,
+            entity_type="subtask",
+            entity_id=subtask_id,
+            content=payload.comment,
+            action="approved" if payload.status == "Done" else "rescheduled",
+        )
+        db.add(comment)
+
     await log_activity(db, current_user.id, "subtask_status_changed", "subtask", subtask.id, detail=f"{old_status} -> {payload.status}")
     await db.commit()
     await db.refresh(subtask)

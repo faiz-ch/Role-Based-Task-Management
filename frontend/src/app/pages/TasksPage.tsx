@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
-import { Plus, Edit2, Trash2, AlertTriangle, ChevronDown, ChevronRight, Search } from "lucide-react";
+import { Plus, Edit2, Trash2, AlertTriangle, Search } from "lucide-react";
 import { Task, UserType, Status, Priority, Department, Project } from "../types";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -18,7 +18,6 @@ import { Av } from "../components/Av";
 import { Dlg } from "../components/Dlg";
 import { FldInput } from "../components/FldInput";
 import { FldSelect } from "../components/FldSelect";
-import { StatusBadge, STATUS_STYLE } from "../components/StatusBadge";
 import { PriBadge } from "../components/PriBadge";
 
 const STATUSES: Status[] = ["To Do", "Review", "Done", "Reschedule"];
@@ -58,6 +57,17 @@ function isOverdue(dueDate: string, status: Status) {
   );
 }
 
+function getDueDateColor(dueDate: string): string {
+  if (!dueDate) return "text-muted-foreground";
+  const now = new Date();
+  const due = new Date(dueDate);
+  const diffDays = (due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+  
+  if (diffDays < 0) return "text-red-600 font-semibold";
+  if (diffDays <= 2) return "text-amber-600 font-semibold";
+  return "text-muted-foreground";
+}
+
 
 export function TasksPage() {
   const navigate = useNavigate();
@@ -70,17 +80,17 @@ export function TasksPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [selectedStatus, setSelectedStatus] = useState<Status>("To Do");
   const [searchQuery, setSearchQuery] = useState("");
   const [filterAssignee, setFilterAssignee] = useState<string>("");
   const [filterPriority, setFilterPriority] = useState<string>("");
   const [filterDueDate, setFilterDueDate] = useState<string>("");
+  const [filterProject, setFilterProject] = useState<string>("");
   const [scope, setScope] = useState<"all" | "mine">("all");
-  const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
 
   const [showNew, setShowNew] = useState(false);
   const [editTask, setEditTask] = useState<Task | null>(null);
   const [deleteConfirmTaskId, setDeleteConfirmTaskId] = useState<number | null>(null);
+  const [assigneeSearch, setAssigneeSearch] = useState("");
   const [form, setForm] = useState<TForm>({
     title: "",
     description: "",
@@ -143,8 +153,6 @@ export function TasksPage() {
 
   // Filter tasks
   const filteredTasks = tasks.filter((task) => {
-    if (task.status !== selectedStatus) return false;
-    
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       if (!task.title.toLowerCase().includes(query) && 
@@ -177,45 +185,11 @@ export function TasksPage() {
         if (taskDate) return false;
       }
     }
+
+    if (filterProject && task.projectId !== Number(filterProject)) return false;
     
     return true;
   });
-
-  // Group by month
-  const groupedTasks = filteredTasks.reduce((groups, task) => {
-    const monthKey = task.dueDate ? fmtMonthYear(task.dueDate) : "No due date";
-    if (!groups[monthKey]) {
-      groups[monthKey] = [];
-    }
-    groups[monthKey].push(task);
-    return groups;
-  }, {} as Record<string, Task[]>);
-
-  // Sort months: most recent first, "No due date" last
-  const sortedMonths = Object.keys(groupedTasks).sort((a, b) => {
-    if (a === "No due date") return 1;
-    if (b === "No due date") return -1;
-    return new Date(b).getTime() - new Date(a).getTime();
-  });
-
-  // Expand first month by default
-  useEffect(() => {
-    if (sortedMonths.length > 0 && expandedMonths.size === 0) {
-      setExpandedMonths(new Set([sortedMonths[0]]));
-    }
-  }, [sortedMonths]);
-
-  function toggleMonth(month: string) {
-    setExpandedMonths((prev) => {
-      const next = new Set(prev);
-      if (next.has(month)) {
-        next.delete(month);
-      } else {
-        next.add(month);
-      }
-      return next;
-    });
-  }
 
   async function openNew() {
     setForm({
@@ -227,6 +201,7 @@ export function TasksPage() {
       assigneeId: null,
     });
     setProjectCandidates([]);
+    setAssigneeSearch("");
     setShowNew(true);
   }
 
@@ -369,34 +344,6 @@ export function TasksPage() {
         </div>
       )}
 
-      {/* Status tabs */}
-      <div className="flex items-center gap-2 mb-4 flex-shrink-0 overflow-x-auto pb-2">
-        {STATUSES.map((status) => {
-          const count = tasks.filter((t) => t.status === status).length;
-          const isSelected = selectedStatus === status;
-          const s = STATUS_STYLE[status];
-          return (
-            <button
-              key={status}
-              onClick={() => setSelectedStatus(status)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer whitespace-nowrap ${
-                isSelected
-                  ? `${s.badge} border-2`
-                  : "bg-muted/40 text-muted-foreground hover:bg-muted/60 border border-border"
-              }`}
-            >
-              <span className={`w-2 h-2 rounded-full ${s.dot}`} />
-              {status}
-              <span className={`text-xs px-2 py-0.5 rounded-full ${
-                isSelected ? "bg-white/50" : "bg-muted"
-              }`}>
-                {count}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
       {/* Filter bar */}
       <div className="flex items-center gap-3 mb-6 flex-shrink-0 flex-wrap">
         <div className="relative flex-1 min-w-[200px]">
@@ -444,157 +391,82 @@ export function TasksPage() {
           <option value="this_month">This month</option>
           <option value="no_due_date">No due date</option>
         </select>
+        <select
+          value={filterProject}
+          onChange={(e) => setFilterProject(e.target.value)}
+          className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground"
+        >
+          <option value="">All projects</option>
+          {projects.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
       </div>
 
-      {/* Task list grouped by month */}
-      <div className="flex-1 overflow-y-auto space-y-4">
-        {sortedMonths.map((month) => {
-          const monthTasks = groupedTasks[month];
-          const isExpanded = expandedMonths.has(month);
-          return (
-            <div key={month} className="bg-white rounded-xl border border-border overflow-hidden">
-              <button
-                onClick={() => toggleMonth(month)}
-                className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/30 transition-colors cursor-pointer"
-              >
-                <div className="flex items-center gap-2">
-                  {isExpanded ? (
-                    <ChevronDown size={16} className="text-muted-foreground" />
-                  ) : (
-                    <ChevronRight size={16} className="text-muted-foreground" />
-                  )}
-                  <span className="text-sm font-semibold text-foreground">{month}</span>
-                  <span className="text-xs text-muted-foreground">({monthTasks.length})</span>
-                </div>
-              </button>
-              {isExpanded && (
-                <div className="divide-y divide-border">
-                  {monthTasks.map((task) => {
-                    const assignee = users.find((u) => u.id === task.assigneeId);
-                    const od = isOverdue(task.dueDate, task.status);
-                    const canManageThis = canManageTask(task);
-                    const isAssignee = isTaskAssignee(task);
-                    const project = projectsById[task.projectId];
-                    
-                    return (
-                      <div key={task.id} className="p-4 hover:bg-muted/20 transition-colors">
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-2">
-                              <h3 
-                                className="text-sm font-medium text-foreground cursor-pointer hover:text-blue-600 transition-colors"
-                                onClick={() => navigate(`/tasks/${task.id}`)}
-                              >
-                                {task.title}
-                              </h3>
-                              <StatusBadge status={task.status} />
-                            </div>
-                            {task.description && (
-                              <p className="text-xs text-muted-foreground mb-2 line-clamp-2">
-                                {task.description}
-                              </p>
-                            )}
-                            <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                              <PriBadge priority={task.priority} />
-                              {task.dueDate && (
-                                <span className={od ? "text-red-500" : ""}>
-                                  {fmtDate(task.dueDate)}
-                                </span>
-                              )}
-                              {od && (
-                                <span className="text-red-500 font-medium">Overdue</span>
-                              )}
-                            </div>
+      {/* Kanban Board */}
+      <div className="flex-1 overflow-y-auto">
+        {filteredTasks.length === 0 ? (
+          <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
+            No tasks match the current filters
+          </div>
+        ) : (
+          <div className="grid grid-cols-4 gap-4">
+            {STATUSES.map((status) => {
+              const columnTasks = filteredTasks.filter((t) => t.status === status);
+              return (
+                <div key={status} className="bg-gray-50 rounded-xl p-4">
+                  {/* Column Header */}
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-semibold text-foreground">{status}</h3>
+                    <span className="px-2 py-0.5 bg-gray-200 text-gray-700 text-xs font-medium rounded-full">
+                      {columnTasks.length}
+                    </span>
+                  </div>
+
+                  {/* Column Cards */}
+                  <div className="space-y-3">
+                    {columnTasks.map((task) => {
+                      const assignee = users.find((u) => u.id === task.assigneeId);
+                      const project = projectsById[task.projectId];
+                      return (
+                        <div
+                          key={task.id}
+                          onClick={() => navigate(`/tasks/${task.id}`)}
+                          className="bg-white rounded-lg border border-border p-4 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+                        >
+                          <div className="flex items-start justify-between mb-2">
+                            <h4 className="text-sm font-medium text-foreground flex-1 pr-2">
+                              {task.title}
+                            </h4>
+                            <PriBadge priority={task.priority} />
                           </div>
-                          <div className="flex items-center gap-2 flex-shrink-0">
-                            {assignee && <Av name={assignee.name} size="sm" />}
-                            {canManageThis && (
-                              <select
-                                value={task.assigneeId ?? ""}
-                                onChange={(e) => {
-                                  e.stopPropagation();
-                                  const val = e.target.value;
-                                  handleAssign(task, val === "" ? null : Number(val));
-                                }}
-                                className="text-xs border border-border rounded px-2 py-1 bg-white text-muted-foreground focus:outline-none focus:border-blue-400"
-                              >
-                                <option value="">Unassigned</option>
-                                {users.map((u) => (
-                                  <option key={u.id} value={u.id}>
-                                    {u.name}
-                                  </option>
-                                ))}
-                              </select>
+                          {project && (
+                            <p className="text-xs text-muted-foreground mb-2">{project.name}</p>
+                          )}
+                          <div className="flex items-center justify-between mt-3">
+                            {assignee && (
+                              <Av name={assignee.name} size="sm" />
                             )}
-                            {canManageThis && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openEdit(task);
-                                }}
-                                className="p-1.5 hover:bg-muted rounded transition-colors cursor-pointer"
-                                title="Edit task"
-                              >
-                                <Edit2 size={14} className="text-muted-foreground" />
-                              </button>
-                            )}
-                            {canManageThis && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setDeleteConfirmTaskId(task.id);
-                                }}
-                                className="p-1.5 hover:bg-red-50 rounded transition-colors cursor-pointer"
-                                title="Delete task"
-                              >
-                                <Trash2 size={14} className="text-red-400" />
-                              </button>
+                            {task.dueDate && (
+                              <p className={`text-xs ${getDueDateColor(task.dueDate)}`}>
+                                {fmtDate(task.dueDate)}
+                              </p>
                             )}
                           </div>
                         </div>
-                        {/* Status actions */}
-                        {canManageThis ? (
-                          <div className="mt-3 pt-3 border-t border-border">
-                            <select
-                              onChange={(e) => {
-                                e.stopPropagation();
-                                handleStatusTransition(task, e.target.value as Status);
-                              }}
-                              className="text-xs border border-border rounded px-2 py-1 bg-white text-muted-foreground focus:outline-none focus:border-blue-400 cursor-pointer"
-                              defaultValue=""
-                            >
-                              <option value="" disabled>Move to...</option>
-                              {STATUSES.filter((s) => s !== task.status).map((s) => (
-                                <option key={s} value={s}>
-                                  {s}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        ) : isAssignee && (task.status === "To Do" || task.status === "Reschedule") ? (
-                          <div className="mt-3 pt-3 border-t border-border">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleStatusTransition(task, "Review");
-                              }}
-                              className="text-xs font-medium text-blue-600 hover:text-blue-800 transition-colors cursor-pointer"
-                            >
-                              Submit for review
-                            </button>
-                          </div>
-                        ) : null}
+                      );
+                    })}
+                    {columnTasks.length === 0 && (
+                      <div className="text-center py-8">
+                        <p className="text-xs text-muted-foreground">No tasks</p>
                       </div>
-                    );
-                  })}
+                    )}
+                  </div>
                 </div>
-              )}
-            </div>
-          );
-        })}
-        {sortedMonths.length === 0 && (
-          <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
-            No tasks match the current filters
+              );
+            })}
           </div>
         )}
       </div>
@@ -666,21 +538,39 @@ export function TasksPage() {
                 }
               />
             </div>
-            <FldSelect
-              label="Assignee"
-              value={form.assigneeId ?? ""}
-              onChange={(e) => {
-                const val = e.target.value;
-                setForm((f) => ({
-                  ...f,
-                  assigneeId: val === "" ? null : Number(val),
-                }));
-              }}
-              options={[
-                { value: "", label: "Auto-assign to you" },
-                ...(form.projectId > 0 ? projectCandidates : users).map((u) => ({ value: u.id, label: u.name })),
-              ]}
-            />
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Assignee</label>
+              <input
+                type="text"
+                placeholder="Search assignees..."
+                value={assigneeSearch}
+                onChange={(e) => setAssigneeSearch(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 mb-2"
+              />
+              <FldSelect
+                label=""
+                value={form.assigneeId ?? ""}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setForm((f) => ({
+                    ...f,
+                    assigneeId: val === "" ? null : Number(val),
+                  }));
+                }}
+                options={[
+                  { value: "", label: "Auto-assign to you" },
+                  ...(form.projectId > 0 ? projectCandidates : users)
+                    .filter((u) => u.name.toLowerCase().includes(assigneeSearch.toLowerCase()))
+                    .map((u) => ({ value: u.id, label: u.name })),
+                ]}
+                disabled={form.projectId === 0 && !canManage}
+              />
+              {form.projectId === 0 && !canManage && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Assignee is automatically set to yourself for standalone tasks
+                </p>
+              )}
+            </div>
           </div>
           <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-border">
             <button

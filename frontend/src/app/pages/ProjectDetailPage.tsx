@@ -78,6 +78,8 @@ export function ProjectDetailPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showNewReport, setShowNewReport] = useState(false);
   const [reportContent, setReportContent] = useState("");
+  const [taskTeamSearch, setTaskTeamSearch] = useState("");
+  const [projectTeamSearch, setProjectTeamSearch] = useState("");
   const [taskForm, setTaskForm] = useState({
     title: "",
     description: "",
@@ -596,13 +598,22 @@ export function ProjectDetailPage() {
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Task Team
               </span>
+              <input
+                type="text"
+                placeholder="Search team members..."
+                value={taskTeamSearch}
+                onChange={(e) => setTaskTeamSearch(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 mb-2"
+              />
               <div className="space-y-2 max-h-48 overflow-y-auto">
                 {teamMembers.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-4">
                     No team members in this project. Add team members first.
                   </p>
                 ) : (
-                  teamMembers.map((member) => (
+                  teamMembers
+                    .filter((member) => member.name.toLowerCase().includes(taskTeamSearch.toLowerCase()))
+                    .map((member) => (
                     <label
                       key={member.id}
                       className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg hover:bg-muted/30 cursor-pointer"
@@ -811,13 +822,22 @@ export function ProjectDetailPage() {
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Select Team Members
               </span>
+              <input
+                type="text"
+                placeholder="Search team members..."
+                value={projectTeamSearch}
+                onChange={(e) => setProjectTeamSearch(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 mb-2"
+              />
               <div className="space-y-2 max-h-48 overflow-y-auto">
                 {candidates.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-4">
                     No eligible users in this project's departments. Add users to one of the project's departments first.
                   </p>
                 ) : (
-                  candidates.map((user) => (
+                  candidates
+                    .filter((user) => user.name.toLowerCase().includes(projectTeamSearch.toLowerCase()))
+                    .map((user) => (
                     <label
                       key={user.id}
                       className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg hover:bg-muted/30 cursor-pointer"

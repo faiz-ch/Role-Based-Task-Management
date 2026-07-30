@@ -14,6 +14,7 @@ from app.database import AsyncSessionLocal
 from app.models.task import Task
 from app.models.subtask import SubTask, SubTaskAssignee
 from app.models.user import User
+from app.models.role import Role
 from app.models.project import Project, ProjectTeam
 from app.services.email import send_email
 from app.services import email_templates
@@ -129,12 +130,20 @@ async def notify_project_completed(project_id: int) -> None:
         if project is None:
             return
         subject, body = email_templates.project_completed_email(project)
-        # Email the lead
-        if project.lead:
-            await send_email(project.lead.email, subject, body)
-        # Email all current team members
-        for team_member in project.team_members:
-            await send_email(team_member.user.email, subject, body)
+        
+        # Email the project creator
+        if project.creator:
+            await send_email(project.creator.email, subject, body)
+        
+        # Email all users with Admin role
+        result = await db.execute(
+            select(User)
+            .join(Role)
+            .where(Role.name == "Admin")
+        )
+        admin_users = result.scalars().all()
+        for admin in admin_users:
+            await send_email(admin.email, subject, body)
 
 
 # User notifications
@@ -220,6 +229,7 @@ async def _load_project(db, project_id: int) -> Project | None:
         select(Project)
         .options(
             selectinload(Project.lead),
+            selectinload(Project.creator),
             selectinload(Project.team_members).selectinload(ProjectTeam.user),
         )
         .where(Project.id == project_id)

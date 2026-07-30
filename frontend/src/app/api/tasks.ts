@@ -89,10 +89,13 @@ export async function updateTask(
   return mapTask(data);
 }
 
-export async function updateTaskStatus(id: number, status: string, dueDate?: string): Promise<Task> {
+export async function updateTaskStatus(id: number, status: string, dueDate?: string, comment?: string): Promise<Task> {
   const payload: any = { status };
   if (dueDate !== undefined) {
     payload.due_date = new Date(dueDate).toISOString();
+  }
+  if (comment !== undefined) {
+    payload.comment = comment;
   }
   const data = await apiFetch(`/tasks/${id}/status`, {
     method: "PATCH",

@@ -25,6 +25,7 @@ class TaskUpdate(BaseModel):
 class TaskStatusUpdate(BaseModel):
     status: TaskStatus
     due_date: datetime | None = None
+    comment: str | None = None
 
 
 class TaskAssignRequest(BaseModel):

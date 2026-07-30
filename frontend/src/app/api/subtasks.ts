@@ -72,10 +72,17 @@ export async function updateSubtask(id: number, input: {
   return mapSubtask(data);
 }
 
-export async function updateSubtaskStatus(id: number, status: string): Promise<Subtask> {
+export async function updateSubtaskStatus(id: number, status: string, comment?: string, dueDate?: string): Promise<Subtask> {
+  const payload: any = { status };
+  if (comment !== undefined) {
+    payload.comment = comment;
+  }
+  if (dueDate !== undefined) {
+    payload.due_date = dueDate;
+  }
   const data = await apiFetch(`/subtasks/${id}/status`, {
     method: "PATCH",
-    body: JSON.stringify({ status }),
+    body: JSON.stringify(payload),
   });
   return mapSubtask(data);
 }

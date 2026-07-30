@@ -17,6 +17,7 @@ class CommentOut(BaseModel):
     id: int
     author_id: int
     content: str
+    action: str | None = None
     created_at: datetime
 
     class Config:

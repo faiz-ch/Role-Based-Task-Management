@@ -15,6 +15,7 @@ class Comment(Base):
     entity_type = Column(String, nullable=False)
     entity_id = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
+    action = Column(String, nullable=True)  # "approved" or "rescheduled" for decision comments
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
