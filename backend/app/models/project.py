@@ -13,6 +13,7 @@ from app.database import Base
 class ProjectStatus(str, enum.Enum):
     PLANNING = "Planning"
     ACTIVE = "Active"
+    PENDING_APPROVAL = "Pending Approval"
     DONE = "Done"
     ARCHIVED = "Archived"
 

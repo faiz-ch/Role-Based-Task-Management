@@ -24,7 +24,7 @@ from app.models.attachment import Attachment
 from app.models.role import Role
 from app.models.report import Report
 from app.models.activity_log import ActivityLog
-from app.schemas.project import ProjectCreate, ProjectOut, ProjectTeamUpdate, ProjectUpdate
+from app.schemas.project import ProjectCreate, ProjectOut, ProjectTeamUpdate, ProjectUpdate, ProjectRejectRequest
 from app.schemas.user import UserOut
 from app.schemas.report import ReportCreate, ReportOut
 from app.schemas.activity_log import ActivityLogOut
@@ -291,21 +291,21 @@ async def update_project(
 
 
 @router.patch("/{project_id}/complete", response_model=ProjectOut)
-async def complete_project(
+async def send_project_for_approval(
     project_id: int,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Mark a project as complete. Only the project lead can do this."""
+    """Send a project for approval. Only the project lead or users with project:manage permission can do this."""
     from sqlalchemy.orm import selectinload
     project = await _get_project_or_404_with_loads(db, project_id)
 
-    # Only the project lead can complete it
-    if current_user.id != project.lead_id:
+    # Only the project lead or users with project:manage permission can send for approval
+    if current_user.id != project.lead_id and not has_permission(current_user, "project:manage"):
         raise HTTPException(
             status_code=403,
-            detail="Only the project lead can mark it as complete"
+            detail="Only the project lead or users with project:manage permission can send for approval"
         )
 
     # Check if all tasks are DONE
@@ -317,16 +317,103 @@ async def complete_project(
         if task.status != TaskStatus.DONE:
             raise HTTPException(
                 status_code=400,
-                detail=f"Cannot complete project: task '{task.title}' is not yet done (status: {task.status.value})"
+                detail=f"Cannot send for approval: task '{task.title}' is not yet done (status: {task.status.value})"
             )
+
+    # Check if project is Active
+    if project.status != ProjectStatus.ACTIVE:
+        raise HTTPException(
+            status_code=400,
+            detail="Project must be Active to send for approval"
+        )
+
+    # Mark project as PENDING_APPROVAL
+    project.status = ProjectStatus.PENDING_APPROVAL
+    await log_activity(db, current_user.id, "project_sent_for_approval", "project", project.id, detail="Active -> Pending Approval")
+    await db.commit()
+    await db.refresh(project)
+
+    background_tasks.add_task(notification_dispatch.notify_project_pending_approval, project.id)
+
+    project_with_loads = await _get_project_with_loads(db, project.id)
+    return _project_to_out(project_with_loads)
+
+
+@router.patch("/{project_id}/approve", response_model=ProjectOut)
+async def approve_project(
+    project_id: int,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Approve a project pending approval. Only users whose role's category is 'Admin' can do this."""
+    project = await _get_project_or_404_with_loads(db, project_id)
+
+    # Permission check: only Admin category users can approve
+    if not current_user.role or not current_user.role.category or current_user.role.category.name != "Admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Only Admin category users can approve projects"
+        )
+
+    # Check if project is pending approval
+    if project.status != ProjectStatus.PENDING_APPROVAL:
+        raise HTTPException(
+            status_code=400,
+            detail="Project is not pending approval"
+        )
 
     # Mark project as DONE
     project.status = ProjectStatus.DONE
-    await log_activity(db, current_user.id, "project_completed", "project", project.id, detail="Active -> Done")
+    await log_activity(db, current_user.id, "project_completed", "project", project.id, detail="Pending Approval -> Done (approved)")
     await db.commit()
     await db.refresh(project)
 
     background_tasks.add_task(notification_dispatch.notify_project_completed, project.id)
+
+    project_with_loads = await _get_project_with_loads(db, project.id)
+    return _project_to_out(project_with_loads)
+
+
+@router.patch("/{project_id}/reject", response_model=ProjectOut)
+async def reject_project(
+    project_id: int,
+    payload: ProjectRejectRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Reject a project pending approval, sending it back to Active. Requires a reason. Only Admin category users can do this."""
+    project = await _get_project_or_404_with_loads(db, project_id)
+
+    # Permission check: only Admin category users can reject
+    if not current_user.role or not current_user.role.category or current_user.role.category.name != "Admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Only Admin category users can reject projects"
+        )
+
+    # Check if project is pending approval
+    if project.status != ProjectStatus.PENDING_APPROVAL:
+        raise HTTPException(
+            status_code=400,
+            detail="Project is not pending approval"
+        )
+
+    # Require a reason
+    if not payload.reason or not payload.reason.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="A reason is required to reject a project"
+        )
+
+    # Mark project as ACTIVE
+    project.status = ProjectStatus.ACTIVE
+    await log_activity(db, current_user.id, "project_rejected", "project", project.id, detail=f"Pending Approval -> Active (rejected: {payload.reason.strip()})")
+    await db.commit()
+    await db.refresh(project)
+
+    background_tasks.add_task(notification_dispatch.notify_project_rejected, project.id, payload.reason.strip())
 
     project_with_loads = await _get_project_with_loads(db, project.id)
     return _project_to_out(project_with_loads)
@@ -476,8 +563,7 @@ async def create_project_report(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Create or update a report for a project. Only the project lead can create reports.
-    If all tasks are Done, the project will be marked as complete."""
+    """Create or update a report for a project. Only the project lead can create reports."""
     project = await _get_project_or_404_with_loads(db, project_id)
 
     if not is_project_lead(current_user, project):
@@ -505,20 +591,6 @@ async def create_project_report(
         db.add(report)
         await db.commit()
         await db.refresh(report)
-
-    # Check if all tasks are DONE - if so, mark project as complete
-    tasks_result = await db.execute(
-        select(Task).where(Task.project_id == project_id)
-    )
-    tasks = tasks_result.scalars().all()
-    all_tasks_done = all(task.status == TaskStatus.DONE for task in tasks)
-
-    if all_tasks_done and len(tasks) > 0 and project.status != ProjectStatus.DONE:
-        project.status = ProjectStatus.DONE
-        await log_activity(db, current_user.id, "project_completed", "project", project.id, detail="Active -> Done")
-        await db.commit()
-        await db.refresh(project)
-        background_tasks.add_task(notification_dispatch.notify_project_completed, project.id)
 
     # Load with author for response
     result = await db.execute(

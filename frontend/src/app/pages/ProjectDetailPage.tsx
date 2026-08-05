@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router";
 import { ArrowLeft, AlertTriangle, Plus, Users, UserCheck, Edit2, Trash2 } from "lucide-react";
 import { Project, UserType, Department, Task } from "../types";
-import { getProject, updateProjectTeam, getProjectCandidates, updateProject, deleteProject } from "../api/projects";
+import { getProject, updateProjectTeam, getProjectCandidates, updateProject, deleteProject, sendProjectForApproval, approveProject, rejectProject } from "../api/projects";
 import { getTasks, createTask, updateTaskTeam } from "../api/tasks";
 import { getUsers } from "../api/users";
 import { getDepartments } from "../api/departments";
@@ -22,6 +22,10 @@ const PROJECT_STATUS_STYLE: Record<string, { badge: string; dot: string }> = {
   Active: {
     badge: "bg-blue-50 text-blue-700 border-blue-200",
     dot: "bg-blue-500",
+  },
+  "Pending Approval": {
+    badge: "bg-amber-50 text-amber-700 border-amber-200",
+    dot: "bg-amber-500",
   },
   Done: {
     badge: "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -76,6 +80,8 @@ export function ProjectDetailPage() {
   const [showNewTask, setShowNewTask] = useState(false);
   const [showEditProject, setShowEditProject] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showRejectDialog, setShowRejectDialog] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
   const [reportContent, setReportContent] = useState("");
   const [taskTeamSearch, setTaskTeamSearch] = useState("");
   const [projectTeamSearch, setProjectTeamSearch] = useState("");
@@ -248,6 +254,41 @@ export function ProjectDetailPage() {
       setProject(updatedProject);
     } catch (err: any) {
       setError(err?.message || "Failed to save report");
+    }
+  }
+
+  async function handleSendForApproval() {
+    if (!project) return;
+    try {
+      setError(null);
+      const updated = await sendProjectForApproval(project.id);
+      setProject(updated);
+    } catch (err: any) {
+      setError(err?.message || "Failed to send for approval");
+    }
+  }
+
+  async function handleApprove() {
+    if (!project) return;
+    try {
+      setError(null);
+      const updated = await approveProject(project.id);
+      setProject(updated);
+    } catch (err: any) {
+      setError(err?.message || "Failed to approve project");
+    }
+  }
+
+  async function handleReject() {
+    if (!project || !rejectReason.trim()) return;
+    try {
+      setError(null);
+      const updated = await rejectProject(project.id, rejectReason.trim());
+      setProject(updated);
+      setShowRejectDialog(false);
+      setRejectReason("");
+    } catch (err: any) {
+      setError(err?.message || "Failed to reject project");
     }
   }
 
@@ -471,6 +512,40 @@ export function ProjectDetailPage() {
                 ) : (
                   <p className="text-center py-8">No report submitted yet</p>
                 )}
+              </div>
+            )}
+            
+            {/* Send for Approval button */}
+            {(currentUser?.id === project?.leadId || canManage) &&
+             project?.status === "Active" &&
+             projectTasks.length > 0 &&
+             projectTasks.every(t => t.status === "Done") && (
+              <div className="mt-4 pt-4 border-t border-border">
+                <button
+                  onClick={handleSendForApproval}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+                >
+                  Send for Approval
+                </button>
+              </div>
+            )}
+            
+            {/* Approve and Reject buttons for Admin category users */}
+            {project?.status === "Pending Approval" &&
+             currentUser?.role?.category?.name === "Admin" && (
+              <div className="mt-4 pt-4 border-t border-border flex gap-2">
+                <button
+                  onClick={handleApprove}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg hover:bg-emerald-700 transition-colors cursor-pointer"
+                >
+                  Approve
+                </button>
+                <button
+                  onClick={() => setShowRejectDialog(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-lg hover:bg-red-700 transition-colors cursor-pointer"
+                >
+                  Reject
+                </button>
               </div>
             )}
           </div>
@@ -784,6 +859,42 @@ export function ProjectDetailPage() {
                 className="px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors cursor-pointer"
               >
                 Delete
+              </button>
+            </div>
+          </div>
+        </Dlg>
+      )}
+
+      {showRejectDialog && (
+        <Dlg title="Reject project" onClose={() => setShowRejectDialog(false)}>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Reason for rejection</label>
+              <textarea
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Enter the reason for rejecting this project..."
+                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400 min-h-[100px] resize-y"
+                rows={4}
+                autoFocus
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => {
+                  setShowRejectDialog(false);
+                  setRejectReason("");
+                }}
+                className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReject}
+                disabled={!rejectReason.trim()}
+                className="px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Reject
               </button>
             </div>
           </div>

@@ -44,3 +44,7 @@ class ProjectUpdate(BaseModel):
     priority: str | None = None
     due_date: datetime | None = None
     department_ids: List[int] | None = None
+
+
+class ProjectRejectRequest(BaseModel):
+    reason: str

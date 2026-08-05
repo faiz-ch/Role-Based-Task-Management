@@ -117,6 +117,18 @@ def project_completed_email(project: Project) -> tuple[str, str]:
     return subject, body
 
 
+def project_pending_approval_email(project: Project) -> tuple[str, str]:
+    subject = f"Project pending approval: {project.name}"
+    body = _wrap("Project pending approval", "A project has been submitted and is awaiting your approval.", project.name, _project_link(project), [f"Priority: {project.priority}"])
+    return subject, body
+
+
+def project_rejected_email(project: Project, reason: str) -> tuple[str, str]:
+    subject = f"Project rejected: {project.name}"
+    body = _wrap("Project rejected", "Your project submission was rejected and needs revision.", project.name, _project_link(project), [f"Reason: {reason}"])
+    return subject, body
+
+
 # User email templates
 
 def user_created_email(user: User) -> tuple[str, str]:

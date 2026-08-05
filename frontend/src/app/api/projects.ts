@@ -121,9 +121,24 @@ export async function getProjectCandidates(projectId: number): Promise<UserType[
   return Array.isArray(data) ? data.map(mapUser) : [];
 }
 
-export async function completeProject(projectId: number): Promise<Project> {
+export async function sendProjectForApproval(projectId: number): Promise<Project> {
   const data = await apiFetch(`/projects/${projectId}/complete`, {
     method: "PATCH",
+  });
+  return mapProject(data);
+}
+
+export async function approveProject(projectId: number): Promise<Project> {
+  const data = await apiFetch(`/projects/${projectId}/approve`, {
+    method: "PATCH",
+  });
+  return mapProject(data);
+}
+
+export async function rejectProject(projectId: number, reason: string): Promise<Project> {
+  const data = await apiFetch(`/projects/${projectId}/reject`, {
+    method: "PATCH",
+    body: JSON.stringify({ reason }),
   });
   return mapProject(data);
 }

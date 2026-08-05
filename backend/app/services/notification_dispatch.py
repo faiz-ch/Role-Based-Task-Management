@@ -15,6 +15,7 @@ from app.models.task import Task
 from app.models.subtask import SubTask, SubTaskAssignee
 from app.models.user import User
 from app.models.role import Role
+from app.models.category import Category
 from app.models.project import Project, ProjectTeam
 from app.services.email import send_email
 from app.services import email_templates
@@ -144,6 +145,37 @@ async def notify_project_completed(project_id: int) -> None:
         admin_users = result.scalars().all()
         for admin in admin_users:
             await send_email(admin.email, subject, body)
+
+
+async def notify_project_pending_approval(project_id: int) -> None:
+    async with AsyncSessionLocal() as db:
+        project = await _load_project(db, project_id)
+        if project is None:
+            return
+        subject, body = email_templates.project_pending_approval_email(project)
+        
+        # Email every user whose role's category name is "Admin"
+        result = await db.execute(
+            select(User)
+            .join(Role, User.role_id == Role.id)
+            .join(Category, Role.category_id == Category.id)
+            .where(Category.name == "Admin")
+        )
+        admin_users = result.scalars().all()
+        for admin in admin_users:
+            await send_email(admin.email, subject, body)
+
+
+async def notify_project_rejected(project_id: int, reason: str) -> None:
+    async with AsyncSessionLocal() as db:
+        project = await _load_project(db, project_id)
+        if project is None:
+            return
+        subject, body = email_templates.project_rejected_email(project, reason)
+        
+        # Email the project lead
+        if project.lead:
+            await send_email(project.lead.email, subject, body)
 
 
 # User notifications

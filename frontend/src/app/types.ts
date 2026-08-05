@@ -1,6 +1,6 @@
 export type Status = "To Do" | "Review" | "Done" | "Reschedule";
 export type Priority = "Low" | "Medium" | "High";
-export type ProjectStatus = "Planning" | "Active" | "Done" | "Archived";
+export type ProjectStatus = "Planning" | "Active" | "Pending Approval" | "Done" | "Archived";
 export type Page = "login" | "register" | "dashboard" | "tasks" | "taskDetail" | "users" | "roles" | "departments" | "categories" | "projects" | "projectDetail";
 
 export interface Department {

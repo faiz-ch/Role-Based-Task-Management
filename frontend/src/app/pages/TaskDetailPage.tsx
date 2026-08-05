@@ -696,7 +696,7 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
                             {uploader?.name || "Unknown"} · {formatFileSize(attachment.sizeBytes)}
                           </p>
                         </div>
-                        {attachment.uploadedBy === currentUser?.id && (
+                        {((attachment.uploadedBy === currentUser?.id && (task?.status === "To Do" || task?.status === "Reschedule")) || canManage) && (
                           <button
                             onClick={(e) => {
                               e.stopPropagation();

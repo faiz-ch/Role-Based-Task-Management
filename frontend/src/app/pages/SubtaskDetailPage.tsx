@@ -542,7 +542,7 @@ export function SubtaskDetailPage() {
                         >
                           <FileText size={12} className="text-muted-foreground" />
                         </button>
-                        {attachment.uploadedBy === currentUser?.id && (
+                        {((attachment.uploadedBy === currentUser?.id && (subtask?.status === "To Do" || subtask?.status === "Reschedule")) || canManage) && (
                           <button
                             onClick={() => handleDeleteAttachment(attachment.id)}
                             className="p-1 hover:bg-red-50 rounded transition-colors cursor-pointer"
