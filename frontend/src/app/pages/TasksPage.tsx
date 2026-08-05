@@ -111,8 +111,12 @@ export function TasksPage() {
   function canManageTask(task: Task): boolean {
     const project = projectsById[task.projectId];
     if (!project) return false;
+    const hasProjectManagePermission = permissions.includes("project:manage") && (
+      currentUser?.role?.allDepartments ||
+      (project.departmentIds && currentUser?.role?.departments?.some(d => project.departmentIds.includes(d.id)))
+    );
     return (
-      canManage ||
+      hasProjectManagePermission ||
       currentUser?.id === project.leadId ||
       currentUser?.id === task.leadId
     );

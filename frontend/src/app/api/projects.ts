@@ -120,3 +120,10 @@ export async function getProjectCandidates(projectId: number): Promise<UserType[
   const data = await apiFetch(`/projects/${projectId}/candidates`);
   return Array.isArray(data) ? data.map(mapUser) : [];
 }
+
+export async function completeProject(projectId: number): Promise<Project> {
+  const data = await apiFetch(`/projects/${projectId}/complete`, {
+    method: "PATCH",
+  });
+  return mapProject(data);
+}

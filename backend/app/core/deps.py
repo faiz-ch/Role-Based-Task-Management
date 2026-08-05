@@ -130,8 +130,14 @@ def can_manage_project(user: User, project: Project) -> bool:
 
 
 def can_create_task_in_project(user: User, project: Project) -> bool:
-    """Only the project's lead can create tasks inside it — this is pure instance ownership, not a role permission."""
-    return is_project_lead(user, project)
+    """Project lead OR project:manage (with department scope) can create tasks inside it."""
+    if is_project_lead(user, project):
+        return True
+    if has_permission(user, "project:manage"):
+        scoped = get_scoped_department_ids(user)
+        if scoped is None or any(d.id in scoped for d in project.departments):
+            return True
+    return False
 
 
 def can_manage_task(user: User, task: Task) -> bool:

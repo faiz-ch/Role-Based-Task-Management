@@ -297,15 +297,15 @@ async def complete_project(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Mark a project as complete. Only the project creator can do this."""
+    """Mark a project as complete. Only the project lead can do this."""
     from sqlalchemy.orm import selectinload
     project = await _get_project_or_404_with_loads(db, project_id)
 
-    # Only the project creator can complete it
-    if current_user.id != project.created_by:
+    # Only the project lead can complete it
+    if current_user.id != project.lead_id:
         raise HTTPException(
             status_code=403,
-            detail="Only the project creator can mark it as complete"
+            detail="Only the project lead can mark it as complete"
         )
 
     # Check if all tasks are DONE
@@ -472,23 +472,53 @@ async def update_project_team(
 async def create_project_report(
     project_id: int,
     payload: ReportCreate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Create a report for a project. Only the project lead can create reports."""
+    """Create or update a report for a project. Only the project lead can create reports.
+    If all tasks are Done, the project will be marked as complete."""
     project = await _get_project_or_404_with_loads(db, project_id)
 
     if not is_project_lead(current_user, project):
         raise HTTPException(status_code=403, detail="Only the project lead can create reports")
 
-    report = Report(
-        project_id=project_id,
-        content=payload.content,
-        created_by=current_user.id,
+    # Check for existing report for this project
+    existing_report_result = await db.execute(
+        select(Report).where(Report.project_id == project_id)
     )
-    db.add(report)
-    await db.commit()
-    await db.refresh(report)
+    existing_report = existing_report_result.scalar_one_or_none()
+
+    if existing_report:
+        # Update existing report
+        existing_report.content = payload.content
+        await db.commit()
+        await db.refresh(existing_report)
+        report = existing_report
+    else:
+        # Create new report
+        report = Report(
+            project_id=project_id,
+            content=payload.content,
+            created_by=current_user.id,
+        )
+        db.add(report)
+        await db.commit()
+        await db.refresh(report)
+
+    # Check if all tasks are DONE - if so, mark project as complete
+    tasks_result = await db.execute(
+        select(Task).where(Task.project_id == project_id)
+    )
+    tasks = tasks_result.scalars().all()
+    all_tasks_done = all(task.status == TaskStatus.DONE for task in tasks)
+
+    if all_tasks_done and len(tasks) > 0 and project.status != ProjectStatus.DONE:
+        project.status = ProjectStatus.DONE
+        await log_activity(db, current_user.id, "project_completed", "project", project.id, detail="Active -> Done")
+        await db.commit()
+        await db.refresh(project)
+        background_tasks.add_task(notification_dispatch.notify_project_completed, project.id)
 
     # Load with author for response
     result = await db.execute(

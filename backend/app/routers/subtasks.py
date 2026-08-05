@@ -273,22 +273,24 @@ async def update_subtask_status(
     """
     Update subtask status with explicit transition rules:
     - Submit (To Do/Reschedule -> Review): allowed for any user in subtask.assignees (regardless of other authority)
-    - Approve (Review -> Done or Review -> Reschedule): allowed only for subtask.created_by
-    - Manager override: can_manage_task() users who aren't the creator can still act, logged as override
+    - Approve (Review -> Done or Review -> Reschedule): allowed for task lead OR project lead OR project:manage (with department scope)
     """
     subtask = await _get_subtask_or_404_with_loads(db, subtask_id)
 
     # Check if user is an assignee
     is_assignee = any(sa.user_id == current_user.id for sa in subtask.assignees)
 
-    # Check if user is the creator
-    is_creator = current_user.id == subtask.created_by
-
-    # Check if user has management authority
-    has_management_authority = can_manage_task(current_user, subtask.task)
-
-    # Determine if this is a manager override (has authority but is not the creator)
-    is_manager_override = has_management_authority and not is_creator
+    # Check if user can approve (task lead OR project lead OR scoped project:manage)
+    can_approve = False
+    if is_task_lead(current_user, subtask.task):
+        can_approve = True
+    elif subtask.task.project_id is not None:
+        if is_project_lead(current_user, subtask.task.project):
+            can_approve = True
+        elif has_permission(current_user, "project:manage"):
+            scoped = get_scoped_department_ids(current_user)
+            if scoped is None or any(d.id in scoped for d in subtask.task.project.departments):
+                can_approve = True
 
     # Handle submit transition (To Do/Reschedule -> Review)
     if subtask.status in ("To Do", "Reschedule") and payload.status == "Review":
@@ -320,24 +322,18 @@ async def update_subtask_status(
             )
 
         if not is_assignee:
-            if is_manager_override:
-                print(f"status changed by non-owner {current_user.id} via manager override")
-            else:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Only subtask assignees can submit it for review"
-                )
+            raise HTTPException(
+                status_code=403,
+                detail="Only subtask assignees can submit it for review"
+            )
 
     # Handle approve transitions (Review -> Done or Review -> Reschedule)
     elif subtask.status == "Review" and payload.status in ("Done", "Reschedule"):
-        if not is_creator:
-            if is_manager_override:
-                print(f"status changed by non-owner {current_user.id} via manager override")
-            else:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Only the subtask's creator can approve it or send it back"
-                )
+        if not can_approve:
+            raise HTTPException(
+                status_code=403,
+                detail="Only the task lead, project lead, or project:manage users can approve subtasks"
+            )
 
         # Require comment for approve/reschedule actions
         if not payload.comment or not payload.comment.strip():
@@ -352,8 +348,8 @@ async def update_subtask_status(
         if subtask.status in ("To Do", "Reschedule"):
             valid_transitions.append("Review (by assignee)")
         if subtask.status == "Review":
-            valid_transitions.append("Done (by creator)")
-            valid_transitions.append("Reschedule (by creator)")
+            valid_transitions.append("Done (by task lead, project lead, or project:manage)")
+            valid_transitions.append("Reschedule (by task lead, project lead, or project:manage)")
         raise HTTPException(
             status_code=403,
             detail=f"Invalid transition. From {subtask.status}, valid transitions are: {', '.join(valid_transitions)}"

@@ -201,7 +201,10 @@ export function TaskDetailPage() {
   const projectLead = candidates.find((u) => u.id === project?.leadId);
   const projectTeamMembers = candidates.filter((u) => project?.teamUserIds.includes(u.id));
 
-  const canManage = permissions.includes("project:manage");
+  const canManage = permissions.includes("project:manage") && (
+    currentUser?.role?.allDepartments ||
+    (project?.departmentIds && currentUser?.role?.departments?.some(d => project.departmentIds.includes(d.id)))
+  );
   const isProjectLeadOrManager = canManage || currentUser?.id === project?.leadId;
 
   function canManageTask(): boolean {
@@ -756,7 +759,7 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
 
           {/* Action area */}
           <div className="bg-white rounded-xl border border-border p-4">
-            {currentUser?.id === task?.creatorId && task.status === "Review" ? (
+            {isProjectLeadOrManager && task.status === "Review" ? (
               <div className="space-y-3">
                 <div className="flex gap-2">
                   <button

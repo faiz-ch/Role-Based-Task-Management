@@ -76,7 +76,6 @@ export function ProjectDetailPage() {
   const [showNewTask, setShowNewTask] = useState(false);
   const [showEditProject, setShowEditProject] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [showNewReport, setShowNewReport] = useState(false);
   const [reportContent, setReportContent] = useState("");
   const [taskTeamSearch, setTaskTeamSearch] = useState("");
   const [projectTeamSearch, setProjectTeamSearch] = useState("");
@@ -97,7 +96,10 @@ export function ProjectDetailPage() {
     departmentIds: [] as number[],
   });
 
-  const canManage = permissions.includes("project:manage");
+  const canManage = permissions.includes("project:manage") && (
+    currentUser?.role?.allDepartments ||
+    (project?.departmentIds && currentUser?.role?.departments?.some(d => project.departmentIds.includes(d.id)))
+  );
 
   useEffect(() => {
     async function loadData() {
@@ -125,6 +127,10 @@ export function ProjectDetailPage() {
         setCandidates(candidatesResult.status === "fulfilled" ? candidatesResult.value : []);
         setReports(reportsResult.status === "fulfilled" ? reportsResult.value : []);
 
+        if (reportsResult.status === "fulfilled" && reportsResult.value.length > 0) {
+          setReportContent(reportsResult.value[0].content);
+        }
+
         if (projectResult.status === "rejected") {
           setError((projectResult.reason as any)?.message || "Failed to load project.");
         }
@@ -139,6 +145,7 @@ export function ProjectDetailPage() {
   const projectDepts = departments.filter((d) => project?.departmentIds.includes(d.id));
   const teamMembers = candidates.filter((u) => project?.teamUserIds.includes(u.id));
   const lead = teamMembers.find((u) => u.id === project?.leadId);
+  const existingReport = reports.length > 0 ? reports[0] : null;
 
   async function handleManageTeam() {
     if (!project) return;
@@ -235,11 +242,12 @@ export function ProjectDetailPage() {
     try {
       setError(null);
       const newReport = await createProjectReport(project.id, { content: reportContent.trim() });
-      setReports([newReport, ...reports]);
-      setReportContent("");
-      setShowNewReport(false);
+      setReports([newReport]);
+      // Refetch project to pick up possibly-updated status
+      const updatedProject = await getProject(project.id);
+      setProject(updatedProject);
     } catch (err: any) {
-      setError(err?.message || "Failed to create report");
+      setError(err?.message || "Failed to save report");
     }
   }
 
@@ -350,24 +358,26 @@ export function ProjectDetailPage() {
                 <ProjectStatusBadge status={project.status} />
                 <PriBadge priority={project.priority} />
               </div>
-              {canManage && (
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={openEditProject}
-                    className="p-1.5 hover:bg-muted rounded transition-colors cursor-pointer"
-                    title="Edit project"
-                  >
-                    <Edit2 size={14} className="text-muted-foreground" />
-                  </button>
-                  <button
-                    onClick={() => setShowDeleteConfirm(true)}
-                    className="p-1.5 hover:bg-red-50 rounded transition-colors cursor-pointer"
-                    title="Delete project"
-                  >
-                    <Trash2 size={14} className="text-red-400" />
-                  </button>
-                </div>
-              )}
+              <div className="flex items-center gap-2">
+                {canManage && (
+                  <>
+                    <button
+                      onClick={openEditProject}
+                      className="p-1.5 hover:bg-muted rounded transition-colors cursor-pointer"
+                      title="Edit project"
+                    >
+                      <Edit2 size={14} className="text-muted-foreground" />
+                    </button>
+                    <button
+                      onClick={() => setShowDeleteConfirm(true)}
+                      className="p-1.5 hover:bg-red-50 rounded transition-colors cursor-pointer"
+                      title="Delete project"
+                    >
+                      <Trash2 size={14} className="text-red-400" />
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
             {project.description && (
               <p className="text-sm text-muted-foreground">{project.description}</p>
@@ -395,7 +405,7 @@ export function ProjectDetailPage() {
           <div className="bg-white rounded-xl border border-border p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-foreground">Tasks</h2>
-              {currentUser?.id === project?.leadId && (
+              {(canManage || currentUser?.id === project?.leadId) && (
                 <button
                   onClick={openNewTask}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
@@ -433,37 +443,34 @@ export function ProjectDetailPage() {
 
           <div className="bg-white rounded-xl border border-border p-6">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-foreground">Reports</h2>
-              {currentUser?.id === project?.leadId && (
-                <button
-                  onClick={() => setShowNewReport(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
-                >
-                  <Plus size={12} /> New Report
-                </button>
-              )}
+              <h2 className="text-sm font-semibold text-foreground">Project Report</h2>
             </div>
-            {reports.length === 0 ? (
-              <div className="text-sm text-muted-foreground text-center py-8">
-                No reports yet
-              </div>
+            {currentUser?.id === project?.leadId ? (
+              <>
+                <textarea
+                  value={reportContent}
+                  onChange={(e) => setReportContent(e.target.value)}
+                  placeholder="Enter project report..."
+                  className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400 min-h-[120px] resize-y mb-4"
+                  rows={5}
+                />
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleCreateReport}
+                    disabled={!reportContent.trim()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Submit Report
+                  </button>
+                </div>
+              </>
             ) : (
-              <div className="space-y-4">
-                {reports.map((report) => {
-                  const author = users.find((u) => u.id === report.createdBy);
-                  return (
-                    <div key={report.id} className="border-b border-border pb-4:last:pb-0 last:border-0">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          {author && <Av name={author.name} size="sm" />}
-                          <span className="text-sm font-medium text-foreground">{author?.name || "Unknown"}</span>
-                        </div>
-                        <span className="text-xs text-muted-foreground">{fmtDate(report.createdAt)}</span>
-                      </div>
-                      <p className="text-sm text-muted-foreground whitespace-pre-wrap">{report.content}</p>
-                    </div>
-                  );
-                })}
+              <div className="text-sm text-muted-foreground">
+                {existingReport ? (
+                  <p className="whitespace-pre-wrap">{existingReport.content}</p>
+                ) : (
+                  <p className="text-center py-8">No report submitted yet</p>
+                )}
               </div>
             )}
           </div>
@@ -779,38 +786,6 @@ export function ProjectDetailPage() {
                 Delete
               </button>
             </div>
-          </div>
-        </Dlg>
-      )}
-
-      {showNewReport && (
-        <Dlg title="New Report" onClose={() => setShowNewReport(false)}>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Content</label>
-              <textarea
-                value={reportContent}
-                onChange={(e) => setReportContent(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400 min-h-[120px] resize-y"
-                rows={5}
-                autoFocus
-              />
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-border">
-            <button
-              onClick={() => setShowNewReport(false)}
-              className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleCreateReport}
-              disabled={!reportContent.trim()}
-              className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Submit Report
-            </button>
           </div>
         </Dlg>
       )}

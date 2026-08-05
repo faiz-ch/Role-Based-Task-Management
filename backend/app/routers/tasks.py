@@ -243,8 +243,7 @@ async def update_task_status(
     """
     Status changes with explicit transition rules:
     - Submit (To Do/Reschedule -> Review): allowed only for task.assigned_to
-    - Approve (Review -> Done or Review -> Reschedule): allowed only for task.created_by
-    - Manager override: can_manage_task() users who aren't the assignee or creator can still act, logged as override
+    - Approve (Review -> Done or Review -> Reschedule): allowed for project lead OR project:manage (with department scope)
     """
     from sqlalchemy.orm import selectinload
     task = await _get_task_or_404_with_loads(db, task_id)
@@ -252,14 +251,15 @@ async def update_task_status(
     # Check if user is the assignee
     is_assignee = current_user.id == task.assigned_to
 
-    # Check if user is the creator
-    is_creator = current_user.id == task.created_by
-
-    # Check if user has management authority
-    has_management_authority = can_manage_task(current_user, task)
-
-    # Determine if this is a manager override (has authority but is not the creator)
-    is_manager_override = has_management_authority and not is_creator
+    # Check if user can approve (project lead OR scoped project:manage)
+    can_approve = False
+    if task.project_id is not None:
+        if is_project_lead(current_user, task.project):
+            can_approve = True
+        elif has_permission(current_user, "project:manage"):
+            scoped = get_scoped_department_ids(current_user)
+            if scoped is None or any(d.id in scoped for d in task.project.departments):
+                can_approve = True
 
     # Handle submit transition (To Do/Reschedule -> Review)
     if task.status in (TaskStatus.TODO, TaskStatus.RESCHEDULE) and payload.status == TaskStatus.REVIEW:
@@ -309,24 +309,18 @@ async def update_task_status(
                     status_code=400,
                     detail="Task has no assignee."
                 )
-            if is_manager_override:
-                print(f"status changed by non-owner {current_user.id} via manager override")
-            else:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Only the task's assignee can submit it for review"
-                )
+            raise HTTPException(
+                status_code=403,
+                detail="Only the task's assignee can submit it for review"
+            )
 
     # Handle approve transitions (Review -> Done or Review -> Reschedule)
     elif task.status == TaskStatus.REVIEW and payload.status in (TaskStatus.DONE, TaskStatus.RESCHEDULE):
-        if not is_creator:
-            if is_manager_override:
-                print(f"status changed by non-owner {current_user.id} via manager override")
-            else:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Only the task's creator can approve it or send it back"
-                )
+        if not can_approve:
+            raise HTTPException(
+                status_code=403,
+                detail="Only the project lead or project:manage users can approve tasks"
+            )
 
         # Require comment for approve/reschedule actions
         if not payload.comment or not payload.comment.strip():
@@ -341,8 +335,8 @@ async def update_task_status(
         if task.status in (TaskStatus.TODO, TaskStatus.RESCHEDULE):
             valid_transitions.append("Review (by assignee)")
         if task.status == TaskStatus.REVIEW:
-            valid_transitions.append("Done (by creator)")
-            valid_transitions.append("Reschedule (by creator)")
+            valid_transitions.append("Done (by project lead or project:manage)")
+            valid_transitions.append("Reschedule (by project lead or project:manage)")
         raise HTTPException(
             status_code=403,
             detail=f"Invalid transition. From {task.status.value}, valid transitions are: {', '.join(valid_transitions)}"
@@ -476,11 +470,20 @@ async def update_task_team(
             detail="Cannot assign team members to standalone tasks (tasks without a project)"
         )
 
-    # Only the task's PROJECT lead can assign its team
-    if not is_project_lead(current_user, task.project):
+    # Project lead OR project:manage (with department scope) can assign task team
+    if is_project_lead(current_user, task.project):
+        pass  # Authorized
+    elif has_permission(current_user, "project:manage"):
+        scoped = get_scoped_department_ids(current_user)
+        if scoped is not None and not any(d.id in scoped for d in task.project.departments):
+            raise HTTPException(
+                status_code=403,
+                detail="You do not have permission to assign task team members"
+            )
+    else:
         raise HTTPException(
             status_code=403,
-            detail="Only the project lead can assign task team members"
+            detail="Only the project lead or project:manage users can assign task team members"
         )
 
     # Candidate pool is the PROJECT's team members

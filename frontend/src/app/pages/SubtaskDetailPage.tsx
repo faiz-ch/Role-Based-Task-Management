@@ -49,7 +49,10 @@ export function SubtaskDetailPage() {
   const [approveComment, setApproveComment] = useState("");
   const [rescheduleComment, setRescheduleComment] = useState("");
 
-  const canManage = permissions.includes("project:manage");
+  const canManage = permissions.includes("project:manage") && (
+    currentUser?.role?.allDepartments ||
+    (project?.departmentIds && currentUser?.role?.departments?.some(d => project.departmentIds.includes(d.id)))
+  );
 
   function canManageSubtask(): boolean {
     if (!subtask || !task || !project) return false;
@@ -58,6 +61,15 @@ export function SubtaskDetailPage() {
       currentUser?.id === project.leadId ||
       currentUser?.id === task.leadId ||
       subtask.assigneeIds.includes(currentUser?.id || 0)
+    );
+  }
+
+  function canApproveSubtask(): boolean {
+    if (!subtask || !task || !project) return false;
+    return (
+      canManage ||
+      currentUser?.id === project.leadId ||
+      currentUser?.id === task.leadId
     );
   }
 
@@ -343,8 +355,8 @@ export function SubtaskDetailPage() {
                 )
               ) : null}
             </div>
-            {/* Approve/Reschedule actions for creator */}
-            {isSubtaskCreator() && subtask.status === "Review" && (
+            {/* Approve/Reschedule actions */}
+            {canApproveSubtask() && subtask.status === "Review" && (
               <div className="mt-4 pt-4 border-t border-border space-y-3">
                 <div className="flex gap-2">
                   <button

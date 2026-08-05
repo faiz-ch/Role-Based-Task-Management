@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { Plus, Search, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
-import { Project, UserType, ProjectStatus, Priority, Department } from "../types";
+import { Project, UserType, ProjectStatus, Priority, Department, Task } from "../types";
 import { useAuth } from "../context/AuthContext";
 import { getProjects, createProject, deleteProject } from "../api/projects";
+import { getTasks } from "../api/tasks";
 import { getUsers } from "../api/users";
 import { getDepartments } from "../api/departments";
 import { Av } from "../components/Av";
@@ -11,6 +12,7 @@ import { Dlg } from "../components/Dlg";
 import { FldInput } from "../components/FldInput";
 import { FldSelect } from "../components/FldSelect";
 import { PriBadge } from "../components/PriBadge";
+import { Check } from "lucide-react";
 
 const PROJECT_STATUSES: ProjectStatus[] = ["Planning", "Active", "Done", "Archived"];
 const PRIORITIES: Priority[] = ["Low", "Medium", "High"];
@@ -72,6 +74,7 @@ export function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [users, setUsers] = useState<UserType[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -89,22 +92,27 @@ export function ProjectsPage() {
     departmentIds: [],
   });
 
-  const canCreate = permissions.includes("project:manage");
+  const canCreate = permissions.includes("project:manage") && (
+    currentUser?.role?.allDepartments ||
+    (currentUser?.role?.departments && currentUser.role.departments.length > 0)
+  );
 
   useEffect(() => {
     async function loadData() {
       try {
         setLoading(true);
         setError(null);
-        const [projectsResult, usersResult, departmentsResult] = await Promise.allSettled([
+        const [projectsResult, usersResult, departmentsResult, tasksResult] = await Promise.allSettled([
           getProjects(),
           getUsers(),
           getDepartments(),
+          getTasks(),
         ]);
 
         setProjects(projectsResult.status === "fulfilled" ? projectsResult.value : []);
         setUsers(usersResult.status === "fulfilled" ? usersResult.value : []);
         setDepartments(departmentsResult.status === "fulfilled" ? departmentsResult.value : []);
+        setTasks(tasksResult.status === "fulfilled" ? tasksResult.value : []);
 
         if (projectsResult.status === "rejected") {
           setError((projectsResult.reason as any)?.message || "Failed to load projects.");
@@ -251,63 +259,91 @@ export function ProjectsPage() {
       </div>
 
       {/* Project list */}
-      <div className="flex-1 overflow-y-auto space-y-3">
+      <div className="flex-1 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
         {filteredProjects.map((project) => {
-          const lead = users.find((u) => u.id === project.leadId);
-          const projectDepts = departments.filter((d) => project.departmentIds.includes(d.id));
+          const projectTasks = tasks.filter((t) => t.projectId === project.id);
+          const totalTasks = projectTasks.length;
+          const doneTasks = projectTasks.filter((t) => t.status === "Done").length;
+          const hasTasks = totalTasks > 0;
+          const progressPercent = hasTasks ? Math.round((doneTasks / totalTasks) * 100) : 0;
+          
+          const teamMembers = users.filter((u) => project.teamUserIds.includes(u.id));
+          const visibleAvatars = teamMembers.slice(0, 3);
+          const overflowCount = Math.max(0, teamMembers.length - 3);
           
           return (
             <div
               key={project.id}
               onClick={() => navigate(`/projects/${project.id}`)}
-              className="bg-white rounded-xl border border-border p-4 hover:bg-muted/20 transition-colors cursor-pointer"
+              className="bg-white rounded-xl border border-border p-4 hover:bg-muted/20 transition-colors cursor-pointer relative"
             >
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-2">
-                    <h3 className="text-sm font-medium text-foreground">
-                      {project.name}
-                    </h3>
-                    <ProjectStatusBadge status={project.status} />
-                    <PriBadge priority={project.priority} />
+              {canCreate && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openDeleteConfirm(project);
+                  }}
+                  className="absolute top-4 right-4 p-1.5 hover:bg-red-50 rounded transition-colors cursor-pointer flex-shrink-0"
+                  title="Delete project"
+                >
+                  <Trash2 size={14} className="text-red-400" />
+                </button>
+              )}
+              
+              <div className="pr-8">
+                <ProjectStatusBadge status={project.status} />
+                
+                <h3 className="text-base font-semibold text-foreground mt-2 mb-3">
+                  {project.name}
+                </h3>
+                
+                {hasTasks ? (
+                  <div className="mb-4">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground mb-1.5">
+                      <span>Progress</span>
+                      <span className="font-medium text-foreground">{progressPercent}%</span>
+                    </div>
+                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                        style={{ width: `${progressPercent}%` }}
+                      />
+                    </div>
                   </div>
-                  {project.description && (
-                    <p className="text-xs text-muted-foreground mb-2 line-clamp-2">
-                      {project.description}
-                    </p>
-                  )}
-                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                    {lead && (
-                      <div className="flex items-center gap-1">
-                        <Av name={lead.name} size="sm" />
-                        <span>{lead.name}</span>
-                      </div>
-                    )}
-                    {project.dueDate && <span>{fmtDate(project.dueDate)}</span>}
-                    {projectDepts.length > 0 && (
-                      <div className="flex items-center gap-1">
-                        <span className="text-muted-foreground">Departments:</span>
-                        {projectDepts.map((d) => (
-                          <span key={d.id} className="px-1.5 py-0.5 bg-muted rounded text-xs">
-                            {d.name}
-                          </span>
-                        ))}
-                      </div>
-                    )}
+                ) : (
+                  <div className="mb-4 text-xs text-muted-foreground italic">
+                    No tasks yet
                   </div>
-                </div>
-                {canCreate && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openDeleteConfirm(project);
-                    }}
-                    className="p-1.5 hover:bg-red-50 rounded transition-colors cursor-pointer flex-shrink-0"
-                    title="Delete project"
-                  >
-                    <Trash2 size={14} className="text-red-400" />
-                  </button>
                 )}
+                
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center">
+                    {visibleAvatars.map((member, idx) => (
+                      <div
+                        key={member.id}
+                        className="-ml-2 first:ml-0 relative"
+                        style={{ zIndex: visibleAvatars.length - idx }}
+                      >
+                        <Av name={member.name} size="sm" />
+                      </div>
+                    ))}
+                    {overflowCount > 0 && (
+                      <div className="-ml-2 w-7 h-7 rounded-full bg-muted border-2 border-white flex items-center justify-center text-xs font-medium text-muted-foreground relative" style={{ zIndex: 0 }}>
+                        +{overflowCount}
+                      </div>
+                    )}
+                    {teamMembers.length === 0 && (
+                      <span className="text-xs text-muted-foreground italic">No team members</span>
+                    )}
+                  </div>
+                  
+                  {hasTasks && (
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Check size={14} className="text-emerald-500" />
+                      <span className="font-medium text-foreground">{doneTasks}/{totalTasks}</span>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           );
