@@ -32,7 +32,7 @@ export function LoginPage() {
             <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center flex-shrink-0">
               <CheckSquare size={15} className="text-white" />
             </div>
-            <span className="text-white font-semibold text-lg tracking-tight">Nexus Tasks</span>
+            <span className="text-white font-semibold text-lg tracking-tight">RLKU PMS</span>
           </div>
           <h1 className="text-white text-3xl font-bold leading-tight mb-3">
             Manage work.<br />Ship faster.
@@ -62,7 +62,7 @@ export function LoginPage() {
             <div className="w-7 h-7 bg-[#0C1022] rounded-lg flex items-center justify-center">
               <CheckSquare size={14} className="text-white" />
             </div>
-            <span className="font-semibold tracking-tight">Nexus Tasks</span>
+            <span className="font-semibold tracking-tight">RLKU PMS</span>
           </div>
 
           <h2 className="text-2xl font-bold text-foreground mb-1">Sign in</h2>
@@ -102,7 +102,7 @@ export function LoginPage() {
           </form>
 
           <p className="text-center text-sm text-muted-foreground mt-5">
-            New to Nexus?{" "}
+            New to RLKU PMS?{" "}
             <button
               onClick={() => navigate("/register")}
               disabled={loading}

@@ -677,42 +677,44 @@ async def delete_attachment(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Delete an attachment. Only the person who uploaded the attachment can delete it,
-    and only while the associated task/subtask is in an editable state (To Do or Reschedule).
+    Delete an attachment. Only the person who uploaded the attachment can delete it
+    while the associated task/subtask is in an editable state (To Do or Reschedule).
+    After submission, only users with project:manage permission can delete attachments.
     """
     result = await db.execute(select(Attachment).where(Attachment.id == attachment_id))
     attachment = result.scalar_one_or_none()
     if attachment is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
-    # Only the uploader can delete their own attachment
-    if current_user.id != attachment.uploaded_by:
-        raise HTTPException(
-            status_code=403,
-            detail="Only the person who uploaded an attachment can delete it"
-        )
-
     # Check editable state based on whether this is a task or subtask attachment
+    is_editable = False
     if attachment.subtask_id is not None:
         # Subtask attachment - check subtask status
         subtask_result = await db.execute(select(SubTask).where(SubTask.id == attachment.subtask_id))
         subtask = subtask_result.scalar_one_or_none()
         if subtask is None:
             raise HTTPException(status_code=404, detail="Subtask not found")
-        if subtask.status not in ("To Do", "Reschedule"):
-            raise HTTPException(
-                status_code=400,
-                detail="Attachments can't be removed once the subtask is submitted for review"
-            )
+        is_editable = subtask.status in ("To Do", "Reschedule")
     else:
         # Task attachment - check task status
         task = await _get_task_or_404_with_loads(db, attachment.task_id)
         if not can_view_task(current_user, task):
             raise HTTPException(status_code=404, detail="Attachment not found")
-        if task.status not in (TaskStatus.TODO, TaskStatus.RESCHEDULE):
+        is_editable = task.status in (TaskStatus.TODO, TaskStatus.RESCHEDULE)
+
+    # If in editable state, only the uploader can delete
+    if is_editable:
+        if current_user.id != attachment.uploaded_by:
             raise HTTPException(
-                status_code=400,
-                detail="Attachments can't be removed once the task is submitted for review"
+                status_code=403,
+                detail="Only the person who uploaded an attachment can delete it"
+            )
+    else:
+        # If not in editable state, only project:manage users can delete
+        if not has_permission(current_user, "project:manage"):
+            raise HTTPException(
+                status_code=403,
+                detail="Only users with project:manage permission can delete attachments after submission"
             )
 
     # Delete file from disk if it exists

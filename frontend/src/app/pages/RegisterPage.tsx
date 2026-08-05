@@ -35,7 +35,7 @@ export function RegisterPage() {
           <div className="w-7 h-7 bg-[#0C1022] rounded-lg flex items-center justify-center">
             <CheckSquare size={14} className="text-white" />
           </div>
-          <span className="font-semibold tracking-tight">Nexus Tasks</span>
+          <span className="font-semibold tracking-tight">RLKU PMS</span>
         </div>
 
         <h2 className="text-2xl font-bold text-foreground mb-1">Create account</h2>

@@ -76,7 +76,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
           {!collapsed && (
             <span className="text-white font-semibold tracking-tight text-sm">
-              Nexus Tasks
+              RLKU PMS
             </span>
           )}
         </div>
