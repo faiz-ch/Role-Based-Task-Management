@@ -6,6 +6,14 @@ export type Page = "login" | "register" | "dashboard" | "tasks" | "taskDetail" |
 export interface Department {
   id: number;
   name: string;
+  description: string | null;
+  headId: number | null;
+  head: { id: number; name: string; email: string } | null;
+  color: string;
+  isActive: boolean;
+  memberCount: number;
+  projectCount: number;
+  createdAt: string;
 }
 
 export interface Category {
@@ -17,10 +25,19 @@ export interface Category {
 export interface Role {
   id: number;
   name: string;
-  category: Category | null;
+  description: string | null;
+  color: string;
+  isActive: boolean;
+  isSystem: boolean;
+  createdBy: number | null;
+  creator: { id: number; name: string } | null;
+  createdAt: string;
+  updatedAt: string;
+  permissions: string[];
   allDepartments: boolean;
-  departments: Department[];
-  assignableCategories: Category[];
+  departments: { id: number; name: string }[];
+  assignableRoles: { id: number; name: string }[];
+  userCount: number;
 }
 
 export interface UserType {

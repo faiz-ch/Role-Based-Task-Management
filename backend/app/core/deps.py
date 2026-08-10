@@ -49,13 +49,12 @@ async def get_current_user(
 
     # Eager load all relationships needed for permission checks and scoping.
     # Separate selectinload branches from shared parent to avoid chaining issues.
-    from app.models.category import Category
     result = await db.execute(
         select(User)
         .options(
-            selectinload(User.role).selectinload(Role.category).selectinload(Category.permissions),
+            selectinload(User.role).selectinload(Role.permissions),
             selectinload(User.role).selectinload(Role.departments),
-            selectinload(User.role).selectinload(Role.assignable_categories).selectinload(Category.permissions),
+            selectinload(User.role).selectinload(Role.assignable_roles),
             selectinload(User.department),
         )
         .where(User.id == int(user_id))
@@ -76,10 +75,10 @@ def require_permission(permission_name: str):
     """
 
     async def checker(current_user: User = Depends(get_current_user)) -> User:
-        if current_user.role is None or current_user.role.category is None:
-            raise HTTPException(status_code=403, detail="User has no role or category assigned")
+        if current_user.role is None:
+            raise HTTPException(status_code=403, detail="User has no role assigned")
 
-        user_permissions = {p.name for p in current_user.role.category.permissions}
+        user_permissions = {p.name for p in current_user.role.permissions}
         if permission_name not in user_permissions:
             raise HTTPException(
                 status_code=403,
@@ -92,9 +91,9 @@ def require_permission(permission_name: str):
 
 def has_permission(user: User, permission_name: str) -> bool:
     """Check if a user has a specific permission."""
-    if user.role is None or user.role.category is None:
+    if user.role is None:
         return False
-    return any(p.name == permission_name for p in user.role.category.permissions)
+    return any(p.name == permission_name for p in user.role.permissions)
 
 
 def get_scoped_department_ids(user: User) -> set[int] | None:

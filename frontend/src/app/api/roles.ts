@@ -1,22 +1,23 @@
 import { apiFetch } from "./client";
-import { Role, PermDef, Category } from "../types";
-
-function mapCategory(c: any): Category {
-  return {
-    id: c.id,
-    name: c.name,
-    permissions: Array.isArray(c.permissions) ? c.permissions.map((p: any) => p.name) : [],
-  };
-}
+import { Role, PermDef } from "../types";
 
 function mapRole(r: any): Role {
   return {
     id: r.id,
     name: r.name,
-    category: r.category ? mapCategory(r.category) : null,
+    description: r.description,
+    color: r.color,
+    isActive: r.is_active,
+    isSystem: r.is_system,
+    createdBy: r.created_by,
+    creator: r.creator ? { id: r.creator.id, name: r.creator.name } : null,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    permissions: Array.isArray(r.permissions) ? r.permissions.map((p: any) => p.name) : [],
     allDepartments: r.all_departments || false,
     departments: Array.isArray(r.departments) ? r.departments.map((d: any) => ({ id: d.id, name: d.name })) : [],
-    assignableCategories: Array.isArray(r.assignable_categories) ? r.assignable_categories.map(mapCategory) : [],
+    assignableRoles: Array.isArray(r.assignable_roles) ? r.assignable_roles.map((ar: any) => ({ id: ar.id, name: ar.name })) : [],
+    userCount: r.user_count,
   };
 }
 
@@ -25,61 +26,88 @@ export async function getRoles(): Promise<Role[]> {
   return Array.isArray(data) ? data.map(mapRole) : [];
 }
 
-export async function createRole(
-  name: string,
-  categoryId: number | null,
-  allDepartments: boolean,
-  departmentIds: number[],
-  assignableCategoryIds: number[]
-): Promise<Role> {
-  const body: any = { name, all_departments: allDepartments, department_ids: departmentIds, assignable_category_ids: assignableCategoryIds };
-  if (categoryId !== null) body.category_id = categoryId;
-  
+export async function getRole(id: number): Promise<Role> {
+  const data = await apiFetch(`/roles/${id}`);
+  return mapRole(data);
+}
+
+export async function createRole(input: {
+  name: string;
+  description?: string;
+  color?: string;
+  isActive?: boolean;
+  isSystem?: boolean;
+  categoryId?: number | null;
+  permissionIds?: number[];
+  allDepartments?: boolean;
+  departmentIds?: number[];
+  assignableRoleIds?: number[];
+}): Promise<Role> {
+  const payload: any = { name: input.name };
+  if (input.description !== undefined) payload.description = input.description || null;
+  if (input.color !== undefined) payload.color = input.color;
+  if (input.isActive !== undefined) payload.is_active = input.isActive;
+  if (input.isSystem !== undefined) payload.is_system = input.isSystem;
+  if (input.categoryId !== undefined) payload.category_id = input.categoryId;
+  if (input.permissionIds !== undefined) payload.permission_ids = input.permissionIds;
+  if (input.allDepartments !== undefined) payload.all_departments = input.allDepartments;
+  if (input.departmentIds !== undefined) payload.department_ids = input.departmentIds;
+  if (input.assignableRoleIds !== undefined) payload.assignable_role_ids = input.assignableRoleIds;
   const data = await apiFetch("/roles", {
     method: "POST",
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
   });
   return mapRole(data);
 }
 
-export async function setRoleCategory(roleId: number, categoryId: number | null): Promise<Role> {
-  const data = await apiFetch(`/roles/${roleId}/category`, {
+export async function updateRole(id: number, input: Partial<{
+  name: string;
+  description: string;
+  color: string;
+  isActive: boolean;
+  isSystem: boolean;
+  permissionIds: number[];
+  allDepartments: boolean;
+  departmentIds: number[];
+  assignableRoleIds: number[];
+}>): Promise<Role> {
+  const payload: any = {};
+  if (input.name !== undefined) payload.name = input.name;
+  if (input.description !== undefined) payload.description = input.description || null;
+  if (input.color !== undefined) payload.color = input.color;
+  if (input.isActive !== undefined) payload.is_active = input.isActive;
+  if (input.isSystem !== undefined) payload.is_system = input.isSystem;
+  if (input.permissionIds !== undefined) payload.permission_ids = input.permissionIds;
+  if (input.allDepartments !== undefined) payload.all_departments = input.allDepartments;
+  if (input.departmentIds !== undefined) payload.department_ids = input.departmentIds;
+  if (input.assignableRoleIds !== undefined) payload.assignable_role_ids = input.assignableRoleIds;
+  const data = await apiFetch(`/roles/${id}`, {
     method: "PATCH",
-    body: JSON.stringify({ category_id: categoryId }),
-  });
-  return mapRole(data);
-}
-
-export async function getAllPermissions(): Promise<PermDef[]> {
-  const data = await apiFetch("/roles/permissions/all");
-  return Array.isArray(data) ? data : [];
-}
-
-export async function setRoleDepartments(
-  roleId: number,
-  allDepartments: boolean,
-  departmentIds: number[]
-): Promise<Role> {
-  const data = await apiFetch(`/roles/${roleId}/departments`, {
-    method: "PATCH",
-    body: JSON.stringify({ all_departments: allDepartments, department_ids: departmentIds }),
-  });
-  return mapRole(data);
-}
-
-export async function setRoleAssignableCategories(
-  roleId: number,
-  assignableCategoryIds: number[]
-): Promise<Role> {
-  const data = await apiFetch(`/roles/${roleId}/assignable-categories`, {
-    method: "PATCH",
-    body: JSON.stringify({ assignable_category_ids: assignableCategoryIds }),
+    body: JSON.stringify(payload),
   });
   return mapRole(data);
 }
 
 export async function deleteRole(roleId: number): Promise<void> {
-  await apiFetch(`/roles/${roleId}`, {
-    method: "DELETE",
-  });
+  await apiFetch(`/roles/${roleId}`, { method: "DELETE" });
+}
+
+export async function getRoleActivity(id: number): Promise<{
+  actorId: number;
+  action: string;
+  detail: string | null;
+  createdAt: string;
+}[]> {
+  const data = await apiFetch(`/roles/${id}/activity`);
+  return Array.isArray(data) ? data.map((a: any) => ({
+    actorId: a.actor_id,
+    action: a.action,
+    detail: a.detail,
+    createdAt: a.created_at,
+  })) : [];
+}
+
+export async function getAllPermissions(): Promise<PermDef[]> {
+  const data = await apiFetch("/roles/permissions/all");
+  return Array.isArray(data) ? data : [];
 }

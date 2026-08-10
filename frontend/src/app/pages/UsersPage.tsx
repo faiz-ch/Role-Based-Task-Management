@@ -66,16 +66,11 @@ export function UsersPage() {
     loadData();
   }, []);
   
-  // Filter roles based on the current user's role's assignable_categories.
-  // (This list lives on Role now, not Category — a role with no restriction
-  // set will simply have an empty assignableCategories list, meaning it
-  // can't assign anyone; the Admin role gets every category via bootstrap.)
-  const assignableCategoryIds = (currentUser?.role?.assignableCategories ?? []).map((c) => c.id);
+  // Filter roles based on the current user's role's assignable_roles.
+  // A role can only assign roles that are in its assignableRoles list.
+  const assignableRoleIds = (currentUser?.role?.assignableRoles ?? []).map((r) => r.id);
 
-  const filteredRoles = roles.filter((role) => {
-    const roleCategoryId = role.category?.id;
-    return roleCategoryId !== undefined && roleCategoryId !== null && assignableCategoryIds.includes(roleCategoryId);
-  });
+  const filteredRoles = roles.filter((role) => assignableRoleIds.includes(role.id));
 
   async function handleRoleChange(uid: number, roleIdStr: string) {
     try {

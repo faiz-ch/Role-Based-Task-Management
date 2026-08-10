@@ -10,11 +10,12 @@ from app.models.user import User
 from app.models.role import Role
 from app.models.department import Department
 from app.models.task import Task
-from app.models.category import Category
 from app.models.project import Project, ProjectTeam
 from app.models.subtask import SubTask, SubTaskAssignee
 from app.models.report import Report
 from app.models.attachment import Attachment
+from app.models.activity_log import ActivityLog
+from app.models.comment import Comment
 from app.schemas.user import UserOut, UserUpdate, AssignRoleRequest, AssignDepartmentRequest, UserCreate
 from app.services import notification_dispatch
 
@@ -30,9 +31,9 @@ async def list_users(
     if not has_permission(current_user, "user:view"):
         raise HTTPException(status_code=403, detail="You do not have permission to view users")
     
-    query = select(User).options(selectinload(User.role).selectinload(Role.category).selectinload(Category.permissions),
+    query = select(User).options(selectinload(User.role).selectinload(Role.permissions),
         selectinload(User.role).selectinload(Role.departments),
-        selectinload(User.role).selectinload(Role.assignable_categories).selectinload(Category.permissions),
+        selectinload(User.role).selectinload(Role.assignable_roles),
         selectinload(User.department))
     
     scoped_dept_ids = get_scoped_department_ids(current_user)
@@ -72,28 +73,23 @@ async def create_user(
     else:
         final_department_id = payload.department_id
     
-    # Validate role is assignable based on role's assignable_categories
+    # Validate role is assignable based on role's assignable_roles
     if payload.role_id is not None:
         role_result = await db.execute(
-            select(Role).options(selectinload(Role.category)).where(Role.id == payload.role_id)
+            select(Role).where(Role.id == payload.role_id)
         )
         role = role_result.scalar_one_or_none()
         if role is None:
             raise HTTPException(status_code=404, detail="Role not found")
-        if role.category is None:
-            raise HTTPException(
-                status_code=403,
-                detail="You cannot assign a role without a category"
-            )
-        
-        # Check if the role's category is in the current user's role's assignable list
+
+        # Check if this role is in the current user's role's assignable list
         if current_user.role is None:
             raise HTTPException(
                 status_code=403,
                 detail="You cannot assign roles because you have no role"
             )
-        assignable_category_ids = {c.id for c in current_user.role.assignable_categories}
-        if role.category_id not in assignable_category_ids:
+        assignable_role_ids = {r.id for r in current_user.role.assignable_roles}
+        if role.id not in assignable_role_ids:
             raise HTTPException(
                 status_code=403,
                 detail="You are not allowed to assign this role"
@@ -119,9 +115,9 @@ async def create_user(
     # Re-fetch with eager load to avoid MissingGreenlet error
     result = await db.execute(
         select(User)
-        .options(selectinload(User.role).selectinload(Role.category).selectinload(Category.permissions),
+        .options(selectinload(User.role).selectinload(Role.permissions),
         selectinload(User.role).selectinload(Role.departments),
-        selectinload(User.role).selectinload(Role.assignable_categories).selectinload(Category.permissions),
+        selectinload(User.role).selectinload(Role.assignable_roles),
         selectinload(User.department))
         .where(User.id == user.id)
     )
@@ -137,9 +133,9 @@ async def get_me(current_user: User = Depends(get_current_user)):
 @router.get("/me/permissions", response_model=list[str])
 async def get_me_permissions(current_user: User = Depends(get_current_user)):
     """Any logged-in user can see their own permissions list."""
-    if current_user.role is None or current_user.role.category is None:
+    if current_user.role is None:
         return []
-    return [p.name for p in current_user.role.category.permissions]
+    return [p.name for p in current_user.role.permissions]
 
 
 @router.get("/{user_id}", response_model=UserOut)
@@ -153,9 +149,9 @@ async def get_user(
     
     result = await db.execute(
         select(User)
-        .options(selectinload(User.role).selectinload(Role.category).selectinload(Category.permissions),
+        .options(selectinload(User.role).selectinload(Role.permissions),
         selectinload(User.role).selectinload(Role.departments),
-        selectinload(User.role).selectinload(Role.assignable_categories).selectinload(Category.permissions),
+        selectinload(User.role).selectinload(Role.assignable_roles),
         selectinload(User.department))
         .where(User.id == user_id)
     )
@@ -247,9 +243,9 @@ async def update_user(
 
     result = await db.execute(
         select(User)
-        .options(selectinload(User.role).selectinload(Role.category).selectinload(Category.permissions),
+        .options(selectinload(User.role).selectinload(Role.permissions),
         selectinload(User.role).selectinload(Role.departments),
-        selectinload(User.role).selectinload(Role.assignable_categories).selectinload(Category.permissions),
+        selectinload(User.role).selectinload(Role.assignable_roles),
         selectinload(User.department))
         .where(User.id == user.id)
     )
@@ -281,38 +277,33 @@ async def assign_role(
         user.role_id = None
     else:
         role_result = await db.execute(
-            select(Role).options(selectinload(Role.category)).where(Role.id == payload.role_id)
+            select(Role).where(Role.id == payload.role_id)
         )
         role = role_result.scalar_one_or_none()
         if role is None:
             raise HTTPException(status_code=404, detail="Role not found")
-        if role.category is None:
-            raise HTTPException(
-                status_code=403,
-                detail="You cannot assign a role without a category"
-            )
-        
-        # Apply role-based guardrail - check assignable_categories
+
+        # Apply role-based guardrail - check assignable_roles
         if current_user.role is None:
             raise HTTPException(
                 status_code=403,
                 detail="You cannot assign roles because you have no role"
             )
-        assignable_category_ids = {c.id for c in current_user.role.assignable_categories}
-        if role.category_id not in assignable_category_ids:
+        assignable_role_ids = {r.id for r in current_user.role.assignable_roles}
+        if role.id not in assignable_role_ids:
             raise HTTPException(
                 status_code=403,
                 detail="You are not allowed to assign this role"
             )
-        
+
         user.role_id = role.id
 
     await db.commit()
     result = await db.execute(
         select(User)
-        .options(selectinload(User.role).selectinload(Role.category).selectinload(Category.permissions),
+        .options(selectinload(User.role).selectinload(Role.permissions),
         selectinload(User.role).selectinload(Role.departments),
-        selectinload(User.role).selectinload(Role.assignable_categories).selectinload(Category.permissions),
+        selectinload(User.role).selectinload(Role.assignable_roles),
         selectinload(User.department))
         .where(User.id == user.id)
     )
@@ -426,6 +417,14 @@ async def delete_user(
     for task in tasks_approved:
         task.team_approved_by = None
 
+    # Department.head_id
+    departments_headed_result = await db.execute(
+        select(Department).where(Department.head_id == user_id)
+    )
+    departments_headed = departments_headed_result.scalars().all()
+    for dept in departments_headed:
+        dept.head_id = None
+
     # Reassign NOT NULL audit trail columns to current_user
     # ProjectTeam.added_by
     project_teams_result = await db.execute(
@@ -451,6 +450,22 @@ async def delete_user(
     subtask_assignees = subtask_assignees_result.scalars().all()
     for sa in subtask_assignees:
         sa.assigned_by = current_user.id
+
+    # ActivityLog.actor_id
+    activity_logs_result = await db.execute(
+        select(ActivityLog).where(ActivityLog.actor_id == user_id)
+    )
+    activity_logs = activity_logs_result.scalars().all()
+    for log in activity_logs:
+        log.actor_id = current_user.id
+
+    # Comment.author_id
+    comments_result = await db.execute(
+        select(Comment).where(Comment.author_id == user_id)
+    )
+    comments = comments_result.scalars().all()
+    for comment in comments:
+        comment.author_id = current_user.id
 
     # Unassign tasks where this user is the assignee (existing logic)
     assigned_tasks_result = await db.execute(
@@ -515,9 +530,9 @@ async def assign_department(
     await db.commit()
     result = await db.execute(
         select(User)
-        .options(selectinload(User.role).selectinload(Role.category).selectinload(Category.permissions),
+        .options(selectinload(User.role).selectinload(Role.permissions),
         selectinload(User.role).selectinload(Role.departments),
-        selectinload(User.role).selectinload(Role.assignable_categories).selectinload(Category.permissions),
+        selectinload(User.role).selectinload(Role.assignable_roles),
         selectinload(User.department))
         .where(User.id == user.id)
     )

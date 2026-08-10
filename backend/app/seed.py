@@ -22,8 +22,9 @@ PERMISSIONS = [
     # Role & Department permissions
     "role:manage",
     "department:manage",
-    # Dashboard permissions
-    "dashboard:view",
+    # Task permissions
+    "task:create",
+    "task:manage",
 ]
 
 

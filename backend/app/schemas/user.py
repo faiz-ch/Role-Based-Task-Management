@@ -1,7 +1,24 @@
 from pydantic import BaseModel, EmailStr, field_validator
 
-from app.schemas.department import DepartmentOut
-from app.schemas.role import RoleOut
+
+class DepartmentBrief(BaseModel):
+    id: int
+    name: str
+    color: str
+    is_active: bool
+
+    class Config:
+        from_attributes = True
+
+
+class RoleBrief(BaseModel):
+    id: int
+    name: str
+    color: str
+    is_active: bool
+
+    class Config:
+        from_attributes = True
 
 
 class UserOut(BaseModel):
@@ -13,8 +30,8 @@ class UserOut(BaseModel):
     name: str
     email: EmailStr
     is_active: bool
-    role: RoleOut | None = None
-    department: DepartmentOut | None = None
+    role: RoleBrief | None = None
+    department: DepartmentBrief | None = None
 
     class Config:
         from_attributes = True

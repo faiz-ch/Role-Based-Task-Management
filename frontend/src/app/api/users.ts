@@ -1,22 +1,23 @@
 import { apiFetch } from "./client";
-import { UserType, Role, Category } from "../types";
-
-function mapCategory(c: any): Category {
-  return {
-    id: c.id,
-    name: c.name,
-    permissions: Array.isArray(c.permissions) ? c.permissions.map((p: any) => p.name) : [],
-  };
-}
+import { UserType, Role } from "../types";
 
 function mapRole(r: any): Role {
   return {
     id: r.id,
     name: r.name,
-    category: r.category ? mapCategory(r.category) : null,
+    description: r.description || null,
+    color: r.color || "blue",
+    isActive: r.is_active ?? true,
+    isSystem: r.is_system ?? false,
+    createdBy: r.created_by || null,
+    creator: r.creator ? { id: r.creator.id, name: r.creator.name } : null,
+    createdAt: r.created_at || "",
+    updatedAt: r.updated_at || "",
+    permissions: Array.isArray(r.permissions) ? r.permissions.map((p: any) => p.name) : [],
     allDepartments: r.all_departments || false,
     departments: Array.isArray(r.departments) ? r.departments.map((d: any) => ({ id: d.id, name: d.name })) : [],
-    assignableCategories: Array.isArray(r.assignable_categories) ? r.assignable_categories.map(mapCategory) : [],
+    assignableRoles: Array.isArray(r.assignable_roles) ? r.assignable_roles.map((ar: any) => ({ id: ar.id, name: ar.name })) : [],
+    userCount: r.user_count || 0,
   };
 }
 

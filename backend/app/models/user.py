@@ -21,10 +21,10 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     role_id = Column(Integer, ForeignKey("roles.id"), nullable=True)
-    role = relationship("Role", back_populates="users")
+    role = relationship("Role", back_populates="users", foreign_keys=[role_id])
 
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=True)
-    department = relationship("Department", back_populates="users")
+    department = relationship("Department", back_populates="users", foreign_keys=[department_id])
 
     # A user can have created many tasks, and separately, been assigned many tasks.
     # foreign_keys= is needed here because Task has TWO foreign keys pointing
