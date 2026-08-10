@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate, Link } from "react-router";
-import { ArrowLeft, Edit2, AlertTriangle, Shield, Users, Building2, Settings, Calendar, Layers, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, Edit2, AlertTriangle, Shield, Users, Settings, Calendar, CheckCircle2 } from "lucide-react";
 import { Role, PermDef, Department, UserType } from "../types";
 import { getRole, getRoleActivity, getAllPermissions, updateRole, getRoles } from "../api/roles";
 import { getUsers } from "../api/users";
@@ -52,7 +52,7 @@ function fmtDateTime(d: string) {
   });
 }
 
-type Tab = "overview" | "permissions" | "departments" | "assignable_roles" | "users" | "activity";
+type Tab = "overview" | "permissions" | "users" | "activity";
 
 export function RoleDetailPage() {
   const { roleId } = useParams<{ roleId: string }>();
@@ -114,30 +114,18 @@ export function RoleDetailPage() {
     loadData();
   }, [roleId]);
 
-  // Sync local permission IDs when switching to permissions tab or when role changes
+  // Sync local state when switching to permissions tab or when role changes
   useEffect(() => {
     if (activeTab === "permissions" && role) {
       setLocalPermissionIds(role.permissions.map((p) => {
         const perm = allPermissions.find((ap) => ap.name === p);
         return perm?.id || 0;
       }).filter((id) => id !== 0));
-    }
-  }, [activeTab, role, allPermissions]);
-
-  // Sync local department state when switching to departments tab
-  useEffect(() => {
-    if (activeTab === "departments" && role) {
       setLocalAllDepartments(role.allDepartments);
       setLocalDepartmentIds(role.departments.map((d) => d.id));
-    }
-  }, [activeTab, role]);
-
-  // Sync local assignable roles state when switching to assignable_roles tab
-  useEffect(() => {
-    if (activeTab === "assignable_roles" && role) {
       setLocalAssignableRoleIds(role.assignableRoles.map((r) => r.id));
     }
-  }, [activeTab, role]);
+  }, [activeTab, role, allPermissions]);
 
   // Group permissions by module (part before colon)
   const permissionModules = useMemo(() => {
@@ -161,78 +149,52 @@ export function RoleDetailPage() {
 
   const currentModulePermissions = permissionModules[selectedModule] || [];
 
-  // Check if local state differs from original role permissions
+  // Check if local state differs from original role
   const hasUnsavedChanges = useMemo(() => {
     if (!role) return false;
-    const originalIds = role.permissions.map((p) => {
+
+    // Check permissions
+    const originalPermissionIds = role.permissions.map((p) => {
       const perm = allPermissions.find((ap) => ap.name === p);
       return perm?.id || 0;
     }).filter((id) => id !== 0);
-    const sortedOriginal = originalIds.sort((a, b) => a - b);
-    const sortedLocal = localPermissionIds.sort((a, b) => a - b);
-    if (sortedOriginal.length !== sortedLocal.length) return true;
-    return sortedOriginal.some((id, i) => id !== sortedLocal[i]);
-  }, [role, allPermissions, localPermissionIds]);
+    const sortedOriginalPermissions = [...originalPermissionIds].sort((a, b) => a - b);
+    const sortedLocalPermissions = [...localPermissionIds].sort((a, b) => a - b);
+    if (sortedOriginalPermissions.length !== sortedLocalPermissions.length) return true;
+    if (sortedOriginalPermissions.some((id, i) => id !== sortedLocalPermissions[i])) return true;
 
-  const hasUnsavedDepartmentChanges = useMemo(() => {
-    if (!role) return false;
+    // Check departments
     if (role.allDepartments !== localAllDepartments) return true;
-    const originalIds = role.departments.map((d) => d.id).sort((a, b) => a - b);
-    const sortedLocal = localDepartmentIds.sort((a, b) => a - b);
-    if (originalIds.length !== sortedLocal.length) return true;
-    return originalIds.some((id, i) => id !== sortedLocal[i]);
-  }, [role, localAllDepartments, localDepartmentIds]);
+    const originalDepartmentIds = role.departments.map((d) => d.id).sort((a, b) => a - b);
+    const sortedLocalDepartments = [...localDepartmentIds].sort((a, b) => a - b);
+    if (originalDepartmentIds.length !== sortedLocalDepartments.length) return true;
+    if (originalDepartmentIds.some((id, i) => id !== sortedLocalDepartments[i])) return true;
 
-  const hasUnsavedAssignableRolesChanges = useMemo(() => {
-    if (!role) return false;
-    const originalIds = role.assignableRoles.map((r) => r.id).sort((a, b) => a - b);
-    const sortedLocal = localAssignableRoleIds.sort((a, b) => a - b);
-    if (originalIds.length !== sortedLocal.length) return true;
-    return originalIds.some((id, i) => id !== sortedLocal[i]);
-  }, [role, localAssignableRoleIds]);
+    // Check assignable roles
+    const originalAssignableIds = role.assignableRoles.map((r) => r.id).sort((a, b) => a - b);
+    const sortedLocalAssignable = [...localAssignableRoleIds].sort((a, b) => a - b);
+    if (originalAssignableIds.length !== sortedLocalAssignable.length) return true;
+    if (originalAssignableIds.some((id, i) => id !== sortedLocalAssignable[i])) return true;
+
+    return false;
+  }, [role, allPermissions, localPermissionIds, localAllDepartments, localDepartmentIds, localAssignableRoleIds]);
 
   async function handleSavePermissions() {
     if (!role) return;
     try {
       setError(null);
-      await updateRole(role.id, { permissionIds: localPermissionIds });
+      await updateRole(role.id, {
+        permissionIds: localPermissionIds,
+        allDepartments: localAllDepartments,
+        departmentIds: localAllDepartments ? [] : localDepartmentIds,
+        assignableRoleIds: localAssignableRoleIds,
+      });
       const updatedRole = await getRole(role.id);
       setRole(updatedRole);
       setSuccessMessage("Permissions updated successfully");
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (err: any) {
       setError(err?.message || "Failed to update permissions.");
-    }
-  }
-
-  async function handleSaveDepartments() {
-    if (!role) return;
-    try {
-      setError(null);
-      await updateRole(role.id, {
-        allDepartments: localAllDepartments,
-        departmentIds: localAllDepartments ? [] : localDepartmentIds,
-      });
-      const updatedRole = await getRole(role.id);
-      setRole(updatedRole);
-      setSuccessMessage("Departments updated successfully");
-      setTimeout(() => setSuccessMessage(null), 3000);
-    } catch (err: any) {
-      setError(err?.message || "Failed to update departments.");
-    }
-  }
-
-  async function handleSaveAssignableRoles() {
-    if (!role) return;
-    try {
-      setError(null);
-      await updateRole(role.id, { assignableRoleIds: localAssignableRoleIds });
-      const updatedRole = await getRole(role.id);
-      setRole(updatedRole);
-      setSuccessMessage("Assignable roles updated successfully");
-      setTimeout(() => setSuccessMessage(null), 3000);
-    } catch (err: any) {
-      setError(err?.message || "Failed to update assignable roles.");
     }
   }
 
@@ -371,8 +333,6 @@ export function RoleDetailPage() {
           {[
             { id: "overview", label: "Overview", icon: Settings },
             { id: "permissions", label: "Permissions", icon: Shield },
-            { id: "departments", label: "Departments", icon: Building2 },
-            { id: "assignable_roles", label: "Assignable Roles", icon: Layers },
             { id: "users", label: "Users", icon: Users },
             { id: "activity", label: "Activity", icon: Calendar },
           ].map((tab) => (
@@ -426,7 +386,7 @@ export function RoleDetailPage() {
           </div>
 
           {/* Stats */}
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 gap-4">
             <div className="bg-white rounded-xl border border-border p-6">
               <div className="flex items-center justify-between mb-2">
                 <Users className="text-muted-foreground" size={20} />
@@ -441,185 +401,156 @@ export function RoleDetailPage() {
               </div>
               <p className="text-sm text-muted-foreground">Permissions</p>
             </div>
-            <div className="bg-white rounded-xl border border-border p-6">
-              <div className="flex items-center justify-between mb-2">
-                <Building2 className="text-muted-foreground" size={20} />
-                <span className="text-2xl font-bold text-foreground">{role.departments.length}</span>
-              </div>
-              <p className="text-sm text-muted-foreground">Departments</p>
-            </div>
-            <div className="bg-white rounded-xl border border-border p-6">
-              <div className="flex items-center justify-between mb-2">
-                <Layers className="text-muted-foreground" size={20} />
-                <span className="text-2xl font-bold text-foreground">{role.assignableRoles.length}</span>
-              </div>
-              <p className="text-sm text-muted-foreground">Assignable Roles</p>
-            </div>
           </div>
         </div>
       )}
 
       {activeTab === "permissions" && (
-        <div className="space-y-4">
+        <div className="max-w-4xl mx-auto">
           {successMessage && (
-            <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-3 text-sm">
+            <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-3 text-sm mb-4">
               <CheckCircle2 size={14} className="text-emerald-500 flex-shrink-0" />
               <span className="text-emerald-700">{successMessage}</span>
             </div>
           )}
-          <div className="flex gap-4">
-            {/* Module Sidebar */}
-            <div className="w-48 flex-shrink-0">
-              <label className="block text-sm font-medium text-foreground mb-2">
-                Modules
-              </label>
-              <div className="border border-border rounded-lg overflow-hidden">
-                {moduleNames.map((module) => (
-                  <button
-                    key={module}
-                    onClick={() => setSelectedModule(module)}
-                    className={`w-full text-left px-3 py-2 text-sm border-b border-border last:border-b-0 transition-colors ${
-                      selectedModule === module
-                        ? "bg-blue-50 text-blue-700 font-medium"
-                        : "hover:bg-muted/50 text-foreground"
-                    }`}
-                  >
-                    {module.charAt(0).toUpperCase() + module.slice(1)}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Permission Checkboxes */}
-            <div className="flex-1">
-              <div className="flex items-center justify-between mb-2">
-                <label className="block text-sm font-medium text-foreground">
-                  {selectedModule.charAt(0).toUpperCase() + selectedModule.slice(1)} Permissions
+          <div className="bg-white rounded-xl border border-border p-4 space-y-4">
+            <div className="flex gap-4">
+              {/* Module Sidebar */}
+              <div className="w-48 flex-shrink-0">
+                <label className="block text-sm font-medium text-foreground mb-2">
+                  Modules
                 </label>
-                <button
-                  onClick={toggleAllPermissionsInModule}
-                  className="text-xs text-blue-600 hover:text-blue-700 cursor-pointer"
-                >
-                  Select All
-                </button>
+                <div className="border border-border rounded-lg overflow-hidden">
+                  {moduleNames.map((module) => (
+                    <button
+                      key={module}
+                      onClick={() => setSelectedModule(module)}
+                      className={`w-full text-left px-3 py-2 text-sm border-b border-border last:border-b-0 transition-colors ${
+                        selectedModule === module
+                          ? "bg-blue-50 text-blue-700 font-medium"
+                          : "hover:bg-muted/50 text-foreground"
+                      }`}
+                    >
+                      {module.charAt(0).toUpperCase() + module.slice(1)}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className="border border-border rounded-lg p-3 space-y-2 max-h-96 overflow-y-auto">
-                {currentModulePermissions.map((perm) => {
-                  const permName = perm.name.split(":")[1];
-                  const isChecked = localPermissionIds.includes(perm.id);
-                  return (
-                    <label key={perm.id} className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={isChecked}
-                        onChange={() => togglePermission(perm.id)}
-                        className="w-4 h-4 accent-blue-600"
-                      />
-                      <span className="text-sm text-foreground">
-                        {permName.charAt(0).toUpperCase() + permName.slice(1)}
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-              <div className="mt-4 flex justify-end">
-                <button
-                  onClick={handleSavePermissions}
-                  disabled={!hasUnsavedChanges}
-                  className={`px-4 py-2 text-sm font-semibold rounded-lg transition-colors cursor-pointer ${
-                    hasUnsavedChanges
-                      ? "bg-blue-600 text-white hover:bg-blue-700"
-                      : "bg-muted text-muted-foreground cursor-not-allowed"
-                  }`}
-                >
-                  Save Changes
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
-      {activeTab === "departments" && (
-        <div className="space-y-4">
-          <div className="bg-white rounded-xl border border-border p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={localAllDepartments}
-                  onChange={(e) => setLocalAllDepartments(e.target.checked)}
-                  className="w-4 h-4 accent-blue-600"
-                />
-                <span className="text-sm font-medium text-foreground">All Departments</span>
-              </label>
+              {/* Permission Checkboxes */}
+              <div className="flex-1">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium text-foreground">
+                    {selectedModule.charAt(0).toUpperCase() + selectedModule.slice(1)} Permissions
+                  </label>
+                  <button
+                    onClick={toggleAllPermissionsInModule}
+                    className="text-xs text-blue-600 hover:text-blue-700 cursor-pointer"
+                  >
+                    Select All
+                  </button>
+                </div>
+                <div className="border border-border rounded-lg p-3 space-y-2 max-h-96 overflow-y-auto">
+                  {currentModulePermissions.map((perm) => {
+                    const permName = perm.name.split(":")[1];
+                    const isChecked = localPermissionIds.includes(perm.id);
+                    return (
+                      <label key={perm.id} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => togglePermission(perm.id)}
+                          className="w-4 h-4 accent-blue-600"
+                        />
+                        <span className="text-sm text-foreground">
+                          {permName.charAt(0).toUpperCase() + permName.slice(1)}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
-            {!localAllDepartments && (
-              <div className="border border-border rounded-lg p-3 space-y-2 max-h-96 overflow-y-auto">
-                {allDepartments.map((dept) => (
-                  <label key={dept.id} className="flex items-center gap-2 cursor-pointer">
+
+            {/* Department Access Section - only show if permissions are selected */}
+            {localPermissionIds.length > 0 && (
+              <div className="pt-3 border-t border-border">
+                <h3 className="text-sm font-semibold text-foreground mb-3">Department Access</h3>
+                <div className="flex items-center gap-2 mb-3">
+                  <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
-                      checked={localDepartmentIds.includes(dept.id)}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setLocalDepartmentIds((prev) => [...prev, dept.id]);
-                        } else {
-                          setLocalDepartmentIds((prev) => prev.filter((id) => id !== dept.id));
-                        }
-                      }}
+                      checked={localAllDepartments}
+                      onChange={(e) => setLocalAllDepartments(e.target.checked)}
                       className="w-4 h-4 accent-blue-600"
                     />
-                    <span className="text-sm text-foreground">{dept.name}</span>
+                    <span className="text-sm font-medium text-foreground">All Departments</span>
                   </label>
-                ))}
+                </div>
+                {!localAllDepartments && (
+                  allDepartments.length > 0 ? (
+                    <div className="border border-border rounded-lg p-3 grid grid-cols-2 lg:grid-cols-3 gap-2 max-h-96 overflow-y-auto">
+                      {allDepartments.map((dept) => (
+                        <label key={dept.id} className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={localDepartmentIds.includes(dept.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setLocalDepartmentIds((prev) => [...prev, dept.id]);
+                              } else {
+                                setLocalDepartmentIds((prev) => prev.filter((id) => id !== dept.id));
+                              }
+                            }}
+                            className="w-4 h-4 accent-blue-600"
+                          />
+                          <span className="text-sm text-foreground">{dept.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No departments exist yet</p>
+                  )
+                )}
               </div>
             )}
-            <div className="mt-4 flex justify-end">
-              <button
-                onClick={handleSaveDepartments}
-                disabled={!hasUnsavedDepartmentChanges}
-                className={`px-4 py-2 text-sm font-semibold rounded-lg transition-colors cursor-pointer ${
-                  hasUnsavedDepartmentChanges
-                    ? "bg-blue-600 text-white hover:bg-blue-700"
-                    : "bg-muted text-muted-foreground cursor-not-allowed"
-                }`}
-              >
-                Save Changes
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
-      {activeTab === "assignable_roles" && (
-        <div className="space-y-4">
-          <div className="bg-white rounded-xl border border-border p-6">
-            <div className="border border-border rounded-lg p-3 space-y-2 max-h-96 overflow-y-auto">
-              {allRoles.filter((r) => r.id !== role?.id).map((r) => (
-                <label key={r.id} className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={localAssignableRoleIds.includes(r.id)}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setLocalAssignableRoleIds((prev) => [...prev, r.id]);
-                      } else {
-                        setLocalAssignableRoleIds((prev) => prev.filter((id) => id !== r.id));
-                      }
-                    }}
-                    className="w-4 h-4 accent-blue-600"
-                  />
-                  <span className="text-sm text-foreground">{r.name}</span>
-                </label>
-              ))}
-            </div>
-            <div className="mt-4 flex justify-end">
+            {/* Assignable Roles Section - only show if user:manage permission is selected */}
+            {localPermissionIds.length > 0 && allPermissions.find(p => p.name === "user:manage") && localPermissionIds.includes(allPermissions.find(p => p.name === "user:manage")!.id) && (
+              <div className="pt-3 border-t border-border">
+                <h3 className="text-sm font-semibold text-foreground mb-3">Assignable Roles</h3>
+                {otherRoles.length > 0 ? (
+                  <div className="border border-border rounded-lg p-3 grid grid-cols-2 lg:grid-cols-3 gap-2 max-h-96 overflow-y-auto">
+                    {otherRoles.map((r) => (
+                      <label key={r.id} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={localAssignableRoleIds.includes(r.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setLocalAssignableRoleIds((prev) => [...prev, r.id]);
+                            } else {
+                              setLocalAssignableRoleIds((prev) => prev.filter((id) => id !== r.id));
+                            }
+                          }}
+                          className="w-4 h-4 accent-blue-600"
+                        />
+                        <span className="text-sm text-foreground">{r.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No other roles exist yet — create another role first</p>
+                )}
+              </div>
+            )}
+
+            <div className="flex justify-end pt-3 border-t border-border">
               <button
-                onClick={handleSaveAssignableRoles}
-                disabled={!hasUnsavedAssignableRolesChanges}
+                onClick={handleSavePermissions}
+                disabled={!hasUnsavedChanges}
                 className={`px-4 py-2 text-sm font-semibold rounded-lg transition-colors cursor-pointer ${
-                  hasUnsavedAssignableRolesChanges
+                  hasUnsavedChanges
                     ? "bg-blue-600 text-white hover:bg-blue-700"
                     : "bg-muted text-muted-foreground cursor-not-allowed"
                 }`}

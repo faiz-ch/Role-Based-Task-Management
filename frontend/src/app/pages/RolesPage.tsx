@@ -25,13 +25,13 @@ export function RolesPage() {
   const [newRoleName, setNewRoleName] = useState("");
   const [newRoleDescription, setNewRoleDescription] = useState("");
   const [newRoleColor, setNewRoleColor] = useState("blue");
-  const [newAssignableRoleIds, setNewAssignableRoleIds] = useState<number[]>([]);
-  const [newAllDepartments, setNewAllDepartments] = useState(false);
-  const [newDepartmentIds, setNewDepartmentIds] = useState<number[]>([]);
-  const [departmentSearchQuery, setDepartmentSearchQuery] = useState("");
   
   // Step 2 form state
   const [newPermissionIds, setNewPermissionIds] = useState<number[]>([]);
+  const [newAllDepartments, setNewAllDepartments] = useState(false);
+  const [newDepartmentIds, setNewDepartmentIds] = useState<number[]>([]);
+  const [departmentSearchQuery, setDepartmentSearchQuery] = useState("");
+  const [newAssignableRoleIds, setNewAssignableRoleIds] = useState<number[]>([]);
   const [selectedPresetId, setSelectedPresetId] = useState<number | "">("");
   const [selectedModule, setSelectedModule] = useState<string>("");
 
@@ -126,22 +126,8 @@ export function RolesPage() {
         allDepartments: newAllDepartments,
         departmentIds: newAllDepartments ? [] : newDepartmentIds,
         permissionIds: newPermissionIds,
+        assignableRoleIds: newAssignableRoleIds,
       });
-
-      // Update assignable roles for selected roles (best-effort)
-      if (newAssignableRoleIds.length > 0) {
-        for (const roleId of newAssignableRoleIds) {
-          try {
-            const existingRole = roles.find((r) => r.id === roleId);
-            if (existingRole) {
-              const updatedAssignableIds = [...existingRole.assignableRoles.map((r) => r.id), newRole.id];
-              await updateRole(roleId, { assignableRoleIds: updatedAssignableIds });
-            }
-          } catch (err) {
-            console.error(`Failed to update assignable roles for role ${roleId}:`, err);
-          }
-        }
-      }
 
       setRoles((prev) => [...prev, newRole]);
       setShowCreateDialog(false);
@@ -167,11 +153,11 @@ export function RolesPage() {
     setNewRoleName("");
     setNewRoleDescription("");
     setNewRoleColor("blue");
-    setNewAssignableRoleIds([]);
+    setNewPermissionIds([]);
     setNewAllDepartments(false);
     setNewDepartmentIds([]);
     setDepartmentSearchQuery("");
-    setNewPermissionIds([]);
+    setNewAssignableRoleIds([]);
     setSelectedPresetId("");
     setSelectedModule(moduleNames[0] || "");
     setError(null);
@@ -366,7 +352,7 @@ export function RolesPage() {
                 {/* Basic Info Card */}
                 <div className="bg-muted/30 rounded-xl p-6 border border-border">
                   <h3 className="text-sm font-semibold text-foreground mb-4">Basic Information</h3>
-                  
+
                   {/* Role Name */}
                   <div className="mb-4">
                     <label className="block text-sm font-medium text-foreground mb-1">
@@ -391,86 +377,6 @@ export function RolesPage() {
                       rows={3}
                       className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                     />
-                  </div>
-                </div>
-
-                {/* Department Access Card */}
-                <div className="bg-muted/30 rounded-xl p-6 border border-border">
-                  <h3 className="text-sm font-semibold text-foreground mb-4">Department Access</h3>
-                  
-                  <label className="flex items-center gap-2 cursor-pointer mb-4">
-                    <input
-                      type="checkbox"
-                      checked={newAllDepartments}
-                      onChange={(e) => setNewAllDepartments(e.target.checked)}
-                      className="w-4 h-4 accent-blue-600"
-                    />
-                    <span className="text-sm text-foreground">All Departments</span>
-                  </label>
-                  
-                  {!newAllDepartments && (
-                    <>
-                      {departments.length > 6 && (
-                        <div className="mb-3">
-                          <input
-                            type="text"
-                            placeholder="Search departments..."
-                            value={departmentSearchQuery}
-                            onChange={(e) => setDepartmentSearchQuery(e.target.value)}
-                            className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                        </div>
-                      )}
-                      <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border border-border rounded-lg p-2">
-                        {departments
-                          .filter((dept) => 
-                            dept.name.toLowerCase().includes(departmentSearchQuery.toLowerCase())
-                          )
-                          .map((dept) => (
-                            <label key={dept.id} className="flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={newDepartmentIds.includes(dept.id)}
-                                onChange={(e) => {
-                                  if (e.target.checked) {
-                                    setNewDepartmentIds((prev) => [...prev, dept.id]);
-                                  } else {
-                                    setNewDepartmentIds((prev) => prev.filter((id) => id !== dept.id));
-                                  }
-                                }}
-                                className="w-4 h-4 accent-blue-600"
-                              />
-                              <span className="text-sm text-foreground">{dept.name}</span>
-                            </label>
-                          ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                {/* Assignable By Card */}
-                <div className="bg-muted/30 rounded-xl p-6 border border-border">
-                  <h3 className="text-sm font-semibold text-foreground mb-4">
-                    Assignable By (roles that can assign this role)
-                  </h3>
-                  <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border border-border rounded-lg p-2">
-                    {roles.map((role) => (
-                      <label key={role.id} className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={newAssignableRoleIds.includes(role.id)}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setNewAssignableRoleIds((prev) => [...prev, role.id]);
-                            } else {
-                              setNewAssignableRoleIds((prev) => prev.filter((id) => id !== role.id));
-                            }
-                          }}
-                          className="w-4 h-4 accent-blue-600"
-                        />
-                        <span className="text-sm text-foreground">{role.name}</span>
-                      </label>
-                    ))}
                   </div>
                 </div>
 
@@ -562,6 +468,88 @@ export function RolesPage() {
                     </div>
                   </div>
                 </div>
+
+                {/* Department Access Card - only show if permissions are selected */}
+                {newPermissionIds.length > 0 && (
+                  <div className="bg-muted/30 rounded-xl p-6 border border-border">
+                    <h3 className="text-sm font-semibold text-foreground mb-4">Department Access</h3>
+
+                    <label className="flex items-center gap-2 cursor-pointer mb-4">
+                      <input
+                        type="checkbox"
+                        checked={newAllDepartments}
+                        onChange={(e) => setNewAllDepartments(e.target.checked)}
+                        className="w-4 h-4 accent-blue-600"
+                      />
+                      <span className="text-sm text-foreground">All Departments</span>
+                    </label>
+
+                    {!newAllDepartments && (
+                      <>
+                        {departments.length > 6 && (
+                          <div className="mb-3">
+                            <input
+                              type="text"
+                              placeholder="Search departments..."
+                              value={departmentSearchQuery}
+                              onChange={(e) => setDepartmentSearchQuery(e.target.value)}
+                              className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+                        )}
+                        <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border border-border rounded-lg p-2">
+                          {departments
+                            .filter((dept) =>
+                              dept.name.toLowerCase().includes(departmentSearchQuery.toLowerCase())
+                            )
+                            .map((dept) => (
+                              <label key={dept.id} className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={newDepartmentIds.includes(dept.id)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setNewDepartmentIds((prev) => [...prev, dept.id]);
+                                    } else {
+                                      setNewDepartmentIds((prev) => prev.filter((id) => id !== dept.id));
+                                    }
+                                  }}
+                                  className="w-4 h-4 accent-blue-600"
+                                />
+                                <span className="text-sm text-foreground">{dept.name}</span>
+                              </label>
+                            ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Assignable Roles Card - only show if user:manage permission is selected */}
+                {newPermissionIds.length > 0 && allPermissions.find(p => p.name === "user:manage") && newPermissionIds.includes(allPermissions.find(p => p.name === "user:manage")!.id) && (
+                  <div className="bg-muted/30 rounded-xl p-6 border border-border">
+                    <h3 className="text-sm font-semibold text-foreground mb-4">Assignable Roles</h3>
+                    <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border border-border rounded-lg p-2">
+                      {roles.map((role) => (
+                        <label key={role.id} className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={newAssignableRoleIds.includes(role.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setNewAssignableRoleIds((prev) => [...prev, role.id]);
+                              } else {
+                                setNewAssignableRoleIds((prev) => prev.filter((id) => id !== role.id));
+                              }
+                            }}
+                            className="w-4 h-4 accent-blue-600"
+                          />
+                          <span className="text-sm text-foreground">{role.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex justify-between">
                   <button
