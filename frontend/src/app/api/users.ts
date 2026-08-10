@@ -29,6 +29,7 @@ function mapUser(u: any): UserType {
     active: u.is_active,
     role: u.role ? mapRole(u.role) : null,
     department: u.department ? { id: u.department.id, name: u.department.name } : null,
+    createdAt: u.created_at,
   };
 }
 
@@ -69,10 +70,27 @@ export async function assignRole(userId: number, roleId: number | null): Promise
   return mapUser(res);
 }
 
-export async function createUser(data: { name: string; email: string; password: string; role_id?: number; department_id?: number }): Promise<UserType> {
+export async function createUser(data: { 
+  name: string; 
+  email: string; 
+  password: string; 
+  role_id?: number; 
+  department_id?: number;
+  isActive?: boolean;
+  sendWelcomeEmail?: boolean;
+}): Promise<UserType> {
+  const payload: any = {};
+  if (data.name !== undefined) payload.name = data.name;
+  if (data.email !== undefined) payload.email = data.email;
+  if (data.password !== undefined) payload.password = data.password;
+  if (data.role_id !== undefined) payload.role_id = data.role_id;
+  if (data.department_id !== undefined) payload.department_id = data.department_id;
+  if (data.isActive !== undefined) payload.is_active = data.isActive;
+  if (data.sendWelcomeEmail !== undefined) payload.send_welcome_email = data.sendWelcomeEmail;
+
   const res = await apiFetch("/users", {
     method: "POST",
-    body: JSON.stringify(data),
+    body: JSON.stringify(payload),
   });
   return mapUser(res);
 }

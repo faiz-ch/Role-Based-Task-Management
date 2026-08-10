@@ -365,6 +365,7 @@ async def approve_project(
 
     # Mark project as DONE
     project.status = ProjectStatus.DONE
+    project.completed_at = datetime.now(timezone.utc)
     await log_activity(db, current_user.id, "project_completed", "project", project.id, detail="Pending Approval -> Done (approved)")
     await db.commit()
     await db.refresh(project)

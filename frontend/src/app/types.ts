@@ -47,6 +47,7 @@ export interface UserType {
   active: boolean; // maps to backend's `is_active`
   role: Role | null;
   department: Department | null;
+  createdAt: string;
 }
 
 export interface Project {

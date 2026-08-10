@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -16,7 +17,7 @@ from app.models.report import Report
 from app.models.attachment import Attachment
 from app.models.activity_log import ActivityLog
 from app.models.comment import Comment
-from app.schemas.user import UserOut, UserUpdate, AssignRoleRequest, AssignDepartmentRequest, UserCreate
+from app.schemas.user import UserOut, UserUpdate, AssignRoleRequest, AssignDepartmentRequest, UserCreate, PerformanceCategoryOut, UserPerformanceOut
 from app.services import notification_dispatch
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -106,11 +107,13 @@ async def create_user(
         hashed_password=hash_password(payload.password),
         role_id=payload.role_id,
         department_id=final_department_id,
+        is_active=payload.is_active,
     )
     db.add(user)
     await db.commit()
     
-    background_tasks.add_task(notification_dispatch.notify_user_created, user.id)
+    if payload.send_welcome_email:
+        background_tasks.add_task(notification_dispatch.notify_user_created, user.id)
     
     # Re-fetch with eager load to avoid MissingGreenlet error
     result = await db.execute(
@@ -166,6 +169,85 @@ async def get_user(
             raise HTTPException(status_code=404, detail="User not found")
     
     return user
+
+
+@router.get("/{user_id}/performance", response_model=UserPerformanceOut)
+async def get_user_performance(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not has_permission(current_user, "user:manage"):
+        raise HTTPException(status_code=403, detail="You do not have permission to view users")
+
+    target_result = await db.execute(select(User).where(User.id == user_id))
+    target_user = target_result.scalar_one_or_none()
+    if target_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    scoped_dept_ids = get_scoped_department_ids(current_user)
+    if scoped_dept_ids is not None:
+        if target_user.department_id not in scoped_dept_ids:
+            raise HTTPException(status_code=404, detail="User not found")
+
+    now = datetime.now(timezone.utc)
+
+    async def _category_stats(model, lead_or_assignee_filter):
+        result = await db.execute(select(model).where(lead_or_assignee_filter))
+        items = result.scalars().all()
+        total = len(items)
+        completed = sum(1 for i in items if i.completed_at is not None)
+        on_time = sum(
+            1 for i in items
+            if i.completed_at is not None and (i.due_date is None or i.completed_at <= i.due_date)
+        )
+        late = sum(
+            1 for i in items
+            if i.completed_at is not None and i.due_date is not None and i.completed_at > i.due_date
+        )
+        overdue = sum(
+            1 for i in items
+            if i.completed_at is None and i.due_date is not None and i.due_date < now
+        )
+        pending = total - completed - overdue
+        return PerformanceCategoryOut(
+            total=total, completed=completed, on_time=on_time,
+            late=late, overdue=overdue, pending=pending,
+        )
+
+    projects_stats = await _category_stats(Project, Project.lead_id == user_id)
+    tasks_stats = await _category_stats(Task, Task.lead_id == user_id)
+
+    # Subtasks are many-to-many via SubTaskAssignee, handle separately
+    subtask_result = await db.execute(
+        select(SubTask)
+        .join(SubTaskAssignee, SubTaskAssignee.subtask_id == SubTask.id)
+        .where(SubTaskAssignee.user_id == user_id)
+    )
+    subtask_items = subtask_result.scalars().all()
+    st_total = len(subtask_items)
+    st_completed = sum(1 for i in subtask_items if i.completed_at is not None)
+    st_on_time = sum(
+        1 for i in subtask_items
+        if i.completed_at is not None and (i.due_date is None or i.completed_at <= i.due_date)
+    )
+    st_late = sum(
+        1 for i in subtask_items
+        if i.completed_at is not None and i.due_date is not None and i.completed_at > i.due_date
+    )
+    st_overdue = sum(
+        1 for i in subtask_items
+        if i.completed_at is None and i.due_date is not None and i.due_date < now
+    )
+    st_pending = st_total - st_completed - st_overdue
+    subtasks_stats = PerformanceCategoryOut(
+        total=st_total, completed=st_completed, on_time=st_on_time,
+        late=st_late, overdue=st_overdue, pending=st_pending,
+    )
+
+    return UserPerformanceOut(
+        projects=projects_stats, tasks=tasks_stats, subtasks=subtasks_stats,
+    )
 
 
 @router.patch("/{user_id}", response_model=UserOut)

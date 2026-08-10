@@ -42,8 +42,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
     if (path.startsWith("/projects")) return "projects";
     if (path.startsWith("/tasks")) return "tasks";
     if (path === "/users") return "users";
-    if (path === "/roles") return "roles";
-    if (path === "/departments") return "departments";
+    if (path.startsWith("/roles")) return "roles";
+    if (path.startsWith("/departments")) return "departments";
     return "tasks"; // default
   })();
 

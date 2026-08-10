@@ -179,6 +179,8 @@ export function RoleDetailPage() {
     return false;
   }, [role, allPermissions, localPermissionIds, localAllDepartments, localDepartmentIds, localAssignableRoleIds]);
 
+  const otherRoles = allRoles.filter((r) => r.id !== role?.id);
+
   async function handleSavePermissions() {
     if (!role) return;
     try {

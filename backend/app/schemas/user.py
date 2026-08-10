@@ -1,4 +1,5 @@
 from pydantic import BaseModel, EmailStr, field_validator
+from datetime import datetime
 
 
 class DepartmentBrief(BaseModel):
@@ -32,6 +33,7 @@ class UserOut(BaseModel):
     is_active: bool
     role: RoleBrief | None = None
     department: DepartmentBrief | None = None
+    created_at: datetime
 
     class Config:
         from_attributes = True
@@ -66,6 +68,8 @@ class UserCreate(BaseModel):
     password: str
     role_id: int | None = None
     department_id: int | None = None
+    is_active: bool = True
+    send_welcome_email: bool = True
 
     @field_validator("password")
     @classmethod
@@ -73,3 +77,18 @@ class UserCreate(BaseModel):
         if len(v) < 8:
             raise ValueError("Password must be at least 8 characters")
         return v
+
+
+class PerformanceCategoryOut(BaseModel):
+    total: int
+    completed: int
+    on_time: int
+    late: int
+    overdue: int
+    pending: int
+
+
+class UserPerformanceOut(BaseModel):
+    projects: PerformanceCategoryOut
+    tasks: PerformanceCategoryOut
+    subtasks: PerformanceCategoryOut

@@ -344,6 +344,10 @@ async def update_task_status(
 
     old_status = task.status
     task.status = payload.status
+    if payload.status == TaskStatus.DONE and old_status != TaskStatus.DONE:
+        task.completed_at = datetime.now(timezone.utc)
+    elif payload.status != TaskStatus.DONE and old_status == TaskStatus.DONE:
+        task.completed_at = None
     # If transitioning to RESCHEDULE and a due_date is provided, update it
     if payload.status == TaskStatus.RESCHEDULE and payload.due_date is not None:
         task.due_date = payload.due_date

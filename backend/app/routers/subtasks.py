@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.responses import FileResponse
 from sqlalchemy import select, delete, func
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 import os
@@ -357,6 +358,10 @@ async def update_subtask_status(
 
     old_status = subtask.status
     subtask.status = payload.status
+    if payload.status == "Done" and old_status != "Done":
+        subtask.completed_at = datetime.now(timezone.utc)
+    elif payload.status != "Done" and old_status == "Done":
+        subtask.completed_at = None
     # If transitioning to RESCHEDULE and a due_date is provided, update it
     if payload.status == "Reschedule" and payload.due_date is not None:
         subtask.due_date = payload.due_date

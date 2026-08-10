@@ -1,61 +1,86 @@
 import React, { useState, useEffect } from "react";
-import { Edit2, AlertTriangle, Plus, Trash2 } from "lucide-react";
-import { UserType, Role, Department, Category } from "../types";
-import { getUsers, updateUser, assignRole, createUser, deleteUser, assignDepartment } from "../api/users";
+import { Edit2, AlertTriangle, Plus, Trash2, Search, Eye, EyeOff, RefreshCw } from "lucide-react";
+import { UserType, Role, Department } from "../types";
+import { getUsers, createUser, deleteUser } from "../api/users";
 import { getRoles } from "../api/roles";
-import { getCategories } from "../api/categories";
 import { getDepartments } from "../api/departments";
 import { Av } from "../components/Av";
 import { Dlg } from "../components/Dlg";
 import { FldInput } from "../components/FldInput";
+import { FldSelect } from "../components/FldSelect";
 import { useAuth } from "../context/AuthContext";
+import { useNavigate } from "react-router";
+
+function fmtDate(d: string) {
+  if (!d) return "—";
+  const dt = new Date(d);
+  return dt.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function generatePassword(length: number = 12): string {
+  const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
+  let password = "";
+  for (let i = 0; i < length; i++) {
+    password += charset.charAt(Math.floor(Math.random() * charset.length));
+  }
+  return password;
+}
 
 export function UsersPage() {
   const { permissions, currentUser } = useAuth();
+  const navigate = useNavigate();
   const [users, setUsers] = useState<UserType[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
   const canManage = permissions.includes("user:manage");
-  const canManageAllDepartments = currentUser?.role?.allDepartments ?? false;
-  const scopedDepartmentIds = new Set((currentUser?.role?.departments ?? []).map((d) => d.id));
-  const availableDepartmentsForAssignment = canManageAllDepartments
-    ? departments
-    : departments.filter((d) => scopedDepartmentIds.has(d.id));
 
-  const [editUser, setEditUser] = useState<UserType | null>(null);
-  const [editName, setEditName] = useState("");
-  const [editEmail, setEditEmail] = useState("");
-  const [editPassword, setEditPassword] = useState("");
-  const [editActive, setEditActive] = useState(true);
-  const [editError, setEditError] = useState<string | null>(null);
+  // Filter states
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterDepartment, setFilterDepartment] = useState<string>("all");
+  const [filterRole, setFilterRole] = useState<string>("all");
+  const [filterStatus, setFilterStatus] = useState<string>("all");
 
+  // Selection state
+  const [selectedUserIds, setSelectedUserIds] = useState<Set<number>>(new Set());
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const usersPerPage = 10;
+
+  // Create dialog state
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [createName, setCreateName] = useState("");
+  const [createEmail, setCreateEmail] = useState("");
+  const [createPassword, setCreatePassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [createDepartment, setCreateDepartment] = useState<string>("");
+  const [createRole, setCreateRole] = useState<string>("");
+  const [createActive, setCreateActive] = useState(true);
+  const [createSendWelcome, setCreateSendWelcome] = useState(true);
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  // Delete confirmation state
   const [deleteConfirmUser, setDeleteConfirmUser] = useState<UserType | null>(null);
-
-  const [showNewUserDialog, setShowNewUserDialog] = useState(false);
-  const [newUserName, setNewUserName] = useState("");
-  const [newUserEmail, setNewUserEmail] = useState("");
-  const [newUserPassword, setNewUserPassword] = useState("");
-  const [newUserRole, setNewUserRole] = useState("");
-  const [newUserDepartment, setNewUserDepartment] = useState("");
 
   useEffect(() => {
     async function loadData() {
       try {
         setLoading(true);
         setError(null);
-        const [fetchedUsers, fetchedRoles, fetchedCategories, fetchedDepartments] = await Promise.all([
+        const [fetchedUsers, fetchedRoles, fetchedDepartments] = await Promise.all([
           getUsers(),
           getRoles(),
-          getCategories(),
           getDepartments(),
         ]);
         setUsers(fetchedUsers);
         setRoles(fetchedRoles);
-        setCategories(fetchedCategories);
         setDepartments(fetchedDepartments);
       } catch (err: any) {
         setError(err?.message || "Failed to load users data.");
@@ -65,75 +90,88 @@ export function UsersPage() {
     }
     loadData();
   }, []);
-  
-  // Filter roles based on the current user's role's assignable_roles.
-  // A role can only assign roles that are in its assignableRoles list.
+
+  // Filter roles based on assignable roles
   const assignableRoleIds = (currentUser?.role?.assignableRoles ?? []).map((r) => r.id);
+  const assignableRoles = roles.filter((role) => assignableRoleIds.includes(role.id));
 
-  const filteredRoles = roles.filter((role) => assignableRoleIds.includes(role.id));
+  // Filter users based on search and filters
+  const filteredUsers = users.filter((user) => {
+    const matchesSearch = 
+      searchQuery === "" || 
+      user.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      user.email.toLowerCase().includes(searchQuery.toLowerCase());
+    
+    const matchesDepartment = 
+      filterDepartment === "all" || 
+      user.department?.id === Number(filterDepartment);
+    
+    const matchesRole = 
+      filterRole === "all" || 
+      user.role?.id === Number(filterRole);
+    
+    const matchesStatus = 
+      filterStatus === "all" || 
+      (filterStatus === "active" && user.active) ||
+      (filterStatus === "inactive" && !user.active);
+    
+    return matchesSearch && matchesDepartment && matchesRole && matchesStatus;
+  });
 
-  async function handleRoleChange(uid: number, roleIdStr: string) {
-    try {
-      setError(null);
-      const roleId = roleIdStr === "" ? null : Number(roleIdStr);
-      const updatedUser = await assignRole(uid, roleId);
-      setUsers((prev) => prev.map((u) => (u.id === uid ? updatedUser : u)));
-    } catch (err: any) {
-      setError(err?.message || "Failed to assign role.");
+  // Pagination
+  const totalPages = Math.ceil(filteredUsers.length / usersPerPage);
+  const paginatedUsers = filteredUsers.slice(
+    (currentPage - 1) * usersPerPage,
+    currentPage * usersPerPage
+  );
+
+  // Stats
+  const totalUsers = users.length;
+  const activeUsers = users.filter((u) => u.active).length;
+  const inactiveUsers = users.filter((u) => !u.active).length;
+  const administrators = users.filter((u) => u.role?.isSystem).length;
+
+  async function handleCreateUser() {
+    if (!createName.trim() || !createEmail.trim() || !createPassword) {
+      setCreateError("All fields are required.");
+      return;
     }
-  }
-
-  async function handleDepartmentChange(uid: number, deptIdStr: string) {
-    try {
-      setError(null);
-      const deptId = deptIdStr === "" ? null : Number(deptIdStr);
-      const updatedUser = await assignDepartment(uid, deptId);
-      setUsers((prev) => prev.map((u) => (u.id === uid ? updatedUser : u)));
-    } catch (err: any) {
-      setError(err?.message || "Failed to assign department.");
-    }
-  }
-
-  async function saveEdit() {
-    if (!editUser || !editName.trim() || !editEmail.trim()) {
-      setEditError("Name and email are required.");
+    if (createPassword.length < 8) {
+      setCreateError("Password must be at least 8 characters.");
       return;
     }
     try {
-      setEditError(null);
+      setCreateError(null);
       setError(null);
-
-      const updateData: any = {};
-      if (editName.trim() !== editUser.name) {
-        updateData.name = editName.trim();
-      }
-      if (editEmail.trim().toLowerCase() !== editUser.email) {
-        updateData.email = editEmail.trim().toLowerCase();
-      }
-      if (editPassword) {
-        updateData.password = editPassword;
-      }
-      if (editActive !== editUser.active) {
-        updateData.active = editActive;
-      }
-
-      const updatedUser = await updateUser(editUser.id, updateData);
-      setUsers((prev) =>
-        prev.map((u) => (u.id === editUser.id ? updatedUser : u))
-      );
-      setEditUser(null);
-      setEditError(null);
+      const roleId = createRole ? Number(createRole) : undefined;
+      const deptId = createDepartment ? Number(createDepartment) : undefined;
+      const newUser = await createUser({
+        name: createName.trim(),
+        email: createEmail.trim().toLowerCase(),
+        password: createPassword,
+        role_id: roleId,
+        department_id: deptId,
+        isActive: createActive,
+        sendWelcomeEmail: createSendWelcome,
+      });
+      setUsers((prev) => [...prev, newUser]);
+      setShowCreateDialog(false);
+      resetCreateForm();
     } catch (err: any) {
-      if (err?.message?.includes("email")) {
-        setEditError(err.message);
-      } else if (err?.status === 404) {
-        setUsers((prev) => prev.filter((u) => u.id !== editUser!.id));
-        setEditUser(null);
-        setError("User no longer exists.");
-      } else {
-        setEditError(err?.message || "Failed to update user.");
-      }
+      setCreateError(err?.message || "Failed to create user.");
     }
+  }
+
+  function resetCreateForm() {
+    setCreateName("");
+    setCreateEmail("");
+    setCreatePassword("");
+    setShowPassword(false);
+    setCreateDepartment("");
+    setCreateRole("");
+    setCreateActive(true);
+    setCreateSendWelcome(true);
+    setCreateError(null);
   }
 
   async function handleDelete(user: UserType) {
@@ -143,41 +181,27 @@ export function UsersPage() {
       setUsers((prev) => prev.filter((u) => u.id !== user.id));
       setDeleteConfirmUser(null);
     } catch (err: any) {
-      if (err?.status === 404) {
-        setUsers((prev) => prev.filter((u) => u.id !== user.id));
-        setDeleteConfirmUser(null);
-        setError("User already deleted.");
-      } else {
-        setError(err?.message || "Failed to delete user.");
-      }
+      setError(err?.message || "Failed to delete user.");
     }
   }
 
-  async function handleCreateUser() {
-    if (!newUserName.trim() || !newUserEmail.trim() || !newUserPassword) {
-      setError("All fields are required.");
-      return;
-    }
-    try {
-      setError(null);
-      const roleId = newUserRole ? Number(newUserRole) : undefined;
-      const deptId = newUserDepartment ? Number(newUserDepartment) : undefined;
-      const newUser = await createUser({
-        name: newUserName.trim(),
-        email: newUserEmail.trim().toLowerCase(),
-        password: newUserPassword,
-        role_id: roleId,
-        department_id: deptId,
-      });
-      setUsers((prev) => [...prev, newUser]);
-      setShowNewUserDialog(false);
-      setNewUserName("");
-      setNewUserEmail("");
-      setNewUserPassword("");
-      setNewUserRole("");
-      setNewUserDepartment("");
-    } catch (err: any) {
-      setError(err?.message || "Failed to create user.");
+  function toggleUserSelection(userId: number) {
+    setSelectedUserIds((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(userId)) {
+        newSet.delete(userId);
+      } else {
+        newSet.add(userId);
+      }
+      return newSet;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedUserIds.size === paginatedUsers.length) {
+      setSelectedUserIds(new Set());
+    } else {
+      setSelectedUserIds(new Set(paginatedUsers.map((u) => u.id)));
     }
   }
 
@@ -191,265 +215,382 @@ export function UsersPage() {
   }
 
   return (
-    <div className="p-6">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-foreground">Users</h1>
-          <p className="text-sm text-muted-foreground">{users.length} registered accounts</p>
-        </div>
-        {canManage && (
-          <button
-            onClick={() => setShowNewUserDialog(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
-          >
-            <Plus size={16} />
-            New User
-          </button>
-        )}
-      </div>
-
+    <div className="p-6 max-w-7xl mx-auto space-y-6">
       {error && (
-        <div className="mb-4 flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm">
+        <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm">
           <AlertTriangle size={14} className="text-red-500 flex-shrink-0" />
           <span className="text-red-700">{error}</span>
         </div>
       )}
 
+      {/* Header */}
+      <div>
+        <h1 className="text-2xl font-bold text-foreground">Users</h1>
+        <p className="text-sm text-muted-foreground">Manage system users and their access</p>
+      </div>
+
+      {/* Stat Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-white rounded-xl border border-border p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total Users</span>
+            <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center">
+              <span className="text-blue-600 text-sm font-semibold">{totalUsers}</span>
+            </div>
+          </div>
+          <p className="text-2xl font-bold text-foreground">{totalUsers}</p>
+        </div>
+        <div className="bg-white rounded-xl border border-border p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Active Users</span>
+            <div className="w-8 h-8 bg-emerald-50 rounded-lg flex items-center justify-center">
+              <span className="text-emerald-600 text-sm font-semibold">{activeUsers}</span>
+            </div>
+          </div>
+          <p className="text-2xl font-bold text-foreground">{activeUsers}</p>
+        </div>
+        <div className="bg-white rounded-xl border border-border p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Inactive Users</span>
+            <div className="w-8 h-8 bg-gray-50 rounded-lg flex items-center justify-center">
+              <span className="text-gray-600 text-sm font-semibold">{inactiveUsers}</span>
+            </div>
+          </div>
+          <p className="text-2xl font-bold text-foreground">{inactiveUsers}</p>
+        </div>
+        <div className="bg-white rounded-xl border border-border p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Administrators</span>
+            <div className="w-8 h-8 bg-purple-50 rounded-lg flex items-center justify-center">
+              <span className="text-purple-600 text-sm font-semibold">{administrators}</span>
+            </div>
+          </div>
+          <p className="text-2xl font-bold text-foreground">{administrators}</p>
+        </div>
+      </div>
+
+      {/* Filters and Search */}
+      <div className="bg-white rounded-xl border border-border p-4">
+        <div className="flex flex-col lg:flex-row gap-4">
+          <div className="flex-1 relative">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search by name or email..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-foreground"
+            />
+          </div>
+          <FldSelect
+            label="Department"
+            options={[
+              { value: "all", label: "All Departments" },
+              ...departments.map((d) => ({ value: d.id.toString(), label: d.name })),
+            ]}
+            value={filterDepartment}
+            onChange={(e) => setFilterDepartment(e.target.value)}
+          />
+          <FldSelect
+            label="Role"
+            options={[
+              { value: "all", label: "All Roles" },
+              ...roles.map((r) => ({ value: r.id.toString(), label: r.name })),
+            ]}
+            value={filterRole}
+            onChange={(e) => setFilterRole(e.target.value)}
+          />
+          <FldSelect
+            label="Status"
+            options={[
+              { value: "all", label: "All" },
+              { value: "active", label: "Active" },
+              { value: "inactive", label: "Inactive" },
+            ]}
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+          />
+          {canManage && (
+            <button
+              onClick={() => setShowCreateDialog(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer self-end"
+            >
+              <Plus size={16} />
+              Add User
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Users Table */}
       <div className="bg-white rounded-xl border border-border overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="border-b border-border bg-muted/40">
-                {["User", "Email", "Role", "Department", "Status", "Actions"].map((h) => (
-                  <th
-                    key={h}
-                    className="text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider px-5 py-3"
-                  >
-                    {h}
-                  </th>
-                ))}
+                <th className="px-4 py-3 text-left">
+                  <input
+                    type="checkbox"
+                    checked={selectedUserIds.size === paginatedUsers.length && paginatedUsers.length > 0}
+                    onChange={toggleSelectAll}
+                    className="w-4 h-4 accent-blue-600"
+                  />
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">User</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Email</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Role</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Department</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Joined On</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Status</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-border">
-              {users.map((user) => (
-                <tr key={user.id} className="hover:bg-muted/20 transition-colors">
-                  <td className="px-5 py-3.5">
+            <tbody>
+              {paginatedUsers.map((user) => (
+                <tr key={user.id} className="border-b border-border hover:bg-muted/20">
+                  <td className="px-4 py-3">
+                    <input
+                      type="checkbox"
+                      checked={selectedUserIds.has(user.id)}
+                      onChange={() => toggleUserSelection(user.id)}
+                      className="w-4 h-4 accent-blue-600"
+                    />
+                  </td>
+                  <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
-                      <Av name={user.name} size="md" />
-                      <span className="text-sm font-semibold text-foreground">
-                        {user.name}
-                      </span>
+                      <Av name={user.name} />
+                      <span className="text-sm font-medium text-foreground">{user.name}</span>
                     </div>
                   </td>
-                  <td className="px-5 py-3.5">
-                    <span className="text-xs font-mono text-muted-foreground">
-                      {user.email}
-                    </span>
-                  </td>
-                  <td className="px-5 py-3.5">
-                    <select
-                      value={user.role?.id ?? ""}
-                      onChange={(e) => handleRoleChange(user.id, e.target.value)}
-                      className="text-xs border border-border rounded-lg px-2.5 py-1.5 bg-white text-foreground focus:outline-none focus:border-blue-400 min-w-[120px]"
-                    >
-                      <option value="">No role</option>
-                      {filteredRoles.map((r) => (
-                        <option key={r.id} value={r.id}>
-                          {r.name}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="px-5 py-3.5">
-                    {canManage && (canManageAllDepartments || availableDepartmentsForAssignment.length > 0) ? (
-                      <select
-                        value={user.department?.id ?? ""}
-                        onChange={(e) => handleDepartmentChange(user.id, e.target.value)}
-                        className="text-xs border border-border rounded-lg px-2.5 py-1.5 bg-white text-foreground focus:outline-none focus:border-blue-400 min-w-[120px]"
+                  <td className="px-4 py-3 text-sm text-muted-foreground">{user.email}</td>
+                  <td className="px-4 py-3">
+                    {user.role ? (
+                      <span
+                        className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium"
+                        style={{
+                          backgroundColor: `${user.role.color}20`,
+                          color: user.role.color,
+                        }}
                       >
-                        <option value="">No department</option>
-                        {availableDepartmentsForAssignment.map((d) => (
-                          <option key={d.id} value={d.id}>
-                            {d.name}
-                          </option>
-                        ))}
-                      </select>
+                        {user.role.name}
+                      </span>
                     ) : (
-                      <span className="text-xs text-muted-foreground">
-                        {user.department?.name || "No department"}
+                      <span className="text-sm text-muted-foreground">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-muted-foreground">
+                    {user.department?.name || "—"}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-muted-foreground">{fmtDate(user.createdAt)}</td>
+                  <td className="px-4 py-3">
+                    {user.active ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        Active
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-50 text-gray-600 border border-gray-200">
+                        <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
+                        Inactive
                       </span>
                     )}
                   </td>
-                  <td className="px-5 py-3.5">
-                    <span
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${
-                        user.active
-                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                          : "bg-slate-50 text-slate-500 border-slate-200"
-                      }`}
-                    >
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full ${
-                          user.active ? "bg-emerald-500" : "bg-slate-400"
-                        }`}
-                      />
-                      {user.active ? "Active" : "Inactive"}
-                    </span>
-                  </td>
-                  <td className="px-5 py-3.5">
+                  <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => {
-                          setEditUser(user);
-                          setEditName(user.name);
-                          setEditEmail(user.email);
-                          setEditPassword("");
-                          setEditActive(user.active);
-                          setEditError(null);
-                        }}
-                        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors font-medium cursor-pointer"
+                        onClick={() => navigate(`/users/${user.id}`)}
+                        className="p-1.5 hover:bg-muted rounded-lg transition-colors cursor-pointer"
+                        title="Edit"
                       >
-                        <Edit2 size={12} /> Edit
+                        <Edit2 size={14} className="text-muted-foreground" />
                       </button>
-                      {user.id !== currentUser?.id && (
+                      {canManage && (
                         <button
                           onClick={() => setDeleteConfirmUser(user)}
-                          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-red-600 transition-colors font-medium cursor-pointer"
+                          className="p-1.5 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                          title="Delete"
                         >
-                          <Trash2 size={12} /> Delete
+                          <Trash2 size={14} className="text-red-500" />
                         </button>
                       )}
                     </div>
                   </td>
                 </tr>
               ))}
+              {paginatedUsers.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                    No users found
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
-      </div>
 
-      {editUser && (
-        <Dlg title="Edit user" onClose={() => setEditUser(null)}>
-          <div className="space-y-4">
-            <FldInput
-              label="Full name"
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
-              autoFocus
-            />
-            <FldInput
-              label="Email"
-              type="email"
-              value={editEmail}
-              onChange={(e) => setEditEmail(e.target.value)}
-            />
-            <FldInput
-              label="New password (optional)"
-              type="password"
-              placeholder="Leave blank to keep current password"
-              value={editPassword}
-              onChange={(e) => setEditPassword(e.target.value)}
-            />
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Status</label>
-              <select
-                value={editActive ? "true" : "false"}
-                onChange={(e) => setEditActive(e.target.value === "true")}
-                className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-white text-foreground focus:outline-none focus:border-blue-400"
-              >
-                <option value="true">Active</option>
-                <option value="false">Inactive</option>
-              </select>
-            </div>
-            {editError && (
-              <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                {editError}
-              </p>
-            )}
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                onClick={() => setEditUser(null)}
-                className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={saveEdit}
-                className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
-              >
-                Save Changes
-              </button>
+        {/* Pagination */}
+        {filteredUsers.length > usersPerPage && (
+          <div className="px-4 py-4 border-t border-border flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">
+              Showing {(currentPage - 1) * usersPerPage + 1} to {Math.min(currentPage * usersPerPage, filteredUsers.length)} of {filteredUsers.length} users
+            </span>
+            <div className="flex gap-1">
+              {Array.from({ length: totalPages }).map((_, i) => (
+                <button
+                  key={i}
+                  onClick={() => setCurrentPage(i + 1)}
+                  className={`w-8 h-8 text-sm font-medium rounded-lg transition-colors cursor-pointer ${
+                    currentPage === i + 1
+                      ? "bg-blue-500 text-white"
+                      : "text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  {i + 1}
+                </button>
+              ))}
             </div>
           </div>
-        </Dlg>
-      )}
+        )}
+      </div>
 
-      {showNewUserDialog && (
-        <Dlg title="Create new user" onClose={() => setShowNewUserDialog(false)}>
+      {/* Create User Dialog */}
+      {showCreateDialog && (
+        <Dlg
+          isOpen={showCreateDialog}
+          onClose={() => {
+            setShowCreateDialog(false);
+            resetCreateForm();
+          }}
+          title="Create New User"
+          size="md"
+        >
           <div className="space-y-4">
-            <FldInput
-              label="Full name"
-              value={newUserName}
-              onChange={(e) => setNewUserName(e.target.value)}
-              autoFocus
-            />
-            <FldInput
-              label="Email"
-              type="email"
-              value={newUserEmail}
-              onChange={(e) => setNewUserEmail(e.target.value)}
-            />
-            <FldInput
-              label="Password"
-              type="password"
-              value={newUserPassword}
-              onChange={(e) => setNewUserPassword(e.target.value)}
-            />
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Role (optional)</label>
-              <select
-                value={newUserRole}
-                onChange={(e) => setNewUserRole(e.target.value)}
-                className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-white text-foreground focus:outline-none focus:border-blue-400"
-              >
-                <option value="">No role</option>
-                {filteredRoles.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {canManageAllDepartments || availableDepartmentsForAssignment.length > 0 ? (
-              <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Department (optional)</label>
-                <select
-                  value={newUserDepartment}
-                  onChange={(e) => setNewUserDepartment(e.target.value)}
-                  className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-white text-foreground focus:outline-none focus:border-blue-400"
-                >
-                  <option value="">No department</option>
-                  {availableDepartmentsForAssignment.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : (
-              <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Department</label>
-                <div className="text-sm text-foreground">
-                  {currentUser?.department?.name || "No department"}
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Users will be assigned to your department
-                </p>
+            {createError && (
+              <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm">
+                <AlertTriangle size={14} className="text-red-500 flex-shrink-0" />
+                <span className="text-red-700">{createError}</span>
               </div>
             )}
+
+            <FldInput
+              label="Full Name"
+              value={createName}
+              onChange={(e) => setCreateName(e.target.value)}
+              required
+            />
+
+            <FldInput
+              label="Email Address"
+              type="email"
+              value={createEmail}
+              onChange={(e) => setCreateEmail(e.target.value)}
+              required
+            />
+
+            <div>
+              <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                Password
+              </label>
+              <div className="flex gap-2">
+                <div className="flex-1 relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={createPassword}
+                    onChange={(e) => setCreatePassword(e.target.value)}
+                    placeholder="Enter password"
+                    className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-foreground pr-8"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
+                  >
+                    {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCreatePassword(generatePassword(12))}
+                  className="flex items-center gap-2 px-3 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer"
+                >
+                  <RefreshCw size={14} />
+                  Generate
+                </button>
+              </div>
+              {createPassword && createPassword.length < 8 && (
+                <p className="text-xs text-red-600 mt-1">Password must be at least 8 characters</p>
+              )}
+            </div>
+
+            <FldSelect
+              label="Department"
+              options={[
+                { value: "", label: "Select department" },
+                ...departments.map((d) => ({ value: d.id.toString(), label: d.name })),
+              ]}
+              value={createDepartment}
+              onChange={(e) => setCreateDepartment(e.target.value)}
+              required
+            />
+
+            <FldSelect
+              label="Role"
+              options={[
+                { value: "", label: "Select role" },
+                ...assignableRoles.map((r) => ({ value: r.id.toString(), label: r.name })),
+              ]}
+              value={createRole}
+              onChange={(e) => setCreateRole(e.target.value)}
+              required
+            />
+
+            <div>
+              <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                Account Status
+              </label>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="status"
+                    value="active"
+                    checked={createActive}
+                    onChange={() => setCreateActive(true)}
+                    className="w-4 h-4 accent-blue-600"
+                  />
+                  <span className="text-sm text-foreground">Active</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="status"
+                    value="inactive"
+                    checked={!createActive}
+                    onChange={() => setCreateActive(false)}
+                    className="w-4 h-4 accent-blue-600"
+                  />
+                  <span className="text-sm text-foreground">Inactive</span>
+                </label>
+              </div>
+            </div>
+
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={createSendWelcome}
+                onChange={(e) => setCreateSendWelcome(e.target.checked)}
+                className="w-4 h-4 accent-blue-600"
+              />
+              <span className="text-sm text-foreground">Send welcome email with login details</span>
+            </label>
+
             <div className="flex justify-end gap-2 pt-2">
               <button
-                onClick={() => setShowNewUserDialog(false)}
+                onClick={() => {
+                  setShowCreateDialog(false);
+                  resetCreateForm();
+                }}
                 className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
               >
                 Cancel
@@ -458,23 +599,26 @@ export function UsersPage() {
                 onClick={handleCreateUser}
                 className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
               >
-                Create
+                Create User
               </button>
             </div>
           </div>
         </Dlg>
       )}
 
+      {/* Delete Confirmation Dialog */}
       {deleteConfirmUser && (
         <Dlg
-          title="Delete user"
+          isOpen={!!deleteConfirmUser}
           onClose={() => setDeleteConfirmUser(null)}
+          title="Delete User"
+          size="sm"
         >
           <div className="space-y-4">
             <p className="text-sm text-foreground">
-              Are you sure you want to delete <strong>{deleteConfirmUser.name}</strong>? This cannot be undone.
+              Are you sure you want to delete <strong>{deleteConfirmUser.name}</strong>? This action cannot be undone.
             </p>
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex justify-end gap-2">
               <button
                 onClick={() => setDeleteConfirmUser(null)}
                 className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
