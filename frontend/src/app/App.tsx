@@ -17,6 +17,7 @@ import { ProjectsPage } from "./pages/ProjectsPage";
 import { ProjectDetailPage } from "./pages/ProjectDetailPage";
 import { SubtaskDetailPage } from "./pages/SubtaskDetailPage";
 import { DepartmentDetailPage } from "./pages/DepartmentDetailPage";
+import { UserDetailPage } from "./pages/UserDetailPage";
 
 // Auth guard component to redirect unauthenticated users
 function AuthGuard({ children }: { children: React.ReactNode }) {
@@ -118,6 +119,16 @@ function AppContent() {
                     element={
                       permissions.includes("user:manage") ? (
                         <UsersPage />
+                      ) : (
+                        <Navigate to="/tasks" replace />
+                      )
+                    }
+                  />
+                  <Route
+                    path="/users/:userId"
+                    element={
+                      permissions.includes("user:manage") ? (
+                        <UserDetailPage />
                       ) : (
                         <Navigate to="/tasks" replace />
                       )

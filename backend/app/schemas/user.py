@@ -1,5 +1,6 @@
 from pydantic import BaseModel, EmailStr, field_validator
 from datetime import datetime
+from app.schemas.role import PermissionOut
 
 
 class DepartmentBrief(BaseModel):
@@ -17,6 +18,16 @@ class RoleBrief(BaseModel):
     name: str
     color: str
     is_active: bool
+    permissions: list[PermissionOut] = []
+
+    class Config:
+        from_attributes = True
+
+
+class UserBrief(BaseModel):
+    id: int
+    name: str
+    email: str
 
     class Config:
         from_attributes = True
@@ -34,6 +45,7 @@ class UserOut(BaseModel):
     role: RoleBrief | None = None
     department: DepartmentBrief | None = None
     created_at: datetime
+    manager: UserBrief | None = None
 
     class Config:
         from_attributes = True
@@ -45,6 +57,7 @@ class UserUpdate(BaseModel):
     password: str | None = None
     is_active: bool | None = None
     department_id: int | None = None
+    manager_id: int | None = None
 
     @field_validator("password")
     @classmethod

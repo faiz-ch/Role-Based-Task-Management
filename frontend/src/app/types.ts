@@ -48,6 +48,7 @@ export interface UserType {
   role: Role | null;
   department: Department | null;
   createdAt: string;
+  manager: { id: number; name: string; email: string } | null;
 }
 
 export interface Project {
@@ -100,4 +101,19 @@ export interface PermDef {
   id: number;
   name: string;
   description: string;
+}
+
+export interface PerformanceCategory {
+  total: number;
+  completed: number;
+  onTime: number;
+  late: number;
+  overdue: number;
+  pending: number;
+}
+
+export interface UserPerformance {
+  projects: PerformanceCategory;
+  tasks: PerformanceCategory;
+  subtasks: PerformanceCategory;
 }

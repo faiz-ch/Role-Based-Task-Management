@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import { UserType, Role } from "../types";
+import { UserType, Role, UserPerformance } from "../types";
 
 function mapRole(r: any): Role {
   return {
@@ -30,6 +30,7 @@ function mapUser(u: any): UserType {
     role: u.role ? mapRole(u.role) : null,
     department: u.department ? { id: u.department.id, name: u.department.name } : null,
     createdAt: u.created_at,
+    manager: u.manager ? { id: u.manager.id, name: u.manager.name, email: u.manager.email } : null,
   };
 }
 
@@ -47,13 +48,49 @@ export async function getMePermissions(): Promise<string[]> {
   return apiFetch("/users/me/permissions");
 }
 
-export async function updateUser(id: number, data: { name?: string; email?: string; password?: string; active?: boolean; department_id?: number }): Promise<UserType> {
+export async function getUser(id: number): Promise<UserType> {
+  const data = await apiFetch(`/users/${id}`);
+  return mapUser(data);
+}
+
+export async function getUserPerformance(id: number): Promise<UserPerformance> {
+  const data = await apiFetch(`/users/${id}/performance`);
+  return {
+    projects: {
+      total: data.projects.total, completed: data.projects.completed,
+      onTime: data.projects.on_time, late: data.projects.late,
+      overdue: data.projects.overdue, pending: data.projects.pending,
+    },
+    tasks: {
+      total: data.tasks.total, completed: data.tasks.completed,
+      onTime: data.tasks.on_time, late: data.tasks.late,
+      overdue: data.tasks.overdue, pending: data.tasks.pending,
+    },
+    subtasks: {
+      total: data.subtasks.total, completed: data.subtasks.completed,
+      onTime: data.subtasks.on_time, late: data.subtasks.late,
+      overdue: data.subtasks.overdue, pending: data.subtasks.pending,
+    },
+  };
+}
+
+export async function getUserActivity(id: number): Promise<{
+  actorId: number; action: string; detail: string | null; createdAt: string;
+}[]> {
+  const data = await apiFetch(`/users/${id}/activity`);
+  return Array.isArray(data) ? data.map((a: any) => ({
+    actorId: a.actor_id, action: a.action, detail: a.detail, createdAt: a.created_at,
+  })) : [];
+}
+
+export async function updateUser(id: number, data: { name?: string; email?: string; password?: string; active?: boolean; department_id?: number; manager_id?: number | null }): Promise<UserType> {
   const payload: any = {};
   if (data.name !== undefined) payload.name = data.name;
   if (data.email !== undefined) payload.email = data.email;
   if (data.password !== undefined) payload.password = data.password;
   if (data.active !== undefined) payload.is_active = data.active;
   if (data.department_id !== undefined) payload.department_id = data.department_id;
+  if (data.manager_id !== undefined) payload.manager_id = data.manager_id;
 
   const res = await apiFetch(`/users/${id}`, {
     method: "PATCH",

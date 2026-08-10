@@ -19,6 +19,8 @@ from app.models.activity_log import ActivityLog
 from app.models.comment import Comment
 from app.schemas.user import UserOut, UserUpdate, AssignRoleRequest, AssignDepartmentRequest, UserCreate, PerformanceCategoryOut, UserPerformanceOut
 from app.services import notification_dispatch
+from app.services.activity_log import log_activity
+from app.schemas.activity_log import ActivityLogOut
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -112,6 +114,8 @@ async def create_user(
     db.add(user)
     await db.commit()
     
+    await log_activity(db, current_user.id, "user_created", "user", user.id, detail=f"Account created by {current_user.name}")
+
     if payload.send_welcome_email:
         background_tasks.add_task(notification_dispatch.notify_user_created, user.id)
     
@@ -272,13 +276,12 @@ async def update_user(
         if user.department_id not in scoped_dept_ids:
             raise HTTPException(status_code=404, detail="User not found")
 
-    # Capture old values for comparison
-    old_name = user.name
-    old_email = user.email
-    old_is_active = user.is_active
+    # Track changed fields for activity log
+    changed_fields = []
 
     if payload.name is not None:
         user.name = payload.name
+        changed_fields.append("name")
     if payload.email is not None:
         # Check if email is already in use by another user
         existing = await db.execute(
@@ -287,10 +290,12 @@ async def update_user(
         if existing.scalar_one_or_none() is not None:
             raise HTTPException(status_code=400, detail="Email already in use")
         user.email = payload.email
+        changed_fields.append("email")
     if payload.password is not None:
         user.hashed_password = hash_password(payload.password)
     if payload.is_active is not None:
         user.is_active = payload.is_active
+        changed_fields.append("is_active")
     if payload.department_id is not None:
         # Apply department-tier guardrail
         if scoped_dept_ids is not None:
@@ -310,18 +315,23 @@ async def update_user(
             if dept_result.scalar_one_or_none() is None:
                 raise HTTPException(status_code=404, detail="Department not found")
         user.department_id = payload.department_id if payload.department_id != 0 else None
+        changed_fields.append("department_id")
+    if payload.manager_id is not None:
+        if payload.manager_id == user_id:
+            raise HTTPException(status_code=400, detail="A user cannot be their own manager")
+        manager_result = await db.execute(select(User).where(User.id == payload.manager_id))
+        if manager_result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Manager not found")
+        user.manager_id = payload.manager_id
+        changed_fields.append("manager_id")
 
     await db.commit()
 
-    # Send notifications for changed fields
-    if payload.name is not None and payload.name != old_name:
-        background_tasks.add_task(notification_dispatch.notify_user_name_changed, user.id)
-    if payload.email is not None and payload.email != old_email:
-        background_tasks.add_task(notification_dispatch.notify_user_email_changed, user.id)
+    # Log activity with detail summarizing changes
+    if changed_fields:
+        await log_activity(db, current_user.id, "user_updated", "user", user.id, detail=f"Updated: {', '.join(changed_fields)}")
     if payload.password is not None:
-        background_tasks.add_task(notification_dispatch.notify_user_password_changed, user.id)
-    if payload.is_active is not None and old_is_active == True and payload.is_active == False:
-        background_tasks.add_task(notification_dispatch.notify_user_deactivated, user.id)
+        await log_activity(db, current_user.id, "password_changed", "user", user.id, detail="Password changed")
 
     result = await db.execute(
         select(User)
@@ -381,6 +391,8 @@ async def assign_role(
         user.role_id = role.id
 
     await db.commit()
+    await log_activity(db, current_user.id, "role_assigned", "user", user_id, detail=f"Role changed to '{role.name}'" if role else "Role removed")
+
     result = await db.execute(
         select(User)
         .options(selectinload(User.role).selectinload(Role.permissions),
@@ -610,6 +622,8 @@ async def assign_department(
         user.department_id = department.id
 
     await db.commit()
+    await log_activity(db, current_user.id, "department_assigned", "user", user_id, detail=f"Department changed to '{department.name}'" if department else "Department removed")
+
     result = await db.execute(
         select(User)
         .options(selectinload(User.role).selectinload(Role.permissions),
@@ -619,3 +633,32 @@ async def assign_department(
         .where(User.id == user.id)
     )
     return result.scalar_one()
+
+@router.get("/{user_id}/activity", response_model=list[ActivityLogOut])
+async def get_user_activity(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not has_permission(current_user, "user:manage"):
+        raise HTTPException(status_code=403, detail="You do not have permission to view users")
+
+    target_result = await db.execute(select(User).where(User.id == user_id))
+    target_user = target_result.scalar_one_or_none()
+    if target_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    scoped_dept_ids = get_scoped_department_ids(current_user)
+    if scoped_dept_ids is not None:
+        if target_user.department_id not in scoped_dept_ids:
+            raise HTTPException(status_code=404, detail="User not found")
+
+    logs_result = await db.execute(
+        select(ActivityLog)
+        .where(
+            (ActivityLog.actor_id == user_id) |
+            ((ActivityLog.entity_type == "user") & (ActivityLog.entity_id == user_id))
+        )
+        .order_by(ActivityLog.created_at.desc())
+    )
+    return logs_result.scalars().all()

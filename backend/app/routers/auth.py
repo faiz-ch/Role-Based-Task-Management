@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -14,6 +14,7 @@ from app.database import get_db
 from app.models.user import User
 from app.schemas.auth import RegisterRequest, LoginRequest, RefreshRequest, TokenResponse
 from app.schemas.user import UserOut
+from app.services.activity_log import log_activity
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -43,7 +44,7 @@ async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db))
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(payload: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
 
@@ -56,6 +57,10 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
         raise invalid_creds
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is deactivated")
+
+    client_ip = request.client.host if request.client else "unknown"
+    await log_activity(db, user.id, "user_logged_in", "user", user.id, detail=f"Login from {client_ip}")
+    await db.commit()
 
     return TokenResponse(
         access_token=create_access_token(user.id),
