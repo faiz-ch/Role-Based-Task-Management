@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router";
 import { Plus, AlertTriangle, Trash2, Search, CheckCircle2, Settings, Users as UsersIcon, Shield } from "lucide-react";
 import { Role, Department, Category, PermDef } from "../types";
 import { getRoles, createRole, updateRole, deleteRole, getAllPermissions } from "../api/roles";
@@ -8,6 +9,7 @@ import { Dlg } from "../components/Dlg";
 import { FldInput } from "../components/FldInput";
 
 export function RolesPage() {
+  const navigate = useNavigate();
   const [roles, setRoles] = useState<Role[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -22,11 +24,11 @@ export function RolesPage() {
   // Step 1 form state
   const [newRoleName, setNewRoleName] = useState("");
   const [newRoleDescription, setNewRoleDescription] = useState("");
-  const [newRoleType, setNewRoleType] = useState<"custom" | "system">("custom");
   const [newRoleColor, setNewRoleColor] = useState("blue");
   const [newAssignableRoleIds, setNewAssignableRoleIds] = useState<number[]>([]);
   const [newAllDepartments, setNewAllDepartments] = useState(false);
   const [newDepartmentIds, setNewDepartmentIds] = useState<number[]>([]);
+  const [departmentSearchQuery, setDepartmentSearchQuery] = useState("");
   
   // Step 2 form state
   const [newPermissionIds, setNewPermissionIds] = useState<number[]>([]);
@@ -120,7 +122,7 @@ export function RolesPage() {
         description: newRoleDescription.trim() || undefined,
         color: newRoleColor,
         isActive: true,
-        isSystem: newRoleType === "system",
+        isSystem: false,
         allDepartments: newAllDepartments,
         departmentIds: newAllDepartments ? [] : newDepartmentIds,
         permissionIds: newPermissionIds,
@@ -164,11 +166,11 @@ export function RolesPage() {
     setCreateStep(1);
     setNewRoleName("");
     setNewRoleDescription("");
-    setNewRoleType("custom");
     setNewRoleColor("blue");
     setNewAssignableRoleIds([]);
     setNewAllDepartments(false);
     setNewDepartmentIds([]);
+    setDepartmentSearchQuery("");
     setNewPermissionIds([]);
     setSelectedPresetId("");
     setSelectedModule(moduleNames[0] || "");
@@ -299,19 +301,19 @@ export function RolesPage() {
           </thead>
           <tbody>
             {filteredRoles.map((role) => (
-              <tr key={role.id} className="border-b border-border hover:bg-muted/30 cursor-pointer">
+              <tr
+                key={role.id}
+                className="border-b border-border hover:bg-muted/30 cursor-pointer"
+                onClick={() => navigate(`/roles/${role.id}`)}
+              >
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-foreground">{role.name}</span>
-                    <span
-                      className={`px-2 py-0.5 text-xs font-medium rounded-full ${
-                        role.isSystem
-                          ? "bg-purple-100 text-purple-700"
-                          : "bg-green-100 text-green-700"
-                      }`}
-                    >
-                      {role.isSystem ? "System" : "Custom"}
-                    </span>
+                    {role.isSystem && (
+                      <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-purple-100 text-purple-700">
+                        System
+                      </span>
+                    )}
                   </div>
                 </td>
                 <td className="px-4 py-3 text-sm text-muted-foreground max-w-xs truncate">
@@ -349,7 +351,7 @@ export function RolesPage() {
           isOpen={showCreateDialog}
           onClose={closeCreateDialog}
           title={createStep === 1 ? "Create Role - Step 1 of 2" : "Create Role - Step 2 of 2"}
-          size="lg"
+          size="xl"
         >
           <div className="space-y-6">
             {error && (
@@ -360,66 +362,98 @@ export function RolesPage() {
             )}
 
             {createStep === 1 ? (
-              <div className="space-y-4">
-                {/* Role Name */}
-                <div>
-                  <label className="block text-sm font-medium text-foreground mb-1">
-                    Role Name <span className="text-red-500">*</span>
-                  </label>
-                  <FldInput
-                    value={newRoleName}
-                    onChange={setNewRoleName}
-                    placeholder="e.g., Team Lead"
-                  />
-                </div>
-
-                {/* Description */}
-                <div>
-                  <label className="block text-sm font-medium text-foreground mb-1">
-                    Description
-                  </label>
-                  <textarea
-                    value={newRoleDescription}
-                    onChange={(e) => setNewRoleDescription(e.target.value)}
-                    placeholder="Optional description of this role..."
-                    rows={3}
-                    className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                  />
-                </div>
-
-                {/* Role Type */}
-                <div>
-                  <label className="block text-sm font-medium text-foreground mb-2">
-                    Role Type
-                  </label>
-                  <div className="flex gap-4">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        checked={newRoleType === "custom"}
-                        onChange={() => setNewRoleType("custom")}
-                        className="w-4 h-4 accent-blue-600"
-                      />
-                      <span className="text-sm text-foreground">Custom Role</span>
+              <div className="space-y-6">
+                {/* Basic Info Card */}
+                <div className="bg-muted/30 rounded-xl p-6 border border-border">
+                  <h3 className="text-sm font-semibold text-foreground mb-4">Basic Information</h3>
+                  
+                  {/* Role Name */}
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-foreground mb-1">
+                      Role Name <span className="text-red-500">*</span>
                     </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        checked={newRoleType === "system"}
-                        onChange={() => setNewRoleType("system")}
-                        className="w-4 h-4 accent-blue-600"
-                      />
-                      <span className="text-sm text-foreground">System Role</span>
+                    <FldInput
+                      value={newRoleName}
+                      onChange={(e) => setNewRoleName(e.target.value)}
+                      placeholder="e.g., Team Lead"
+                    />
+                  </div>
+
+                  {/* Description */}
+                  <div>
+                    <label className="block text-sm font-medium text-foreground mb-1">
+                      Description
                     </label>
+                    <textarea
+                      value={newRoleDescription}
+                      onChange={(e) => setNewRoleDescription(e.target.value)}
+                      placeholder="Optional description of this role..."
+                      rows={3}
+                      className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                    />
                   </div>
                 </div>
 
-                {/* Assignable By */}
-                <div>
-                  <label className="block text-sm font-medium text-foreground mb-2">
-                    Assignable By (roles that can assign this role)
+                {/* Department Access Card */}
+                <div className="bg-muted/30 rounded-xl p-6 border border-border">
+                  <h3 className="text-sm font-semibold text-foreground mb-4">Department Access</h3>
+                  
+                  <label className="flex items-center gap-2 cursor-pointer mb-4">
+                    <input
+                      type="checkbox"
+                      checked={newAllDepartments}
+                      onChange={(e) => setNewAllDepartments(e.target.checked)}
+                      className="w-4 h-4 accent-blue-600"
+                    />
+                    <span className="text-sm text-foreground">All Departments</span>
                   </label>
-                  <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto border border-border rounded-lg p-2">
+                  
+                  {!newAllDepartments && (
+                    <>
+                      {departments.length > 6 && (
+                        <div className="mb-3">
+                          <input
+                            type="text"
+                            placeholder="Search departments..."
+                            value={departmentSearchQuery}
+                            onChange={(e) => setDepartmentSearchQuery(e.target.value)}
+                            className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                      )}
+                      <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border border-border rounded-lg p-2">
+                        {departments
+                          .filter((dept) => 
+                            dept.name.toLowerCase().includes(departmentSearchQuery.toLowerCase())
+                          )
+                          .map((dept) => (
+                            <label key={dept.id} className="flex items-center gap-2 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={newDepartmentIds.includes(dept.id)}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setNewDepartmentIds((prev) => [...prev, dept.id]);
+                                  } else {
+                                    setNewDepartmentIds((prev) => prev.filter((id) => id !== dept.id));
+                                  }
+                                }}
+                                className="w-4 h-4 accent-blue-600"
+                              />
+                              <span className="text-sm text-foreground">{dept.name}</span>
+                            </label>
+                          ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Assignable By Card */}
+                <div className="bg-muted/30 rounded-xl p-6 border border-border">
+                  <h3 className="text-sm font-semibold text-foreground mb-4">
+                    Assignable By (roles that can assign this role)
+                  </h3>
+                  <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border border-border rounded-lg p-2">
                     {roles.map((role) => (
                       <label key={role.id} className="flex items-center gap-2 cursor-pointer">
                         <input
@@ -438,43 +472,6 @@ export function RolesPage() {
                       </label>
                     ))}
                   </div>
-                </div>
-
-                {/* Department Access */}
-                <div>
-                  <label className="block text-sm font-medium text-foreground mb-2">
-                    Department Access
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer mb-2">
-                    <input
-                      type="checkbox"
-                      checked={newAllDepartments}
-                      onChange={(e) => setNewAllDepartments(e.target.checked)}
-                      className="w-4 h-4 accent-blue-600"
-                    />
-                    <span className="text-sm text-foreground">All Departments</span>
-                  </label>
-                  {!newAllDepartments && (
-                    <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto border border-border rounded-lg p-2">
-                      {departments.map((dept) => (
-                        <label key={dept.id} className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={newDepartmentIds.includes(dept.id)}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setNewDepartmentIds((prev) => [...prev, dept.id]);
-                              } else {
-                                setNewDepartmentIds((prev) => prev.filter((id) => id !== dept.id));
-                              }
-                            }}
-                            className="w-4 h-4 accent-blue-600"
-                          />
-                          <span className="text-sm text-foreground">{dept.name}</span>
-                        </label>
-                      ))}
-                    </div>
-                  )}
                 </div>
 
                 <div className="flex justify-end">

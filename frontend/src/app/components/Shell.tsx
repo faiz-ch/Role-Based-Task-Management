@@ -9,7 +9,6 @@ import {
   LogOut,
   Menu,
   Bell,
-  Layers,
   FolderKanban,
 } from "lucide-react";
 import { Page } from "../types";
@@ -22,12 +21,11 @@ const NAV: {
   Icon: React.ElementType;
   perm: string | string[] | null;
 }[] = [
-  { id: "dashboard", label: "Dashboard", Icon: LayoutDashboard, perm: "dashboard:view" },
+  { id: "dashboard", label: "Dashboard", Icon: LayoutDashboard, perm: null },
   { id: "projects", label: "Projects", Icon: FolderKanban, perm: null },
   { id: "tasks", label: "Tasks", Icon: CheckSquare, perm: null },
   { id: "users", label: "Users", Icon: Users, perm: "user:manage" },
   { id: "roles", label: "Roles", Icon: Shield, perm: "role:manage" },
-  { id: "categories", label: "Categories", Icon: Layers, perm: "role:manage" },
   { id: "departments", label: "Departments", Icon: Building2, perm: "department:manage" },
 ];
 
@@ -45,7 +43,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
     if (path.startsWith("/tasks")) return "tasks";
     if (path === "/users") return "users";
     if (path === "/roles") return "roles";
-    if (path === "/categories") return "categories";
     if (path === "/departments") return "departments";
     return "tasks"; // default
   })();

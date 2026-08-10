@@ -13,9 +13,7 @@ Usage:
 (Run this AFTER you've registered that user via POST /auth/register)
 
 Safe to run more than once: if the Admin role/category already exist,
-it will also make sure Admin's assignable_categories includes every
-Category currently in the system (so newly added categories after the
-first run still get picked up).
+they will be updated with all permissions and all_departments=True.
 """
 import asyncio
 import sys
@@ -23,7 +21,7 @@ import sys
 from sqlalchemy import select
 
 from app.database import AsyncSessionLocal
-from app.models.role import Role, Permission, role_assignable_category
+from app.models.role import Role, Permission
 from app.models.category import Category
 from app.models.department import Department
 from app.models.user import User
@@ -68,33 +66,6 @@ async def bootstrap_admin(email: str):
                 admin_role.category_id = admin_category.id
             if not admin_role.all_departments:
                 admin_role.all_departments = True
-
-        # Sync assignable_categories to cover every category that currently
-        # exists, whether the role was just created or already existed.
-        # Insert directly into the join table (not the ORM relationship) to
-        # avoid MissingGreenlet from an async lazy-load on an already-flushed object.
-        all_categories = (await db.execute(select(Category))).scalars().all()
-
-        existing_links = await db.execute(
-            select(role_assignable_category.c.category_id).where(
-                role_assignable_category.c.role_id == admin_role.id
-            )
-        )
-        already_linked_ids = {row[0] for row in existing_links.all()}
-
-        missing_categories = [c for c in all_categories if c.id not in already_linked_ids]
-
-        for cat in missing_categories:
-            await db.execute(
-                role_assignable_category.insert().values(
-                    role_id=admin_role.id,
-                    category_id=cat.id,
-                )
-            )
-
-        if missing_categories:
-            names = ", ".join(c.name for c in missing_categories)
-            print(f"Added {len(missing_categories)} newly found categor{'y' if len(missing_categories) == 1 else 'ies'} to Admin's assignable list: {names}")
 
         user.role_id = admin_role.id
         await db.commit()

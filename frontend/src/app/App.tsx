@@ -10,7 +10,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { TasksPage } from "./pages/TasksPage";
 import { UsersPage } from "./pages/UsersPage";
 import { RolesPage } from "./pages/RolesPage";
-import { CategoriesPage } from "./pages/CategoriesPage";
+import { RoleDetailPage } from "./pages/RoleDetailPage";
 import { DepartmentsPage } from "./pages/DepartmentsPage";
 import { TaskDetailPage } from "./pages/TaskDetailPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
@@ -29,7 +29,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
       navigate("/login", { replace: true });
     } else if ((location.pathname === "/login" || location.pathname === "/register") && currentUser) {
       // Redirect authenticated users away from login/register
-      navigate(permissions.includes("dashboard:view") ? "/dashboard" : "/tasks", { replace: true });
+      navigate("/dashboard", { replace: true });
     }
   }, [currentUser, permissions, navigate, location.pathname]);
 
@@ -47,7 +47,7 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (currentUser) {
-      navigate(permissions.includes("dashboard:view") ? "/dashboard" : "/tasks", { replace: true });
+      navigate("/dashboard", { replace: true });
     }
   }, [currentUser, permissions, navigate]);
 
@@ -65,10 +65,9 @@ function AppContent() {
   // Permission-based redirect after login
   useEffect(() => {
     if (currentUser && permissions.length > 0) {
-      const target = permissions.includes("dashboard:view") ? "/dashboard" : "/tasks";
       // Only redirect if we're on a public route
       if (window.location.pathname === "/login" || window.location.pathname === "/register") {
-        navigate(target, { replace: true });
+        navigate("/dashboard", { replace: true });
       }
     }
   }, [currentUser, permissions, navigate]);
@@ -107,13 +106,7 @@ function AppContent() {
                 <Routes>
                   <Route
                     path="/dashboard"
-                    element={
-                      permissions.includes("dashboard:view") ? (
-                        <DashboardPage />
-                      ) : (
-                        <Navigate to="/tasks" replace />
-                      )
-                    }
+                    element={<DashboardPage />}
                   />
                   <Route path="/tasks" element={<TasksPage />} />
                   <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
@@ -141,10 +134,10 @@ function AppContent() {
                     }
                   />
                   <Route
-                    path="/categories"
+                    path="/roles/:roleId"
                     element={
                       permissions.includes("role:manage") ? (
-                        <CategoriesPage />
+                        <RoleDetailPage />
                       ) : (
                         <Navigate to="/tasks" replace />
                       )
@@ -170,8 +163,8 @@ function AppContent() {
                       )
                     }
                   />
-                  <Route path="/" element={<Navigate to={permissions.includes("dashboard:view") ? "/dashboard" : "/tasks"} replace />} />
-                  <Route path="*" element={<Navigate to={permissions.includes("dashboard:view") ? "/dashboard" : "/tasks"} replace />} />
+                  <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                  <Route path="*" element={<Navigate to="/dashboard" replace />} />
                 </Routes>
               </Shell>
             )}
