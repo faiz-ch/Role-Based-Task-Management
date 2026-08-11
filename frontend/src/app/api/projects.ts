@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import { Project, UserType } from "../types";
+import { Project, UserType, Milestone, Attachment } from "../types";
 
 function mapUser(u: any): UserType {
   return {
@@ -49,6 +49,13 @@ function mapProject(p: any): Project {
     createdAt: p.created_at ? p.created_at.slice(0, 10) : "",
     departmentIds: p.department_ids || [],
     teamUserIds: p.team_user_ids || [],
+    startDate: p.start_date ? toDatetimeLocalValue(p.start_date) : null,
+    color: p.color || null,
+    completedAt: p.completed_at || null,
+    closingNotes: p.closing_notes || null,
+    reopenedReason: p.reopened_reason || null,
+    reopenedBy: p.reopened_by || null,
+    reopenedAt: p.reopened_at || null,
   };
 }
 
@@ -146,4 +153,124 @@ export async function rejectProject(projectId: number, reason: string): Promise<
     body: JSON.stringify({ reason }),
   });
   return mapProject(data);
+}
+
+export async function closeProject(projectId: number, closingNotes?: string): Promise<Project> {
+  const payload: any = {};
+  if (closingNotes !== undefined) payload.closing_notes = closingNotes;
+  const data = await apiFetch(`/projects/${projectId}/close`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return mapProject(data);
+}
+
+export async function reopenProject(projectId: number, reason: string): Promise<Project> {
+  const data = await apiFetch(`/projects/${projectId}/reopen`, {
+    method: "PATCH",
+    body: JSON.stringify({ reason }),
+  });
+  return mapProject(data);
+}
+
+function mapMilestone(m: any): Milestone {
+  return {
+    id: m.id,
+    projectId: m.project_id,
+    title: m.title,
+    description: m.description || null,
+    dueDate: m.due_date ? toDatetimeLocalValue(m.due_date) : null,
+    status: m.status,
+    createdBy: m.created_by,
+    createdAt: m.created_at,
+  };
+}
+
+export async function getProjectMilestones(projectId: number): Promise<Milestone[]> {
+  const data = await apiFetch(`/milestones/projects/${projectId}/milestones`);
+  return Array.isArray(data) ? data.map(mapMilestone) : [];
+}
+
+export async function createMilestone(projectId: number, input: {
+  title: string;
+  description?: string;
+  dueDate?: string;
+  status?: string;
+}): Promise<Milestone> {
+  const payload: any = {
+    title: input.title,
+    description: input.description || null,
+    due_date: input.dueDate ? new Date(input.dueDate).toISOString() : null,
+    status: input.status || "Planned",
+  };
+  const data = await apiFetch(`/milestones/projects/${projectId}/milestones`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return mapMilestone(data);
+}
+
+export async function updateMilestone(milestoneId: number, input: Partial<{
+  title: string;
+  description: string;
+  dueDate: string;
+  status: string;
+}>): Promise<Milestone> {
+  const payload: any = {};
+  if (input.title !== undefined) payload.title = input.title;
+  if (input.description !== undefined) payload.description = input.description || null;
+  if (input.dueDate !== undefined) payload.due_date = input.dueDate ? new Date(input.dueDate).toISOString() : null;
+  if (input.status !== undefined) payload.status = input.status;
+  const data = await apiFetch(`/milestones/milestones/${milestoneId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return mapMilestone(data);
+}
+
+export async function deleteMilestone(milestoneId: number): Promise<void> {
+  await apiFetch(`/milestones/milestones/${milestoneId}`, {
+    method: "DELETE",
+  });
+}
+
+function mapAttachment(a: any): Attachment {
+  return {
+    id: a.id,
+    filename: a.filename,
+    contentType: a.content_type,
+    sizeBytes: a.size_bytes,
+    uploadedBy: a.uploaded_by,
+    uploadedAt: a.uploaded_at,
+  };
+}
+
+export async function getProjectAttachments(projectId: number): Promise<Attachment[]> {
+  const data = await apiFetch(`/attachments/projects/${projectId}/attachments`);
+  return Array.isArray(data) ? data.map(mapAttachment) : [];
+}
+
+export async function uploadProjectAttachment(projectId: number, file: File): Promise<Attachment> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const data = await apiFetch(`/attachments/projects/${projectId}/attachments`, {
+    method: "POST",
+    body: formData,
+  });
+  return mapAttachment(data);
+}
+
+export async function deleteAttachment(attachmentId: number): Promise<void> {
+  await apiFetch(`/attachments/${attachmentId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function getAttachmentDownloadUrl(attachmentId: number): string {
+  return `/api/attachments/${attachmentId}/download`;
+}
+
+export async function getProjectActivity(projectId: number): Promise<any[]> {
+  const data = await apiFetch(`/projects/${projectId}/activity`);
+  return Array.isArray(data) ? data : [];
 }

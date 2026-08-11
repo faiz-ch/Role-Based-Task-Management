@@ -1,10 +1,7 @@
 import os
-import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
-from fastapi.responses import FileResponse, Response
-from app.services.conversion import convert_to_pdf
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from app.services import notification_dispatch
 from app.services.activity_log import log_activity
 from sqlalchemy import select, delete, func
@@ -27,14 +24,13 @@ from app.schemas.task import (
     TaskStatusUpdate,
     TaskAssignRequest,
     TaskTeamUpdate,
-    AttachmentOut,
 )
+from app.schemas.attachment import AttachmentOut
 from app.schemas.report import ReportCreate, ReportOut
 from app.schemas.activity_log import ActivityLogOut
 from app.schemas.comment import CommentCreate, CommentOut
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
-UPLOAD_DIR = "uploads"  # relative to backend/ — where uploaded files actually live on disk
 
 def _is_task_in_scope(task: Task, current_user: User) -> bool:
     """
@@ -642,181 +638,6 @@ def _task_to_out(task: Task) -> TaskOut:
         team_user_ids=[tm.user_id for tm in task.team_members],
         attachments=[],
     )
-
-@router.post("/{task_id}/attachments", response_model=AttachmentOut, status_code=201)
-async def upload_attachment(
-    task_id: int,
-    file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Saves the uploaded file to disk under uploads/{task_id}/, and creates a
-    matching Attachment row pointing to it. Gated by the same task-visibility
-    scope as everything else — if you can't see a task, you can't attach
-    files to it either.
-    """
-    task = await _get_task_or_404_with_loads(db, task_id)
-
-    if not can_view_task(current_user, task):
-        raise HTTPException(status_code=404, detail="Task not found")
-
-    task_dir = os.path.join(UPLOAD_DIR, str(task_id))
-    os.makedirs(task_dir, exist_ok=True)
-
-    stored_name = f"{uuid.uuid4().hex}_{file.filename}"
-    stored_path = os.path.join(task_dir, stored_name)
-
-    content = await file.read()
-    with open(stored_path, "wb") as f:
-        f.write(content)
-
-    attachment = Attachment(
-        task_id=task_id,
-        filename=file.filename,
-        stored_path=stored_path,
-        content_type=file.content_type or "application/octet-stream",
-        size_bytes=len(content),
-        uploaded_by=current_user.id,
-    )
-    db.add(attachment)
-    await db.commit()
-    await db.refresh(attachment)
-    return attachment
-
-
-@router.get("/{task_id}/attachments", response_model=list[AttachmentOut])
-async def list_attachments(
-    task_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    task = await _get_task_or_404_with_loads(db, task_id)
-    if not can_view_task(current_user, task):
-        raise HTTPException(status_code=404, detail="Task not found")
-    result = await db.execute(select(Attachment).where(Attachment.task_id == task_id))
-    return result.scalars().all()
-
-
-@router.get("/attachments/{attachment_id}/download")
-async def download_attachment(
-    attachment_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    result = await db.execute(select(Attachment).where(Attachment.id == attachment_id))
-    attachment = result.scalar_one_or_none()
-    if attachment is None:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
-    task = await _get_task_or_404_with_loads(db, attachment.task_id)
-    if not can_view_task(current_user, task):
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
-    return FileResponse(
-        attachment.stored_path,
-        media_type=attachment.content_type,
-        filename=attachment.filename,
-    )
-
-
-@router.delete("/attachments/{attachment_id}", status_code=204)
-async def delete_attachment(
-    attachment_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Delete an attachment. Only the person who uploaded the attachment can delete it
-    while the associated task/subtask is in an editable state (To Do or Reschedule).
-    After submission, only users with project:manage permission can delete attachments.
-    """
-    result = await db.execute(select(Attachment).where(Attachment.id == attachment_id))
-    attachment = result.scalar_one_or_none()
-    if attachment is None:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
-    # Check editable state based on whether this is a task or subtask attachment
-    is_editable = False
-    if attachment.subtask_id is not None:
-        # Subtask attachment - check subtask status
-        subtask_result = await db.execute(select(SubTask).where(SubTask.id == attachment.subtask_id))
-        subtask = subtask_result.scalar_one_or_none()
-        if subtask is None:
-            raise HTTPException(status_code=404, detail="Subtask not found")
-        is_editable = subtask.status in ("To Do", "Reschedule")
-    else:
-        # Task attachment - check task status
-        task = await _get_task_or_404_with_loads(db, attachment.task_id)
-        if not can_view_task(current_user, task):
-            raise HTTPException(status_code=404, detail="Attachment not found")
-        is_editable = task.status in (TaskStatus.TODO, TaskStatus.RESCHEDULE)
-
-    # If in editable state, only the uploader can delete
-    if is_editable:
-        if current_user.id != attachment.uploaded_by:
-            raise HTTPException(
-                status_code=403,
-                detail="Only the person who uploaded an attachment can delete it"
-            )
-    else:
-        # If not in editable state, only project:manage users can delete
-        if not has_permission(current_user, "project:manage"):
-            raise HTTPException(
-                status_code=403,
-                detail="Only users with project:manage permission can delete attachments after submission"
-            )
-
-    # Delete file from disk if it exists
-    if os.path.exists(attachment.stored_path):
-        os.remove(attachment.stored_path)
-
-    # Delete from database
-    await db.delete(attachment)
-    await db.commit()
-
-@router.get("/attachments/{attachment_id}/preview")
-async def preview_attachment(
-    attachment_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    result = await db.execute(select(Attachment).where(Attachment.id == attachment_id))
-    attachment = result.scalar_one_or_none()
-    if attachment is None:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
-    task = await _get_task_or_404_with_loads(db, attachment.task_id)
-    if not can_view_task(current_user, task):
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
-    if attachment.content_type == "application/pdf" or attachment.content_type.startswith("image/"):
-        return FileResponse(attachment.stored_path, media_type=attachment.content_type)
-
-    if attachment.preview_path and os.path.exists(attachment.preview_path):
-        return FileResponse(attachment.preview_path, media_type="application/pdf")
-
-    try:
-        with open(attachment.stored_path, "rb") as f:
-            original_bytes = f.read()
-        pdf_bytes = await convert_to_pdf(original_bytes, attachment.filename)
-    except Exception:
-        raise HTTPException(
-            status_code=422,
-            detail="Preview not available for this file type. Try downloading it instead.",
-        )
-
-    preview_dir = os.path.join(UPLOAD_DIR, str(attachment.task_id), "previews")
-    os.makedirs(preview_dir, exist_ok=True)
-    preview_path = os.path.join(preview_dir, f"{uuid.uuid4().hex}.pdf")
-    with open(preview_path, "wb") as f:
-        f.write(pdf_bytes)
-
-    attachment.preview_path = preview_path
-    await db.commit()
-
-    return Response(content=pdf_bytes, media_type="application/pdf")
-
 
 @router.post("/{task_id}/reports", response_model=ReportOut, status_code=201)
 async def create_task_report(

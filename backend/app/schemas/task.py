@@ -37,18 +37,6 @@ class TaskTeamUpdate(BaseModel):
     lead_id: int | None = None
 
 
-class AttachmentOut(BaseModel):
-    id: int
-    filename: str
-    content_type: str
-    size_bytes: int
-    uploaded_by: int
-    uploaded_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
 class TaskOut(BaseModel):
     id: int
     title: str
@@ -64,7 +52,7 @@ class TaskOut(BaseModel):
     team_approved_by: int | None
     team_approved_at: datetime | None
     team_user_ids: List[int]
-    attachments: list[AttachmentOut] = []
+    attachments: list = []
 
     class Config:
         from_attributes = True

@@ -66,6 +66,33 @@ export interface Project {
   createdAt: string;
   departmentIds: number[];
   teamUserIds: number[];
+  startDate: string | null;
+  color: string | null;
+  completedAt: string | null;
+  closingNotes: string | null;
+  reopenedReason: string | null;
+  reopenedBy: number | null;
+  reopenedAt: string | null;
+}
+
+export interface Milestone {
+  id: number;
+  projectId: number;
+  title: string;
+  description: string | null;
+  dueDate: string | null;
+  status: "Planned" | "In Progress" | "Completed" | "Delayed";
+  createdBy: number;
+  createdAt: string;
+}
+
+export interface Attachment {
+  id: number;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  uploadedBy: number;
+  uploadedAt: string;
 }
 
 export interface Task {

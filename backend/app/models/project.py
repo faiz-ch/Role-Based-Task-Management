@@ -60,7 +60,9 @@ class Project(Base):
     description = Column(Text, nullable=True)
     status = Column(Enum(ProjectStatus), default=ProjectStatus.PLANNING, nullable=False)
     priority = Column(Enum(ProjectPriority), default=ProjectPriority.MEDIUM, nullable=False)
+    start_date = Column(DateTime(timezone=True), nullable=True)
     due_date = Column(DateTime(timezone=True), nullable=True)
+    color = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
@@ -68,11 +70,16 @@ class Project(Base):
     lead_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     team_approved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     team_approved_at = Column(DateTime(timezone=True), nullable=True)
+    closing_notes = Column(Text, nullable=True)
+    reopened_reason = Column(Text, nullable=True)
+    reopened_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    reopened_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships - must specify foreign_keys= since multiple FKs point to User
     creator = relationship("User", foreign_keys=[created_by])
     lead = relationship("User", foreign_keys=[lead_id])
     team_approver = relationship("User", foreign_keys=[team_approved_by])
+    reopener = relationship("User", foreign_keys=[reopened_by])
 
     # Many-to-many relationships
     departments = relationship("Department", secondary=project_department, back_populates="projects")
@@ -83,3 +90,9 @@ class Project(Base):
 
     # One-to-many relationship with reports
     reports = relationship("Report", back_populates="project", cascade="all, delete-orphan")
+
+    # One-to-many relationship with milestones
+    milestones = relationship("Milestone", back_populates="project", cascade="all, delete-orphan")
+
+    # One-to-many relationship with attachments
+    attachments = relationship("Attachment", back_populates="project")

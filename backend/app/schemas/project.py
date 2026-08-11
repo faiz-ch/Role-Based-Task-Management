@@ -3,14 +3,16 @@ from typing import List
 
 from pydantic import BaseModel, Field
 
-from app.models.task import TaskPriority
+from app.models.project import ProjectPriority
 
 
 class ProjectCreate(BaseModel):
     name: str
     description: str | None = None
-    priority: TaskPriority = TaskPriority.MEDIUM
+    priority: ProjectPriority = ProjectPriority.MEDIUM
+    start_date: datetime | None = None
     due_date: datetime | None = None
+    color: str | None = None
     department_ids: List[int] = Field(..., min_length=1, description="At least one department is required")
 
 
@@ -20,14 +22,21 @@ class ProjectOut(BaseModel):
     description: str | None
     status: str
     priority: str
+    start_date: datetime | None
+    due_date: datetime | None
+    color: str | None
     created_by: int
     lead_id: int | None
     team_approved_by: int | None
     team_approved_at: datetime | None
-    due_date: datetime | None
     created_at: datetime
+    completed_at: datetime | None
     department_ids: List[int]
     team_user_ids: List[int]
+    closing_notes: str | None
+    reopened_reason: str | None
+    reopened_by: int | None
+    reopened_at: datetime | None
 
     class Config:
         from_attributes = True
@@ -42,7 +51,9 @@ class ProjectUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     priority: str | None = None
+    start_date: datetime | None = None
     due_date: datetime | None = None
+    color: str | None = None
     department_ids: List[int] | None = None
 
 

@@ -1,47 +1,52 @@
 from datetime import datetime
-from typing import List
+from typing import List, TYPE_CHECKING
 
 from pydantic import BaseModel
 
-from app.models.task import TaskStatus, TaskPriority
+from app.models.subtask import SubTaskStatus, SubTaskPriority
+
+if TYPE_CHECKING:
+    from app.schemas.attachment import AttachmentOut
 
 
 class SubtaskCreate(BaseModel):
     title: str
     description: str | None = None
-    priority: TaskPriority = TaskPriority.MEDIUM
+    priority: SubTaskPriority = SubTaskPriority.MEDIUM
     due_date: datetime | None = None
-    assignee_ids: List[int] = []
+    assigned_to: int | None = None
 
 
 class SubtaskUpdate(BaseModel):
     title: str | None = None
     description: str | None = None
-    priority: TaskPriority | None = None
+    priority: SubTaskPriority | None = None
     due_date: datetime | None = None
 
 
 class SubtaskStatusUpdate(BaseModel):
-    status: TaskStatus
-    comment: str | None = None
+    status: SubTaskStatus
     due_date: datetime | None = None
+    comment: str | None = None
 
 
-class SubtaskAssigneeUpdate(BaseModel):
-    user_ids: List[int]
+class SubtaskAssignRequest(BaseModel):
+    assigned_to: int | None = None
 
 
 class SubtaskOut(BaseModel):
     id: int
-    task_id: int
     title: str
     description: str | None
-    status: TaskStatus
-    priority: TaskPriority
+    status: SubTaskStatus
+    priority: SubTaskPriority
     due_date: datetime | None
-    created_by: int
     created_at: datetime
-    assignee_ids: List[int]
+    created_by: int
+    assigned_to: int | None
+    task_id: int
+    assignee_ids: List[int] = []
+    attachments: list["AttachmentOut"] = []
 
     class Config:
         from_attributes = True

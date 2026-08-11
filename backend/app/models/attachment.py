@@ -1,6 +1,6 @@
 """
-Attachment model. Each row is one uploaded file, linked to the task it
-belongs to. A task can have many attachments (one-to-many) — that's why
+Attachment model. Each row is one uploaded file, linked to either a task or a project.
+A task can have many attachments (one-to-many) — that's why
 this is its own table rather than columns on Task, since a fixed set of
 columns can't hold "however many files someone uploads."
 """
@@ -14,8 +14,9 @@ class Attachment(Base):
     __tablename__ = "attachments"
 
     id = Column(Integer, primary_key=True, index=True)
-    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=True)
     subtask_id = Column(Integer, ForeignKey("subtasks.id", ondelete="CASCADE"), nullable=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=True)
     filename = Column(String, nullable=False)
     stored_path = Column(String, nullable=False)
     content_type = Column(String, nullable=False)
@@ -25,4 +26,5 @@ class Attachment(Base):
     preview_path = Column(String, nullable=True)
 
     task = relationship("Task", back_populates="attachments")
+    project = relationship("Project", back_populates="attachments")
     uploader = relationship("User")

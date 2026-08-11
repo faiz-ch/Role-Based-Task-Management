@@ -1,19 +1,25 @@
 import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router";
-import { ArrowLeft, AlertTriangle, Plus, Users, UserCheck, Edit2, Trash2 } from "lucide-react";
-import { Project, UserType, Department, Task } from "../types";
-import { getProject, updateProjectTeam, getProjectCandidates, updateProject, deleteProject, sendProjectForApproval, approveProject, rejectProject } from "../api/projects";
+import { ArrowLeft, AlertTriangle } from "lucide-react";
+import { Project, UserType, Department, Task, Subtask, Milestone, Attachment } from "../types";
+import { getProject, updateProjectTeam, getProjectCandidates, updateProject, deleteProject, sendProjectForApproval, approveProject, rejectProject, closeProject, reopenProject, getProjectMilestones, createMilestone, updateMilestone, deleteMilestone, getProjectAttachments, uploadProjectAttachment, deleteAttachment, getAttachmentDownloadUrl, getProjectActivity } from "../api/projects";
 import { getTasks, createTask, updateTaskTeam } from "../api/tasks";
 import { getUsers } from "../api/users";
 import { getDepartments } from "../api/departments";
 import { getProjectReports, createProjectReport, Report } from "../api/reports";
+import { getSubtasks } from "../api/subtasks";
 import { useAuth } from "../context/AuthContext";
 import { Dlg } from "../components/Dlg";
-import { FldSelect } from "../components/FldSelect";
-import { Av } from "../components/Av";
 import { StatusBadge } from "../components/StatusBadge";
 import { PriBadge } from "../components/PriBadge";
-import { DatePicker } from "../components/DatePicker";
+import { OverviewTab } from "./project-detail/OverviewTab";
+import { TasksTab } from "./project-detail/TasksTab";
+import { MilestonesTab } from "./project-detail/MilestonesTab";
+import { TeamTab } from "./project-detail/TeamTab";
+import { TimelineTab } from "./project-detail/TimelineTab";
+import { FilesTab } from "./project-detail/FilesTab";
+import { ActivityTab } from "./project-detail/ActivityTab";
+import { SettingsTab } from "./project-detail/SettingsTab";
 
 const PROJECT_STATUS_STYLE: Record<string, { badge: string; dot: string }> = {
   Planning: {
@@ -68,40 +74,21 @@ export function ProjectDetailPage() {
   const { currentUser, permissions } = useAuth();
   const [project, setProject] = useState<Project | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [subtasks, setSubtasks] = useState<Subtask[]>([]);
   const [users, setUsers] = useState<UserType[]>([]);
   const [candidates, setCandidates] = useState<UserType[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
+  const [milestones, setMilestones] = useState<Milestone[]>([]);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [activity, setActivity] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState("overview");
 
-  const [showManageTeam, setShowManageTeam] = useState(false);
-  const [selectedLeadId, setSelectedLeadId] = useState<string>("");
-  const [selectedTeamIds, setSelectedTeamIds] = useState<number[]>([]);
-  const [showNewTask, setShowNewTask] = useState(false);
-  const [showEditProject, setShowEditProject] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showRejectDialog, setShowRejectDialog] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [reportContent, setReportContent] = useState("");
-  const [taskTeamSearch, setTaskTeamSearch] = useState("");
-  const [projectTeamSearch, setProjectTeamSearch] = useState("");
-  const [taskForm, setTaskForm] = useState({
-    title: "",
-    description: "",
-    priority: "Medium",
-    dueDate: "",
-    assigneeId: null as number | null,
-    selectedTeamIds: [] as number[],
-    selectedLeadId: "" as string,
-  });
-  const [editForm, setEditForm] = useState({
-    name: "",
-    description: "",
-    priority: "Medium",
-    dueDate: "",
-    departmentIds: [] as number[],
-  });
 
   const canManage = permissions.includes("project:manage") && (
     currentUser?.role?.allDepartments ||
@@ -118,21 +105,29 @@ export function ProjectDetailPage() {
       try {
         setLoading(true);
         setError(null);
-        const [projectResult, tasksResult, usersResult, departmentsResult, candidatesResult, reportsResult] = await Promise.allSettled([
+        const [projectResult, tasksResult, subtasksResult, usersResult, departmentsResult, candidatesResult, reportsResult, milestonesResult, attachmentsResult, activityResult] = await Promise.allSettled([
           getProject(Number(projectId)),
           getTasks(),
+          getSubtasks(),
           getUsers(),
           getDepartments(),
           getProjectCandidates(Number(projectId)),
           getProjectReports(Number(projectId)),
+          getProjectMilestones(Number(projectId)),
+          getProjectAttachments(Number(projectId)),
+          getProjectActivity(Number(projectId)),
         ]);
 
         setProject(projectResult.status === "fulfilled" ? projectResult.value : null);
         setTasks(tasksResult.status === "fulfilled" ? tasksResult.value : []);
+        setSubtasks(subtasksResult.status === "fulfilled" ? subtasksResult.value : []);
         setUsers(usersResult.status === "fulfilled" ? usersResult.value : []);
         setDepartments(departmentsResult.status === "fulfilled" ? departmentsResult.value : []);
         setCandidates(candidatesResult.status === "fulfilled" ? candidatesResult.value : []);
         setReports(reportsResult.status === "fulfilled" ? reportsResult.value : []);
+        setMilestones(milestonesResult.status === "fulfilled" ? milestonesResult.value : []);
+        setAttachments(attachmentsResult.status === "fulfilled" ? attachmentsResult.value : []);
+        setActivity(activityResult.status === "fulfilled" ? activityResult.value : []);
 
         if (reportsResult.status === "fulfilled" && reportsResult.value.length > 0) {
           setReportContent(reportsResult.value[0].content);
@@ -154,82 +149,15 @@ export function ProjectDetailPage() {
   const lead = teamMembers.find((u) => u.id === project?.leadId);
   const existingReport = reports.length > 0 ? reports[0] : null;
 
-  async function handleManageTeam() {
+  async function handleEditProject(projectData: any) {
     if (!project) return;
     try {
       setError(null);
-      const updated = await updateProjectTeam(
-        project.id,
-        selectedTeamIds,
-        selectedLeadId ? Number(selectedLeadId) : undefined
-      );
+      const updated = await updateProject(project.id, projectData);
       setProject(updated);
-      setShowManageTeam(false);
-      setSelectedTeamIds([]);
-      setSelectedLeadId("");
-    } catch (err: any) {
-      setError(err?.message || "Failed to update team");
-    }
-  }
-
-  async function handleCreateTask() {
-    if (!project || !taskForm.title.trim()) return;
-    try {
-      setError(null);
-      const taskData: any = {
-        title: taskForm.title.trim(),
-        description: taskForm.description,
-        priority: taskForm.priority,
-        dueDate: taskForm.dueDate,
-        projectId: project.id,
-        assigneeId: taskForm.assigneeId,
-      };
-      const newTask = await createTask(taskData);
-      setTasks((prev) => [...prev, newTask]);
-
-      // If team members were selected, update the task team
-      if (taskForm.selectedTeamIds.length > 0) {
-        try {
-          await updateTaskTeam(
-            newTask.id,
-            taskForm.selectedTeamIds,
-            taskForm.selectedLeadId ? Number(taskForm.selectedLeadId) : undefined
-          );
-        } catch (teamErr: any) {
-          setError(teamErr?.message || "Task created but failed to set team");
-        }
-      }
-
-      setShowNewTask(false);
-      setTaskForm({
-        title: "",
-        description: "",
-        priority: "Medium",
-        dueDate: "",
-        assigneeId: null,
-        selectedTeamIds: [],
-        selectedLeadId: "",
-      });
-    } catch (err: any) {
-      setError(err?.message || "Failed to create task");
-    }
-  }
-
-  async function handleEditProject() {
-    if (!project || !editForm.name.trim()) return;
-    try {
-      setError(null);
-      const updated = await updateProject(project.id, {
-        name: editForm.name.trim(),
-        description: editForm.description,
-        priority: editForm.priority,
-        dueDate: editForm.dueDate,
-        departmentIds: editForm.departmentIds,
-      });
-      setProject(updated);
-      setShowEditProject(false);
     } catch (err: any) {
       setError(err?.message || "Failed to update project");
+      throw err;
     }
   }
 
@@ -241,6 +169,31 @@ export function ProjectDetailPage() {
       navigate("/projects");
     } catch (err: any) {
       setError(err?.message || "Failed to delete project");
+      throw err;
+    }
+  }
+
+  async function handleCloseProject(closingNotes?: string) {
+    if (!project) return;
+    try {
+      setError(null);
+      const updated = await closeProject(project.id, closingNotes);
+      setProject(updated);
+    } catch (err: any) {
+      setError(err?.message || "Failed to close project");
+      throw err;
+    }
+  }
+
+  async function handleReopenProject(reason: string) {
+    if (!project) return;
+    try {
+      setError(null);
+      const updated = await reopenProject(project.id, reason);
+      setProject(updated);
+    } catch (err: any) {
+      setError(err?.message || "Failed to reopen project");
+      throw err;
     }
   }
 
@@ -293,64 +246,106 @@ export function ProjectDetailPage() {
     }
   }
 
-  function toggleEditDepartment(deptId: number) {
-    setEditForm((prev) => ({
-      ...prev,
-      departmentIds: prev.departmentIds.includes(deptId)
-        ? prev.departmentIds.filter((id) => id !== deptId)
-        : [...prev.departmentIds, deptId],
-    }));
-  }
-
-  function toggleTeamMember(userId: number) {
-    setSelectedTeamIds((prev) =>
-      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
-    );
-  }
-
-  function toggleTaskTeamMember(userId: number) {
-    setTaskForm((prev) => {
-      const newTeamIds = prev.selectedTeamIds.includes(userId)
-        ? prev.selectedTeamIds.filter((id) => id !== userId)
-        : [...prev.selectedTeamIds, userId];
-      
-      // If user unchecks the current assignee (who is also the lead), reset both
-      if (prev.assigneeId === userId && prev.selectedLeadId === userId.toString()) {
-        return {
-          ...prev,
-          selectedTeamIds: newTeamIds,
-          assigneeId: null,
-          selectedLeadId: "",
-        };
-      }
-      
-      return { ...prev, selectedTeamIds: newTeamIds };
-    });
-  }
-
-  function openNewTask() {
-    setTaskForm({
-      title: "",
-      description: "",
-      priority: "Medium",
-      dueDate: "",
-      assigneeId: null,
-      selectedTeamIds: [],
-      selectedLeadId: "",
-    });
-    setShowNewTask(true);
-  }
-
-  function openEditProject() {
+  // Callback functions for tabs
+  async function handleCreateTask(taskData: any, teamIds: number[], leadId: string) {
     if (!project) return;
-    setEditForm({
-      name: project.name,
-      description: project.description,
-      priority: project.priority,
-      dueDate: project.dueDate,
-      departmentIds: project.departmentIds,
-    });
-    setShowEditProject(true);
+    try {
+      setError(null);
+      const fullTaskData = {
+        ...taskData,
+        projectId: project.id,
+      };
+      const newTask = await createTask(fullTaskData);
+      setTasks((prev) => [...prev, newTask]);
+
+      if (teamIds.length > 0) {
+        try {
+          await updateTaskTeam(
+            newTask.id,
+            teamIds,
+            leadId ? Number(leadId) : undefined
+          );
+        } catch (teamErr: any) {
+          setError(teamErr?.message || "Task created but failed to set team");
+        }
+      }
+    } catch (err: any) {
+      setError(err?.message || "Failed to create task");
+      throw err;
+    }
+  }
+
+  async function handleUpdateTeam(userIds: number[], leadId?: number) {
+    if (!project) return;
+    try {
+      setError(null);
+      const updated = await updateProjectTeam(project.id, userIds, leadId);
+      setProject(updated);
+    } catch (err: any) {
+      setError(err?.message || "Failed to update team");
+      throw err;
+    }
+  }
+
+  async function handleCreateMilestone(milestoneData: any) {
+    if (!project) return;
+    try {
+      setError(null);
+      const newMilestone = await createMilestone(project.id, milestoneData);
+      setMilestones((prev) => [...prev, newMilestone]);
+    } catch (err: any) {
+      setError(err?.message || "Failed to create milestone");
+      throw err;
+    }
+  }
+
+  async function handleUpdateMilestone(milestoneId: number, milestoneData: any) {
+    try {
+      setError(null);
+      const updated = await updateMilestone(milestoneId, milestoneData);
+      setMilestones((prev) => prev.map((m) => m.id === milestoneId ? updated : m));
+    } catch (err: any) {
+      setError(err?.message || "Failed to update milestone");
+      throw err;
+    }
+  }
+
+  async function handleDeleteMilestone(milestoneId: number) {
+    try {
+      setError(null);
+      await deleteMilestone(milestoneId);
+      setMilestones((prev) => prev.filter((m) => m.id !== milestoneId));
+    } catch (err: any) {
+      setError(err?.message || "Failed to delete milestone");
+      throw err;
+    }
+  }
+
+  async function handleUploadAttachment(file: File) {
+    if (!project) return;
+    try {
+      setError(null);
+      const newAttachment = await uploadProjectAttachment(project.id, file);
+      setAttachments((prev) => [...prev, newAttachment]);
+    } catch (err: any) {
+      setError(err?.message || "Failed to upload attachment");
+      throw err;
+    }
+  }
+
+  async function handleDeleteAttachment(attachmentId: number) {
+    try {
+      setError(null);
+      await deleteAttachment(attachmentId);
+      setAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
+    } catch (err: any) {
+      setError(err?.message || "Failed to delete attachment");
+      throw err;
+    }
+  }
+
+  function handleGetDownloadUrl(attachmentId: number): string {
+    return getAttachmentDownloadUrl(attachmentId);
   }
 
   if (loading) {
@@ -379,6 +374,17 @@ export function ProjectDetailPage() {
     );
   }
 
+  const tabs = [
+    { id: "overview", label: "Overview" },
+    { id: "tasks", label: "Tasks" },
+    { id: "milestones", label: "Milestones" },
+    { id: "team", label: "Team" },
+    { id: "timeline", label: "Timeline" },
+    { id: "files", label: "Files" },
+    { id: "activity", label: "Activity" },
+    { id: "settings", label: "Settings" },
+  ];
+
   return (
     <div className="p-6">
       <div className="mb-6">
@@ -391,476 +397,174 @@ export function ProjectDetailPage() {
         </button>
       </div>
 
-      <div className="flex gap-6">
-        <div className="flex-1 space-y-4">
-          <div className="bg-white rounded-xl border border-border p-6">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-3">
-                <h1 className="text-xl font-bold text-foreground">{project.name}</h1>
-                <ProjectStatusBadge status={project.status} />
-                <PriBadge priority={project.priority} />
-              </div>
-              <div className="flex items-center gap-2">
-                {canManage && (
-                  <>
-                    <button
-                      onClick={openEditProject}
-                      className="p-1.5 hover:bg-muted rounded transition-colors cursor-pointer"
-                      title="Edit project"
-                    >
-                      <Edit2 size={14} className="text-muted-foreground" />
-                    </button>
-                    <button
-                      onClick={() => setShowDeleteConfirm(true)}
-                      className="p-1.5 hover:bg-red-50 rounded transition-colors cursor-pointer"
-                      title="Delete project"
-                    >
-                      <Trash2 size={14} className="text-red-400" />
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-            {project.description && (
-              <p className="text-sm text-muted-foreground">{project.description}</p>
-            )}
-            {projectTasks.length > 0 && (
-              <div className="mt-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-muted-foreground">Progress</span>
-                  <span className="text-xs text-muted-foreground">
-                    {projectTasks.filter((t) => t.status === "Done").length} of {projectTasks.length} tasks done · {Math.round((projectTasks.filter((t) => t.status === "Done").length / projectTasks.length) * 100)}%
-                  </span>
-                </div>
-                <div className="h-2 bg-muted rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-blue-500 transition-all"
-                    style={{
-                      width: `${Math.round((projectTasks.filter((t) => t.status === "Done").length / projectTasks.length) * 100)}%`,
-                    }}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="bg-white rounded-xl border border-border p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-foreground">Tasks</h2>
-              {(canManage || currentUser?.id === project?.leadId) && (
-                <button
-                  onClick={openNewTask}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
-                >
-                  <Plus size={12} /> New Task
-                </button>
-              )}
-            </div>
-            {projectTasks.length === 0 ? (
-              <div className="text-sm text-muted-foreground text-center py-8">
-                No tasks yet
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {projectTasks.map((task) => {
-                  return (
-                    <div
-                      key={task.id}
-                      onClick={() => navigate(`/tasks/${task.id}`)}
-                      className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-muted/40 transition-colors cursor-pointer"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-foreground truncate">{task.title}</p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <StatusBadge status={task.status} />
-                          <PriBadge priority={task.priority} />
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          <div className="bg-white rounded-xl border border-border p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-foreground">Project Report</h2>
-            </div>
-            {currentUser?.id === project?.leadId ? (
-              <>
-                <textarea
-                  value={reportContent}
-                  onChange={(e) => setReportContent(e.target.value)}
-                  placeholder="Enter project report..."
-                  className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400 min-h-[120px] resize-y mb-4"
-                  rows={5}
-                />
-                <div className="flex justify-end">
-                  <button
-                    onClick={handleCreateReport}
-                    disabled={!reportContent.trim()}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Submit Report
-                  </button>
-                </div>
-              </>
-            ) : (
-              <div className="text-sm text-muted-foreground">
-                {existingReport ? (
-                  <p className="whitespace-pre-wrap">{existingReport.content}</p>
-                ) : (
-                  <p className="text-center py-8">No report submitted yet</p>
-                )}
-              </div>
-            )}
-            
-            {/* Send for Approval button */}
-            {(currentUser?.id === project?.leadId || canManage) &&
-             project?.status === "Active" &&
-             projectTasks.length > 0 &&
-             projectTasks.every(t => t.status === "Done") && (
-              <div className="mt-4 pt-4 border-t border-border">
-                <button
-                  onClick={handleSendForApproval}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
-                >
-                  Send for Approval
-                </button>
-              </div>
-            )}
-            
-            {/* Approve and Reject buttons for Admin category users */}
-            {project?.status === "Pending Approval" &&
-             currentUser?.role?.category?.name === "Admin" && (
-              <div className="mt-4 pt-4 border-t border-border flex gap-2">
-                <button
-                  onClick={handleApprove}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg hover:bg-emerald-700 transition-colors cursor-pointer"
-                >
-                  Approve
-                </button>
-                <button
-                  onClick={() => setShowRejectDialog(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-lg hover:bg-red-700 transition-colors cursor-pointer"
-                >
-                  Reject
-                </button>
-              </div>
-            )}
+      {/* Project Header */}
+      <div className="bg-white rounded-xl border border-border p-6 mb-6">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-bold text-foreground">{project.name}</h1>
+            <ProjectStatusBadge status={project.status} />
+            <PriBadge priority={project.priority} />
           </div>
         </div>
-
-        <div className="w-72 space-y-4">
-          <div className="bg-white rounded-xl border border-border p-6">
-            <h2 className="text-sm font-semibold text-foreground mb-4">Details</h2>
-            <div className="space-y-4">
-              <div>
-                <span className="text-xs text-muted-foreground uppercase tracking-wider">Lead</span>
-                <div className="flex items-center gap-2 mt-1">
-                  {lead ? (
-                    <>
-                      <Av name={lead.name} size="sm" />
-                      <span className="text-sm text-foreground">{lead.name}</span>
-                    </>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">Unassigned</span>
-                  )}
-                </div>
-              </div>
-              <div>
-                <span className="text-xs text-muted-foreground uppercase tracking-wider">Due Date</span>
-                <p className="text-sm text-foreground mt-1">{fmtDate(project.dueDate)}</p>
-              </div>
-              <div>
-                <span className="text-xs text-muted-foreground uppercase tracking-wider">Departments</span>
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {projectDepts.map((d) => (
-                    <span key={d.id} className="px-1.5 py-0.5 bg-muted rounded text-xs">
-                      {d.name}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl border border-border p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-foreground">Team</h2>
-              {canManage && (
-                <button
-                  onClick={() => {
-                    setSelectedTeamIds(project.teamUserIds);
-                    setSelectedLeadId(project.leadId?.toString() || "");
-                    setShowManageTeam(true);
-                  }}
-                  className="text-xs text-blue-600 hover:text-blue-800 cursor-pointer"
-                >
-                  Manage
-                </button>
-              )}
-            </div>
-            {teamMembers.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No team members</p>
-            ) : (
-              <div className="space-y-2">
-                {teamMembers.map((member) => (
-                  <div key={member.id} className="flex items-center gap-2">
-                    <Av name={member.name} size="sm" />
-                    <span className="text-sm text-foreground">{member.name}</span>
-                    {member.id === project.leadId && (
-                      <span className="text-xs text-muted-foreground">(Lead)</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-            {project.teamApprovedAt && (
-              <div className="mt-4 pt-4 border-t border-border">
-                <div className="flex items-center gap-1 text-xs text-emerald-600">
-                  <UserCheck size={12} />
-                  <span>Team approved</span>
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {fmtDate(project.teamApprovedAt)}
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
+        {project.description && (
+          <p className="text-sm text-muted-foreground">{project.description}</p>
+        )}
       </div>
 
-      {showNewTask && (
-        <Dlg title="New Task" onClose={() => setShowNewTask(false)}>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Title</label>
-              <input
-                type="text"
-                value={taskForm.title}
-                onChange={(e) => setTaskForm((f) => ({ ...f, title: e.target.value }))}
-                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400"
-                autoFocus
-              />
+      {/* Tab Navigation */}
+      <div className="flex gap-1 mb-6 border-b border-border">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`px-4 py-2 text-sm font-medium transition-colors cursor-pointer border-b-2 -mb-px ${
+              activeTab === tab.id
+                ? "border-blue-500 text-blue-600"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab Content */}
+      {activeTab === "overview" && (
+        <OverviewTab 
+          project={project} 
+          tasks={projectTasks} 
+          subtasks={subtasks} 
+          activity={activity} 
+        />
+      )}
+
+      {activeTab === "tasks" && (
+        <TasksTab 
+          project={project} 
+          tasks={tasks} 
+          teamMembers={teamMembers}
+          onCreateTask={handleCreateTask}
+        />
+      )}
+
+      {activeTab === "milestones" && (
+        <MilestonesTab 
+          project={project} 
+          milestones={milestones}
+          onCreateMilestone={handleCreateMilestone}
+          onUpdateMilestone={handleUpdateMilestone}
+          onDeleteMilestone={handleDeleteMilestone}
+        />
+      )}
+
+      {activeTab === "team" && (
+        <TeamTab 
+          project={project} 
+          teamMembers={teamMembers}
+          candidates={candidates}
+          onUpdateTeam={handleUpdateTeam}
+        />
+      )}
+
+      {activeTab === "timeline" && (
+        <TimelineTab tasks={projectTasks} />
+      )}
+
+      {activeTab === "files" && (
+        <FilesTab 
+          project={project} 
+          attachments={attachments}
+          onUploadAttachment={handleUploadAttachment}
+          onDeleteAttachment={handleDeleteAttachment}
+          getDownloadUrl={handleGetDownloadUrl}
+        />
+      )}
+
+      {activeTab === "activity" && (
+        <ActivityTab activity={activity} />
+      )}
+
+      {activeTab === "settings" && (
+        <SettingsTab 
+          project={project} 
+          departments={departments}
+          onEditProject={handleEditProject}
+          onDeleteProject={handleDeleteProject}
+          onCloseProject={handleCloseProject}
+          onReopenProject={handleReopenProject}
+        />
+      )}
+
+      {/* Report Section - Kept from original */}
+      <div className="bg-white rounded-xl border border-border p-6 mt-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold text-foreground">Project Report</h2>
+        </div>
+        {currentUser?.id === project?.leadId ? (
+          <>
+            <textarea
+              value={reportContent}
+              onChange={(e) => setReportContent(e.target.value)}
+              placeholder="Enter project report..."
+              className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400 min-h-[120px] resize-y mb-4"
+              rows={5}
+            />
+            <div className="flex justify-end">
+              <button
+                onClick={handleCreateReport}
+                disabled={!reportContent.trim()}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Submit Report
+              </button>
             </div>
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Description</label>
-              <textarea
-                value={taskForm.description}
-                onChange={(e) => setTaskForm((f) => ({ ...f, description: e.target.value }))}
-                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400 min-h-[80px] resize-y"
-                rows={3}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Priority</label>
-                <select
-                  value={taskForm.priority}
-                  onChange={(e) => setTaskForm((f) => ({ ...f, priority: e.target.value }))}
-                  className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400"
-                >
-                  <option value="Low">Low</option>
-                  <option value="Medium">Medium</option>
-                  <option value="High">High</option>
-                </select>
-              </div>
-              <DatePicker
-                label="Due Date"
-                value={taskForm.dueDate}
-                onChange={(value) => setTaskForm((f) => ({ ...f, dueDate: value }))}
-                min={new Date().toISOString().slice(0, 16)}
-                max={project?.dueDate ? project.dueDate.slice(0, 16) : undefined}
-              />
-            </div>
-            <div className="flex flex-col gap-2">
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                Task Team
-              </span>
-              <input
-                type="text"
-                placeholder="Search team members..."
-                value={taskTeamSearch}
-                onChange={(e) => setTaskTeamSearch(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 mb-2"
-              />
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {teamMembers.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-4">
-                    No team members in this project. Add team members first.
-                  </p>
-                ) : (
-                  teamMembers
-                    .filter((member) => member.name.toLowerCase().includes(taskTeamSearch.toLowerCase()))
-                    .map((member) => (
-                    <label
-                      key={member.id}
-                      className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg hover:bg-muted/30 cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={taskForm.selectedTeamIds.includes(member.id)}
-                        onChange={() => toggleTaskTeamMember(member.id)}
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
-                      <Av name={member.name} size="sm" />
-                      <span className="text-sm text-foreground">{member.name}</span>
-                    </label>
-                  ))
-                )}
-              </div>
-            </div>
-            {taskForm.selectedTeamIds.length > 0 && (
-              <FldSelect
-                label="Select Task Lead"
-                value={taskForm.selectedLeadId}
-                onChange={(e) => {
-                  const leadId = e.target.value;
-                  const leadIdNum = leadId === "" ? null : Number(leadId);
-                  setTaskForm((prev) => ({
-                    ...prev,
-                    selectedLeadId: leadId,
-                    assigneeId: leadIdNum,
-                    selectedTeamIds: leadIdNum && !prev.selectedTeamIds.includes(leadIdNum)
-                      ? [...prev.selectedTeamIds, leadIdNum]
-                      : prev.selectedTeamIds,
-                  }));
-                }}
-                options={[
-                  { value: "", label: "Select lead" },
-                  ...teamMembers
-                    .filter((u) => taskForm.selectedTeamIds.includes(u.id))
-                    .map((u) => ({ value: u.id.toString(), label: u.name })),
-                ]}
-              />
+          </>
+        ) : (
+          <div className="text-sm text-muted-foreground">
+            {existingReport ? (
+              <p className="whitespace-pre-wrap">{existingReport.content}</p>
+            ) : (
+              <p className="text-center py-8">No report submitted yet</p>
             )}
           </div>
-          <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-border">
+        )}
+        
+        {/* Send for Approval button */}
+        {(currentUser?.id === project?.leadId || canManage) &&
+         project?.status === "Active" &&
+         projectTasks.length > 0 &&
+         projectTasks.every(t => t.status === "Done") && (
+          <div className="mt-4 pt-4 border-t border-border">
             <button
-              onClick={() => setShowNewTask(false)}
-              className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
+              onClick={handleSendForApproval}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
             >
-              Cancel
-            </button>
-            <button
-              onClick={handleCreateTask}
-              disabled={!taskForm.title.trim()}
-              className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Create Task
+              Send for Approval
             </button>
           </div>
-        </Dlg>
-      )}
+        )}
+        
+        {/* Approve and Reject buttons for Admin category users */}
+        {project?.status === "Pending Approval" &&
+         currentUser?.role?.category?.name === "Admin" && (
+          <div className="mt-4 pt-4 border-t border-border flex gap-2">
+            <button
+              onClick={handleApprove}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg hover:bg-emerald-700 transition-colors cursor-pointer"
+            >
+              Approve
+            </button>
+            <button
+              onClick={() => setShowRejectDialog(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-lg hover:bg-red-700 transition-colors cursor-pointer"
+            >
+              Reject
+            </button>
+          </div>
+        )}
+      </div>
 
-      {showEditProject && (
-        <Dlg title="Edit Project" onClose={() => setShowEditProject(false)}>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Name</label>
-              <input
-                type="text"
-                value={editForm.name}
-                onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
-                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400"
-                autoFocus
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Description</label>
-              <textarea
-                value={editForm.description}
-                onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
-                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400 min-h-[80px] resize-y"
-                rows={3}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Priority</label>
-                <select
-                  value={editForm.priority}
-                  onChange={(e) => setEditForm((f) => ({ ...f, priority: e.target.value }))}
-                  className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400"
-                >
-                  <option value="Low">Low</option>
-                  <option value="Medium">Medium</option>
-                  <option value="High">High</option>
-                </select>
-              </div>
-              <DatePicker
-                label="Due Date"
-                value={editForm.dueDate}
-                onChange={(value) => setEditForm((f) => ({ ...f, dueDate: value }))}
-                min={new Date().toISOString().slice(0, 16)}
-              />
-            </div>
-            <div className="flex flex-col gap-2">
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                Departments
-              </span>
-              <div className="grid grid-cols-2 gap-2">
-                {departments.map((dept) => (
-                  <label
-                    key={dept.id}
-                    className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg hover:bg-muted/30 cursor-pointer"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={editForm.departmentIds.includes(dept.id)}
-                      onChange={() => toggleEditDepartment(dept.id)}
-                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                    />
-                    <span className="text-sm text-foreground">{dept.name}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-border">
-            <button
-              onClick={() => setShowEditProject(false)}
-              className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleEditProject}
-              disabled={!editForm.name.trim()}
-              className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Save Changes
-            </button>
-          </div>
-        </Dlg>
-      )}
-
-      {showDeleteConfirm && (
-        <Dlg title="Delete project" onClose={() => setShowDeleteConfirm(false)}>
-          <div className="space-y-4">
-            <p className="text-sm text-foreground">
-              Are you sure you want to delete this project? This will also delete all tasks and subtasks in this project. This action cannot be undone.
-            </p>
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                onClick={() => setShowDeleteConfirm(false)}
-                className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleDeleteProject}
-                className="px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors cursor-pointer"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </Dlg>
-      )}
-
+      {/* Reject Dialog */}
       {showRejectDialog && (
         <Dlg title="Reject project" onClose={() => setShowRejectDialog(false)}>
           <div className="space-y-4">
@@ -893,76 +597,6 @@ export function ProjectDetailPage() {
                 Reject
               </button>
             </div>
-          </div>
-        </Dlg>
-      )}
-
-      {showManageTeam && (
-        <Dlg title="Manage Project Team" onClose={() => setShowManageTeam(false)}>
-          <div className="space-y-4">
-            <div className="flex flex-col gap-2">
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                Select Team Members
-              </span>
-              <input
-                type="text"
-                placeholder="Search team members..."
-                value={projectTeamSearch}
-                onChange={(e) => setProjectTeamSearch(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 mb-2"
-              />
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {candidates.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-4">
-                    No eligible users in this project's departments. Add users to one of the project's departments first.
-                  </p>
-                ) : (
-                  candidates
-                    .filter((user) => user.name.toLowerCase().includes(projectTeamSearch.toLowerCase()))
-                    .map((user) => (
-                    <label
-                      key={user.id}
-                      className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg hover:bg-muted/30 cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedTeamIds.includes(user.id)}
-                        onChange={() => toggleTeamMember(user.id)}
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
-                      <Av name={user.name} size="sm" />
-                      <span className="text-sm text-foreground">{user.name}</span>
-                    </label>
-                  ))
-                )}
-              </div>
-            </div>
-            <FldSelect
-              label="Select Lead"
-              value={selectedLeadId}
-              onChange={(e) => setSelectedLeadId(e.target.value)}
-              options={[
-                { value: "", label: "Select lead" },
-                ...candidates
-                  .filter((u) => u.role?.permissions?.includes("task:manage") || u.role?.permissions?.includes("task:create"))
-                  .map((u) => ({ value: u.id.toString(), label: u.name })),
-              ]}
-            />
-          </div>
-          <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-border">
-            <button
-              onClick={() => setShowManageTeam(false)}
-              className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleManageTeam}
-              disabled={selectedTeamIds.length === 0 && !selectedLeadId}
-              className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Save Team
-            </button>
           </div>
         </Dlg>
       )}

@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from pydantic import BaseModel
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -77,12 +78,28 @@ async def create_project(
                 detail="Due date cannot be before today"
             )
 
+    # Validate start date is not in the past
+    if payload.start_date:
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        # Ensure payload.start_date is timezone-aware
+        if payload.start_date.tzinfo is None:
+            start_date = payload.start_date.replace(tzinfo=timezone.utc)
+        else:
+            start_date = payload.start_date
+        if start_date < today:
+            raise HTTPException(
+                status_code=400,
+                detail="Start date cannot be before today"
+            )
+
     # Create project
     project = Project(
         name=payload.name,
         description=payload.description,
         priority=payload.priority,
+        start_date=payload.start_date,
         due_date=payload.due_date,
+        color=payload.color,
         status=ProjectStatus.PLANNING,
         created_by=current_user.id,
     )
@@ -280,6 +297,20 @@ async def update_project(
                 detail="Due date cannot be before today"
             )
 
+    # Validate start date is not in the past
+    if payload.start_date is not None:
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        # Ensure payload.start_date is timezone-aware
+        if payload.start_date.tzinfo is None:
+            start_date = payload.start_date.replace(tzinfo=timezone.utc)
+        else:
+            start_date = payload.start_date
+        if start_date < today:
+            raise HTTPException(
+                status_code=400,
+                detail="Start date cannot be before today"
+            )
+
     # Apply provided fields
     if payload.name is not None:
         project.name = payload.name
@@ -287,8 +318,12 @@ async def update_project(
         project.description = payload.description
     if payload.priority is not None:
         project.priority = payload.priority
+    if payload.start_date is not None:
+        project.start_date = payload.start_date
     if payload.due_date is not None:
         project.due_date = payload.due_date
+    if payload.color is not None:
+        project.color = payload.color
 
     # If department_ids is provided, validate and replace
     if payload.department_ids is not None:
@@ -443,6 +478,105 @@ async def reject_project(
     await db.refresh(project)
 
     background_tasks.add_task(notification_dispatch.notify_project_rejected, project.id, payload.reason.strip())
+
+    project_with_loads = await _get_project_with_loads(db, project.id)
+    return _project_to_out(project_with_loads)
+
+
+class ProjectCloseRequest(BaseModel):
+    closing_notes: str | None = None
+
+
+@router.patch("/{project_id}/close", response_model=ProjectOut)
+async def close_project(
+    project_id: int,
+    payload: ProjectCloseRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Close a completed project (set status to Archived). Only when project is Done. Requires project:manage permission."""
+    project = await _get_project_or_404_with_loads(db, project_id)
+
+    # Permission check: only users with project:manage permission can close
+    if not has_permission(current_user, "project:manage"):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to close projects"
+        )
+
+    # Check if project is Done
+    if project.status != ProjectStatus.DONE:
+        raise HTTPException(
+            status_code=400,
+            detail="Project must be Done to close"
+        )
+
+    # Check if all tasks are DONE
+    tasks_result = await db.execute(
+        select(Task).where(Task.project_id == project_id)
+    )
+    tasks = tasks_result.scalars().all()
+    incomplete_tasks = [task for task in tasks if task.status != TaskStatus.DONE]
+    if incomplete_tasks:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot close project: {len(incomplete_tasks)} task(s) are not yet done"
+        )
+
+    # Mark project as ARCHIVED
+    project.status = ProjectStatus.ARCHIVED
+    project.closing_notes = payload.closing_notes
+    await log_activity(db, current_user.id, "project_closed", "project", project.id, detail="Done -> Archived")
+    await db.commit()
+    await db.refresh(project)
+
+    project_with_loads = await _get_project_with_loads(db, project.id)
+    return _project_to_out(project_with_loads)
+
+
+class ProjectReopenRequest(BaseModel):
+    reason: str
+
+
+@router.patch("/{project_id}/reopen", response_model=ProjectOut)
+async def reopen_project(
+    project_id: int,
+    payload: ProjectReopenRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Reopen an archived project (set status back to Active). Only when project is Archived. Requires project:manage permission."""
+    project = await _get_project_or_404_with_loads(db, project_id)
+
+    # Permission check: only users with project:manage permission can reopen
+    if not has_permission(current_user, "project:manage"):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to reopen projects"
+        )
+
+    # Check if project is Archived
+    if project.status != ProjectStatus.ARCHIVED:
+        raise HTTPException(
+            status_code=400,
+            detail="Project must be Archived to reopen"
+        )
+
+    # Require a reason
+    if not payload.reason or not payload.reason.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="A reason is required to reopen a project"
+        )
+
+    # Mark project as ACTIVE
+    project.status = ProjectStatus.ACTIVE
+    project.reopened_reason = payload.reason.strip()
+    project.reopened_by = current_user.id
+    project.reopened_at = datetime.now(timezone.utc)
+    await log_activity(db, current_user.id, "project_reopened", "project", project.id, detail=f"Archived -> Active (reason: {payload.reason.strip()})")
+    await db.commit()
+    await db.refresh(project)
 
     project_with_loads = await _get_project_with_loads(db, project.id)
     return _project_to_out(project_with_loads)
@@ -713,14 +847,21 @@ def _project_to_out(project: Project) -> ProjectOut:
         description=project.description,
         status=project.status.value,
         priority=project.priority.value,
+        start_date=project.start_date,
+        due_date=project.due_date,
+        color=project.color,
         created_by=project.created_by,
         lead_id=project.lead_id,
         team_approved_by=project.team_approved_by,
         team_approved_at=project.team_approved_at,
-        due_date=project.due_date,
         created_at=project.created_at,
+        completed_at=project.completed_at,
         department_ids=[d.id for d in project.departments],
         team_user_ids=[tm.user_id for tm in project.team_members],
+        closing_notes=project.closing_notes,
+        reopened_reason=project.reopened_reason,
+        reopened_by=project.reopened_by,
+        reopened_at=project.reopened_at,
     )
 
 

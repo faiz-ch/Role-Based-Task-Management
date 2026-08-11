@@ -14,7 +14,7 @@ import app.models  # noqa: F401 — registers all models with Base.metadata
 from app.config import settings
 from app.database import engine, Base, get_db
 from app.seed import seed_permissions
-from app.routers import auth, users, roles, tasks, dashboard, departments, categories, projects, subtasks
+from app.routers import auth, users, roles, tasks, dashboard, departments, categories, projects, subtasks, milestones, attachments
 
 
 @asynccontextmanager
@@ -53,6 +53,8 @@ app.include_router(roles.router)
 app.include_router(projects.router)
 app.include_router(tasks.router)
 app.include_router(subtasks.router)
+app.include_router(milestones.router)
+app.include_router(attachments.router)
 app.include_router(dashboard.router)
 app.include_router(departments.router)
 app.include_router(categories.router)
