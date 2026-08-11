@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
-import { Plus, Search, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
+import { Plus, Search, ChevronDown, ChevronRight, Trash2, Check, ChevronLeft, ArrowRight } from "lucide-react";
 import { Project, UserType, ProjectStatus, Priority, Department, Task } from "../types";
 import { useAuth } from "../context/AuthContext";
 import { getProjects, createProject, deleteProject } from "../api/projects";
@@ -13,10 +13,17 @@ import { FldInput } from "../components/FldInput";
 import { FldSelect } from "../components/FldSelect";
 import { PriBadge } from "../components/PriBadge";
 import { DatePicker } from "../components/DatePicker";
-import { Check } from "lucide-react";
 
 const PROJECT_STATUSES: ProjectStatus[] = ["Planning", "Active", "Done", "Archived"];
 const PRIORITIES: Priority[] = ["Low", "Medium", "High"];
+
+const COLOR_SWATCHES = [
+  { name: "purple", value: "#a855f7", bg: "bg-purple-100", text: "text-purple-600" },
+  { name: "blue", value: "#3b82f6", bg: "bg-blue-100", text: "text-blue-600" },
+  { name: "green", value: "#10b981", bg: "bg-emerald-100", text: "text-emerald-600" },
+  { name: "orange", value: "#f97316", bg: "bg-orange-100", text: "text-orange-600" },
+  { name: "red", value: "#ef4444", bg: "bg-red-100", text: "text-red-600" },
+];
 
 const PROJECT_STATUS_STYLE: Record<ProjectStatus, { badge: string; dot: string }> = {
   Planning: {
@@ -54,8 +61,12 @@ interface PForm {
   name: string;
   description: string;
   priority: Priority;
+  startDate: string;
   dueDate: string;
   departmentIds: number[];
+  color: string;
+  leadId: string;
+  teamUserIds: number[];
 }
 
 function fmtDate(d: string) {
@@ -85,12 +96,18 @@ export function ProjectsPage() {
   const [showNew, setShowNew] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
+  const [wizardStep, setWizardStep] = useState(1);
+  const [teamSearch, setTeamSearch] = useState("");
   const [form, setForm] = useState<PForm>({
     name: "",
     description: "",
     priority: "Medium",
+    startDate: "",
     dueDate: "",
     departmentIds: [],
+    color: "blue",
+    leadId: "",
+    teamUserIds: [],
   });
 
   const canCreate = permissions.includes("project:manage") && (
@@ -144,10 +161,47 @@ export function ProjectsPage() {
       name: "",
       description: "",
       priority: "Medium",
+      startDate: "",
       dueDate: "",
       departmentIds: [],
+      color: "blue",
+      leadId: "",
+      teamUserIds: [],
     });
+    setWizardStep(1);
+    setTeamSearch("");
     setShowNew(true);
+  }
+
+  function canProceedToStep2() {
+    return form.name.trim() !== "" && form.dueDate !== "";
+  }
+
+  function canProceedToStep3() {
+    return form.leadId !== "";
+  }
+
+  function getEligibleLeaders() {
+    return users.filter((u) => 
+      u.role?.permissions?.includes("task:manage") || u.role?.permissions?.includes("task:create")
+    );
+  }
+
+  function getEligibleTeamMembers() {
+    const eligibleDepts = form.departmentIds;
+    if (eligibleDepts.length === 0) return [];
+    return users.filter((u) => 
+      u.department && eligibleDepts.includes(u.department.id)
+    );
+  }
+
+  function toggleTeamMember(userId: number) {
+    setForm((prev) => ({
+      ...prev,
+      teamUserIds: prev.teamUserIds.includes(userId) 
+        ? prev.teamUserIds.filter((id) => id !== userId) 
+        : [...prev.teamUserIds, userId],
+    }));
   }
 
   async function saveNew() {
@@ -164,9 +218,14 @@ export function ProjectsPage() {
         priority: form.priority,
         dueDate: form.dueDate,
         departmentIds: form.departmentIds,
+        startDate: form.startDate,
+        color: form.color,
+        leadId: form.leadId ? Number(form.leadId) : undefined,
+        teamUserIds: form.teamUserIds,
       });
       setProjects((prev) => [...prev, newProject]);
       setShowNew(false);
+      setWizardStep(1);
     } catch (err: any) {
       setError(err?.message || "Failed to create project.");
     }
@@ -358,79 +417,289 @@ export function ProjectsPage() {
 
       {showNew && (
         <Dlg title="New Project" onClose={() => setShowNew(false)}>
-          <div className="space-y-4">
-            <FldInput
-              label="Name"
-              placeholder="Project name"
-              value={form.name}
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              autoFocus
-            />
-            <div className="flex flex-col gap-1.5">
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                Description
-              </span>
-              <textarea
-                className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all resize-none placeholder:text-muted-foreground/60 text-foreground"
-                rows={3}
-                placeholder="Optional details..."
-                value={form.description}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, description: e.target.value }))
-                }
+          {/* Step Indicator */}
+          <div className="flex items-center justify-center gap-4 mb-6">
+            {[1, 2, 3].map((step) => (
+              <React.Fragment key={step}>
+                <div className="flex items-center gap-2">
+                  <div
+                    className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
+                      wizardStep === step
+                        ? "bg-blue-500 text-white"
+                        : wizardStep > step
+                        ? "bg-emerald-500 text-white"
+                        : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {wizardStep > step ? <Check size={16} /> : step}
+                  </div>
+                  <span
+                    className={`text-sm font-medium ${
+                      wizardStep === step ? "text-foreground" : "text-muted-foreground"
+                    }`}
+                  >
+                    {step === 1 ? "Basic Info" : step === 2 ? "Team" : "Review"}
+                  </span>
+                </div>
+                {step < 3 && (
+                  <div
+                    className={`w-12 h-0.5 ${
+                      wizardStep > step ? "bg-emerald-500" : "bg-muted"
+                    }`}
+                  />
+                )}
+              </React.Fragment>
+            ))}
+          </div>
+
+          {/* Step 1: Basic Information */}
+          {wizardStep === 1 && (
+            <div className="space-y-4">
+              <FldInput
+                label="Project Name"
+                placeholder="Enter project name"
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                autoFocus
               />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <FldSelect
-                label="Priority"
-                value={form.priority}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, priority: e.target.value as Priority }))
-                }
-                options={PRIORITIES.map((p) => ({ value: p, label: p }))}
-              />
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  Description
+                </span>
+                <textarea
+                  className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all resize-none placeholder:text-muted-foreground/60 text-foreground"
+                  rows={3}
+                  placeholder="Optional project description..."
+                  value={form.description}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, description: e.target.value }))
+                  }
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <FldSelect
+                  label="Priority"
+                  value={form.priority}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, priority: e.target.value as Priority }))
+                  }
+                  options={PRIORITIES.map((p) => ({ value: p, label: p }))}
+                />
+                <DatePicker
+                  label="Start Date"
+                  value={form.startDate}
+                  onChange={(value) => setForm((f) => ({ ...f, startDate: value }))}
+                  min={new Date().toISOString().slice(0, 16)}
+                />
+              </div>
               <DatePicker
                 label="Due Date"
                 value={form.dueDate}
                 onChange={(value) => setForm((f) => ({ ...f, dueDate: value }))}
-                min={new Date().toISOString().slice(0, 16)}
+                min={form.startDate || new Date().toISOString().slice(0, 16)}
               />
-            </div>
-            <div className="flex flex-col gap-2">
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                Departments
-              </span>
-              <div className="grid grid-cols-2 gap-2">
-                {departments.map((dept) => (
-                  <label
-                    key={dept.id}
-                    className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg hover:bg-muted/30 cursor-pointer"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={form.departmentIds.includes(dept.id)}
-                      onChange={() => toggleDepartment(dept.id)}
-                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              <div className="flex flex-col gap-2">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  Departments
+                </span>
+                <div className="grid grid-cols-2 gap-2">
+                  {departments.map((dept) => (
+                    <label
+                      key={dept.id}
+                      className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg hover:bg-muted/30 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={form.departmentIds.includes(dept.id)}
+                        onChange={() => toggleDepartment(dept.id)}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <span className="text-sm text-foreground">{dept.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="flex flex-col gap-2">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  Project Color
+                </span>
+                <div className="flex gap-2">
+                  {COLOR_SWATCHES.map((swatch) => (
+                    <button
+                      key={swatch.name}
+                      onClick={() => setForm((f) => ({ ...f, color: swatch.name }))}
+                      className={`w-8 h-8 rounded-lg transition-all ${
+                        form.color === swatch.name
+                          ? "ring-2 ring-offset-2 ring-blue-500 scale-110"
+                          : "hover:ring-2 hover:ring-offset-2 hover:ring-blue-300"
+                      } ${swatch.bg}`}
                     />
-                    <span className="text-sm text-foreground">{dept.name}</span>
-                  </label>
-                ))}
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
-          <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-border">
-            <button
-              onClick={() => setShowNew(false)}
-              className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={saveNew}
-              className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
-            >
-              Create Project
-            </button>
+          )}
+
+          {/* Step 2: Project Team */}
+          {wizardStep === 2 && (
+            <div className="space-y-4">
+              <FldSelect
+                label="Project Leader"
+                value={form.leadId}
+                onChange={(e) => setForm((f) => ({ ...f, leadId: e.target.value }))}
+                options={[
+                  { value: "", label: "Select a leader" },
+                  ...getEligibleLeaders().map((u) => ({ value: u.id.toString(), label: u.name })),
+                ]}
+              />
+              <div className="flex flex-col gap-2">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  Team Members
+                </span>
+                <input
+                  type="text"
+                  placeholder="Search team members..."
+                  value={teamSearch}
+                  onChange={(e) => setTeamSearch(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 mb-2"
+                />
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {getEligibleTeamMembers().length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-4">
+                      {form.departmentIds.length === 0 
+                        ? "Select departments first to see eligible team members" 
+                        : "No eligible users in selected departments"}
+                    </p>
+                  ) : (
+                    getEligibleTeamMembers()
+                      .filter((member) => member.name.toLowerCase().includes(teamSearch.toLowerCase()))
+                      .map((member) => (
+                      <label
+                        key={member.id}
+                        className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg hover:bg-muted/30 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={form.teamUserIds.includes(member.id)}
+                          onChange={() => toggleTeamMember(member.id)}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <Av name={member.name} size="sm" />
+                        <span className="text-sm text-foreground">{member.name}</span>
+                      </label>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Step 3: Review & Create */}
+          {wizardStep === 3 && (
+            <div className="space-y-4">
+              <div className="bg-muted/30 rounded-lg p-4 space-y-3">
+                <div>
+                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Project Name</span>
+                  <p className="text-sm font-medium text-foreground mt-1">{form.name}</p>
+                </div>
+                {form.description && (
+                  <div>
+                    <span className="text-xs text-muted-foreground uppercase tracking-wider">Description</span>
+                    <p className="text-sm text-foreground mt-1">{form.description}</p>
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <span className="text-xs text-muted-foreground uppercase tracking-wider">Priority</span>
+                    <p className="text-sm text-foreground mt-1">{form.priority}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground uppercase tracking-wider">Due Date</span>
+                    <p className="text-sm text-foreground mt-1">{fmtDate(form.dueDate)}</p>
+                  </div>
+                </div>
+                {form.startDate && (
+                  <div>
+                    <span className="text-xs text-muted-foreground uppercase tracking-wider">Start Date</span>
+                    <p className="text-sm text-foreground mt-1">{fmtDate(form.startDate)}</p>
+                  </div>
+                )}
+                <div>
+                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Departments</span>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {form.departmentIds.map((deptId) => {
+                      const dept = departments.find((d) => d.id === deptId);
+                      return dept ? (
+                        <span key={deptId} className="px-2 py-0.5 bg-muted rounded text-xs">
+                          {dept.name}
+                        </span>
+                      ) : null;
+                    })}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Color</span>
+                  <div className={`w-4 h-4 rounded ${COLOR_SWATCHES.find((s) => s.name === form.color)?.bg}`} />
+                  <span className="text-sm text-foreground capitalize">{form.color}</span>
+                </div>
+                <div>
+                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Project Leader</span>
+                  <p className="text-sm text-foreground mt-1">
+                    {form.leadId ? users.find((u) => u.id === Number(form.leadId))?.name || "Unknown" : "Not selected"}
+                  </p>
+                </div>
+                {form.teamUserIds.length > 0 && (
+                  <div>
+                    <span className="text-xs text-muted-foreground uppercase tracking-wider">Team Members</span>
+                    <div className="flex flex-wrap gap-2 mt-1">
+                      {form.teamUserIds.map((userId) => {
+                        const user = users.find((u) => u.id === userId);
+                        return user ? (
+                          <div key={userId} className="flex items-center gap-1">
+                            <Av name={user.name} size="sm" />
+                            <span className="text-xs text-foreground">{user.name}</span>
+                          </div>
+                        ) : null;
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Navigation Buttons */}
+          <div className="flex justify-between mt-5 pt-4 border-t border-border">
+            <div className="flex gap-2">
+              {wizardStep > 1 && (
+                <button
+                  onClick={() => setWizardStep((prev) => prev - 1)}
+                  className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
+                >
+                  <ChevronLeft size={16} />
+                  Back
+                </button>
+              )}
+            </div>
+            <div className="flex gap-2">
+              {wizardStep < 3 ? (
+                <button
+                  onClick={() => setWizardStep((prev) => prev + 1)}
+                  disabled={wizardStep === 1 ? !canProceedToStep2() : !canProceedToStep3()}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Next
+                  <ArrowRight size={16} />
+                </button>
+              ) : (
+                <button
+                  onClick={saveNew}
+                  className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+                >
+                  Create Project
+                </button>
+              )}
+            </div>
           </div>
         </Dlg>
       )}

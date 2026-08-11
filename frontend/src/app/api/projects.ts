@@ -75,14 +75,22 @@ export async function createProject(input: {
   priority: string;
   dueDate: string;
   departmentIds: number[];
+  startDate?: string;
+  color?: string;
+  leadId?: number;
+  teamUserIds?: number[];
 }): Promise<Project> {
-  const payload = {
+  const payload: any = {
     name: input.name,
     description: input.description || null,
     priority: input.priority,
     due_date: input.dueDate ? new Date(input.dueDate).toISOString() : null,
     department_ids: input.departmentIds,
   };
+  if (input.startDate !== undefined) payload.start_date = input.startDate ? new Date(input.startDate).toISOString() : null;
+  if (input.color !== undefined) payload.color = input.color;
+  if (input.leadId !== undefined) payload.lead_id = input.leadId;
+  if (input.teamUserIds !== undefined) payload.team_user_ids = input.teamUserIds;
   const data = await apiFetch("/projects", {
     method: "POST",
     body: JSON.stringify(payload),

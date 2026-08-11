@@ -488,6 +488,7 @@ export function ProjectDetailPage() {
         <SettingsTab 
           project={project} 
           departments={departments}
+          tasks={projectTasks}
           onEditProject={handleEditProject}
           onDeleteProject={handleDeleteProject}
           onCloseProject={handleCloseProject}

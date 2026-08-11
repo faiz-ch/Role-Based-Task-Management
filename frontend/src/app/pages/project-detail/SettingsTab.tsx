@@ -1,6 +1,6 @@
 import React, { useState } from "react";
-import { Edit2, Trash2, Archive, RotateCcw, AlertTriangle } from "lucide-react";
-import { Project, Department } from "../../types";
+import { Edit2, Trash2, Archive, RotateCcw, AlertTriangle, CheckCircle, XCircle, Clock } from "lucide-react";
+import { Project, Department, Task } from "../../types";
 import { Dlg } from "../../components/Dlg";
 import { FldSelect } from "../../components/FldSelect";
 import { DatePicker } from "../../components/DatePicker";
@@ -8,6 +8,7 @@ import { DatePicker } from "../../components/DatePicker";
 interface SettingsTabProps {
   project: Project;
   departments: Department[];
+  tasks: Task[];
   onEditProject: (projectData: any) => Promise<void>;
   onDeleteProject: () => Promise<void>;
   onCloseProject: (closingNotes?: string) => Promise<void>;
@@ -36,6 +37,7 @@ function fmtDate(d: string) {
 export function SettingsTab({ 
   project, 
   departments, 
+  tasks,
   onEditProject, 
   onDeleteProject, 
   onCloseProject, 
@@ -104,6 +106,44 @@ export function SettingsTab({
       departmentIds: project.departmentIds,
     });
     setShowEditProject(true);
+  }
+
+  // Validation checks for closing project
+  function getCloseValidationChecks() {
+    const projectTasks = tasks.filter((t) => t.projectId === project.id);
+    const totalTasks = projectTasks.length;
+    const completedTasks = projectTasks.filter((t) => t.status === "Done").length;
+    const reviewTasks = projectTasks.filter((t) => t.status === "Review").length;
+    
+    const overdueTasks = projectTasks.filter((t) => {
+      if (t.status === "Done") return false;
+      if (!t.dueDate) return false;
+      return new Date(t.dueDate) < new Date();
+    }).length;
+
+    const allTasksCompleted = totalTasks === 0 || completedTasks === totalTasks;
+    const noPendingReviews = reviewTasks === 0;
+    const noOverdueItems = overdueTasks === 0;
+
+    return {
+      allTasksCompleted: {
+        passed: allTasksCompleted,
+        label: `All tasks completed (${completedTasks}/${totalTasks})`,
+        count: completedTasks,
+        total: totalTasks,
+      },
+      noPendingReviews: {
+        passed: noPendingReviews,
+        label: `No pending reviews (${reviewTasks} pending)`,
+        count: reviewTasks,
+      },
+      noOverdueItems: {
+        passed: noOverdueItems,
+        label: `No overdue items (${overdueTasks} overdue)`,
+        count: overdueTasks,
+      },
+      canClose: allTasksCompleted && noPendingReviews && noOverdueItems,
+    };
   }
 
   function toggleEditDepartment(deptId: number) {
@@ -337,22 +377,61 @@ export function SettingsTab({
       )}
 
       {/* Close Project Dialog */}
-      {showCloseDialog && (
-        <Dlg title="Close Project" onClose={() => setShowCloseDialog(false)}>
-          <div className="space-y-4">
-            <p className="text-sm text-foreground">
-              Closing this project will mark it as completed and archive it. You can reopen it later if needed.
-            </p>
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Closing Notes (optional)</label>
-              <textarea
-                value={closingNotes}
-                onChange={(e) => setClosingNotes(e.target.value)}
-                placeholder="Add any notes about why this project is being closed..."
-                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400 min-h-[100px] resize-y"
-                rows={4}
-              />
-            </div>
+      {showCloseDialog && (() => {
+        const validationChecks = getCloseValidationChecks();
+        return (
+          <Dlg title="Close Project" onClose={() => setShowCloseDialog(false)}>
+            <div className="space-y-4">
+              <p className="text-sm text-foreground">
+                Closing this project will mark it as completed and archive it. You can reopen it later if needed.
+              </p>
+              
+              {/* Validation Checklist */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-3 p-3 rounded-lg border border-border">
+                  {validationChecks.allTasksCompleted.passed ? (
+                    <CheckCircle size={18} className="text-emerald-500 flex-shrink-0" />
+                  ) : (
+                    <XCircle size={18} className="text-red-500 flex-shrink-0" />
+                  )}
+                  <span className={`text-sm ${validationChecks.allTasksCompleted.passed ? 'text-foreground' : 'text-red-600'}`}>
+                    {validationChecks.allTasksCompleted.label}
+                  </span>
+                </div>
+                
+                <div className="flex items-center gap-3 p-3 rounded-lg border border-border">
+                  {validationChecks.noPendingReviews.passed ? (
+                    <CheckCircle size={18} className="text-emerald-500 flex-shrink-0" />
+                  ) : (
+                    <AlertTriangle size={18} className="text-amber-500 flex-shrink-0" />
+                  )}
+                  <span className={`text-sm ${validationChecks.noPendingReviews.passed ? 'text-foreground' : 'text-amber-600'}`}>
+                    {validationChecks.noPendingReviews.label}
+                  </span>
+                </div>
+                
+                <div className="flex items-center gap-3 p-3 rounded-lg border border-border">
+                  {validationChecks.noOverdueItems.passed ? (
+                    <CheckCircle size={18} className="text-emerald-500 flex-shrink-0" />
+                  ) : (
+                    <Clock size={18} className="text-red-500 flex-shrink-0" />
+                  )}
+                  <span className={`text-sm ${validationChecks.noOverdueItems.passed ? 'text-foreground' : 'text-red-600'}`}>
+                    {validationChecks.noOverdueItems.label}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Closing Notes (optional)</label>
+                <textarea
+                  value={closingNotes}
+                  onChange={(e) => setClosingNotes(e.target.value)}
+                  placeholder="Add any notes about why this project is being closed..."
+                  className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400 min-h-[100px] resize-y"
+                  rows={4}
+                />
+              </div>
             <div className="flex justify-end gap-2 pt-2">
               <button
                 onClick={() => setShowCloseDialog(false)}
@@ -362,14 +441,16 @@ export function SettingsTab({
               </button>
               <button
                 onClick={handleCloseProject}
-                className="px-4 py-2 bg-amber-600 text-white text-sm font-semibold rounded-lg hover:bg-amber-700 transition-colors cursor-pointer"
+                disabled={!validationChecks.canClose}
+                className="px-4 py-2 bg-amber-600 text-white text-sm font-semibold rounded-lg hover:bg-amber-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Close Project
               </button>
             </div>
           </div>
         </Dlg>
-      )}
+        );
+      })()}
 
       {/* Reopen Project Dialog */}
       {showReopenDialog && (
