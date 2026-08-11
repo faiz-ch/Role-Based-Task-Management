@@ -28,6 +28,7 @@ class UserBrief(BaseModel):
     id: int
     name: str
     email: str
+    has_avatar: bool = False
 
     class Config:
         from_attributes = True
@@ -46,6 +47,7 @@ class UserOut(BaseModel):
     department: DepartmentBrief | None = None
     created_at: datetime
     manager: UserBrief | None = None
+    has_avatar: bool = False
 
     class Config:
         from_attributes = True

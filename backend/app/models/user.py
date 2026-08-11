@@ -29,6 +29,12 @@ class User(Base):
     manager_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     manager = relationship("User", remote_side=[id], foreign_keys=[manager_id])
 
+    avatar_path = Column(String, nullable=True)
+
+    @property
+    def has_avatar(self) -> bool:
+        return self.avatar_path is not None
+
     # A user can have created many tasks, and separately, been assigned many tasks.
     # foreign_keys= is needed here because Task has TWO foreign keys pointing
     # to User (created_by and assigned_to) — without this, SQLAlchemy can't

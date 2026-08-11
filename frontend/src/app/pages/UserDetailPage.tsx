@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { useParams, useNavigate, Link } from "react-router";
-import { Edit2, Trash2, MoreVertical, AlertTriangle, User, Briefcase, BarChart3, Clock, CheckCircle2, XCircle, Activity } from "lucide-react";
+import { Edit2, Trash2, MoreVertical, AlertTriangle, User, Briefcase, BarChart3, Clock, CheckCircle2, XCircle, Activity, Upload } from "lucide-react";
 import { UserType, Role, Department, UserPerformance } from "../types";
-import { getUser, getUserPerformance, getUserActivity, updateUser, deleteUser } from "../api/users";
+import { getUser, getUserPerformance, getUserActivity, updateUser, deleteUser, assignRole, uploadAvatar, getAvatarUrl } from "../api/users";
 import { getDepartments } from "../api/departments";
 import { getRoles } from "../api/roles";
 import { getUsers } from "../api/users";
@@ -75,7 +75,10 @@ export function UserDetailPage() {
     roleId: "" as string,
     managerId: "" as string,
     active: true,
+    password: "",
   });
+  const [editAvatarFile, setEditAvatarFile] = useState<File | null>(null);
+  const [avatarUploadError, setAvatarUploadError] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadData() {
@@ -131,17 +134,36 @@ export function UserDetailPage() {
       if (editForm.departmentId !== (user.department?.id?.toString() || "")) {
         updateData.department_id = editForm.departmentId ? Number(editForm.departmentId) : null;
       }
-      if (editForm.roleId !== (user.role?.id?.toString() || "")) {
-        // Role assignment is handled separately via assignRole
-      }
       if (editForm.managerId !== (user.manager?.id?.toString() || "")) {
         updateData.manager_id = editForm.managerId ? Number(editForm.managerId) : null;
       }
       if (editForm.active !== user.active) updateData.active = editForm.active;
+      if (editForm.password && editForm.password.length > 0) {
+        updateData.password = editForm.password;
+      }
 
-      const updated = await updateUser(user.id, updateData);
+      const roleChanged = editForm.roleId !== (user.role?.id?.toString() || "");
+      const newRoleId = editForm.roleId ? Number(editForm.roleId) : null;
+
+      let updated = await updateUser(user.id, updateData);
+      if (roleChanged) {
+        updated = await assignRole(user.id, newRoleId);
+      }
       setUser(updated);
       setShowEdit(false);
+      setEditForm({ ...editForm, password: "" });
+      
+      // Upload avatar if a file was selected
+      if (editAvatarFile) {
+        try {
+          const avatarUpdated = await uploadAvatar(user.id, editAvatarFile);
+          setUser(avatarUpdated);
+          setEditAvatarFile(null);
+        } catch (err: any) {
+          console.error("Avatar upload failed:", err);
+          setAvatarUploadError("Avatar upload failed");
+        }
+      }
     } catch (err: any) {
       setError(err?.message || "Failed to update user.");
     }
@@ -227,7 +249,18 @@ export function UserDetailPage() {
 
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center font-semibold text-lg flex-shrink-0">
+            {user.hasAvatar ? (
+              <img
+                src={getAvatarUrl(user.id)}
+                alt={user.name}
+                className="w-12 h-12 rounded-lg object-cover flex-shrink-0"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = 'none';
+                  (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
+                }}
+              />
+            ) : null}
+            <div className={`w-12 h-12 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center font-semibold text-lg flex-shrink-0 ${user.hasAvatar ? 'hidden' : ''}`}>
               {getInitials(user.name)}
             </div>
             <div>
@@ -579,25 +612,8 @@ export function UserDetailPage() {
       {/* Edit Dialog */}
       {showEdit && (
         <Dlg
-          open={showEdit}
           onClose={() => setShowEdit(false)}
           title="Edit User"
-          footer={
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setShowEdit(false)}
-                className="px-4 py-2 text-sm text-foreground hover:bg-muted rounded-lg transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSaveEdit}
-                className="px-4 py-2 text-sm bg-[#0C1022] text-white rounded-lg hover:bg-[#1a2240] transition-colors"
-              >
-                Save Changes
-              </button>
-            </div>
-          }
         >
           <div className="space-y-4">
             <FldInput
@@ -638,6 +654,55 @@ export function UserDetailPage() {
                 ...managerOptions.map((u) => ({ value: u.id.toString(), label: u.name })),
               ]}
             />
+
+            <FldInput
+              label="New Password"
+              type="password"
+              value={editForm.password}
+              onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
+              placeholder="Leave blank to keep current password"
+            />
+
+            {/* Avatar Upload */}
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-2">Profile Picture</label>
+              <div className="border-2 border-dashed border-border rounded-lg p-4 text-center hover:border-blue-400 transition-colors cursor-pointer">
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      if (file.size > 2 * 1024 * 1024) {
+                        setAvatarUploadError("Image must be under 2MB");
+                        return;
+                      }
+                      setEditAvatarFile(file);
+                      setAvatarUploadError(null);
+                    }
+                  }}
+                  className="hidden"
+                  id="edit-avatar-upload"
+                />
+                <label htmlFor="edit-avatar-upload" className="cursor-pointer">
+                  {editAvatarFile ? (
+                    <div className="flex items-center justify-center gap-2">
+                      <Upload size={16} className="text-blue-500" />
+                      <span className="text-sm text-foreground">{editAvatarFile.name}</span>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-2">
+                      <Upload size={20} className="text-muted-foreground" />
+                      <span className="text-sm text-muted-foreground">Upload photo, JPG/PNG up to 2MB</span>
+                    </div>
+                  )}
+                </label>
+              </div>
+              {avatarUploadError && (
+                <p className="text-xs text-red-600 mt-1">{avatarUploadError}</p>
+              )}
+            </div>
+
             <div>
               <label className="block text-sm font-medium text-foreground mb-2">Account Status</label>
               <div className="flex gap-4">
@@ -663,6 +728,21 @@ export function UserDetailPage() {
                 </label>
               </div>
             </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setShowEdit(false)}
+                className="px-4 py-2 text-sm text-foreground hover:bg-muted rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveEdit}
+                className="px-4 py-2 text-sm bg-[#0C1022] text-white rounded-lg hover:bg-[#1a2240] transition-colors"
+              >
+                Save Changes
+              </button>
+            </div>
           </div>
         </Dlg>
       )}
@@ -670,11 +750,14 @@ export function UserDetailPage() {
       {/* Delete Dialog */}
       {showDelete && (
         <Dlg
-          open={showDelete}
           onClose={() => setShowDelete(false)}
           title="Delete User"
-          footer={
-            <div className="flex justify-end gap-2">
+        >
+          <div className="space-y-4">
+            <p className="text-sm text-foreground">
+              Are you sure you want to delete <strong>{user.name}</strong>? This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
               <button
                 onClick={() => setShowDelete(false)}
                 className="px-4 py-2 text-sm text-foreground hover:bg-muted rounded-lg transition-colors"
@@ -688,11 +771,7 @@ export function UserDetailPage() {
                 Delete
               </button>
             </div>
-          }
-        >
-          <p className="text-sm text-foreground">
-            Are you sure you want to delete <strong>{user.name}</strong>? This action cannot be undone.
-          </p>
+          </div>
         </Dlg>
       )}
     </div>

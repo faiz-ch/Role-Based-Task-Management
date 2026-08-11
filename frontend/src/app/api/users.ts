@@ -1,4 +1,5 @@
 import { apiFetch } from "./client";
+import { API_BASE_URL } from "./client";
 import { UserType, Role, UserPerformance } from "../types";
 
 function mapRole(r: any): Role {
@@ -31,6 +32,7 @@ function mapUser(u: any): UserType {
     department: u.department ? { id: u.department.id, name: u.department.name } : null,
     createdAt: u.created_at,
     manager: u.manager ? { id: u.manager.id, name: u.manager.name, email: u.manager.email } : null,
+    hasAvatar: u.has_avatar || false,
   };
 }
 
@@ -142,6 +144,20 @@ export async function assignDepartment(userId: number, departmentId: number | nu
   const res = await apiFetch(`/users/${userId}/department`, {
     method: "PATCH",
     body: JSON.stringify({ department_id: departmentId }),
+  });
+  return mapUser(res);
+}
+
+export function getAvatarUrl(userId: number): string {
+  return `${API_BASE_URL}/users/${userId}/avatar`;
+}
+
+export async function uploadAvatar(userId: number, file: File): Promise<UserType> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await apiFetch(`/users/${userId}/avatar`, {
+    method: "POST",
+    body: formData,
   });
   return mapUser(res);
 }

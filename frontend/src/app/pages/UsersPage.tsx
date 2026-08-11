@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { Edit2, AlertTriangle, Plus, Trash2, Search, Eye, EyeOff, RefreshCw } from "lucide-react";
+import { Edit2, AlertTriangle, Plus, Trash2, Search, Eye, EyeOff, RefreshCw, Upload } from "lucide-react";
 import { UserType, Role, Department } from "../types";
-import { getUsers, createUser, deleteUser } from "../api/users";
+import { getUsers, createUser, deleteUser, uploadAvatar } from "../api/users";
 import { getRoles } from "../api/roles";
 import { getDepartments } from "../api/departments";
 import { Av } from "../components/Av";
@@ -65,6 +65,8 @@ export function UsersPage() {
   const [createActive, setCreateActive] = useState(true);
   const [createSendWelcome, setCreateSendWelcome] = useState(true);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [createAvatarFile, setCreateAvatarFile] = useState<File | null>(null);
+  const [avatarUploadError, setAvatarUploadError] = useState<string | null>(null);
 
   // Delete confirmation state
   const [deleteConfirmUser, setDeleteConfirmUser] = useState<UserType | null>(null);
@@ -129,7 +131,7 @@ export function UsersPage() {
   const totalUsers = users.length;
   const activeUsers = users.filter((u) => u.active).length;
   const inactiveUsers = users.filter((u) => !u.active).length;
-  const administrators = users.filter((u) => u.role?.isSystem).length;
+  const noDepartment = users.filter((u) => !u.department).length;
 
   async function handleCreateUser() {
     if (!createName.trim() || !createEmail.trim() || !createPassword) {
@@ -154,6 +156,20 @@ export function UsersPage() {
         isActive: createActive,
         sendWelcomeEmail: createSendWelcome,
       });
+      
+      // Upload avatar as follow-up if a file was selected
+      if (createAvatarFile) {
+        try {
+          await uploadAvatar(newUser.id, createAvatarFile);
+          // Refresh user data to get has_avatar updated
+          const updatedUsers = await getUsers();
+          setUsers(updatedUsers);
+        } catch (err: any) {
+          console.error("Avatar upload failed:", err);
+          setAvatarUploadError("User created, but avatar upload failed");
+        }
+      }
+      
       setUsers((prev) => [...prev, newUser]);
       setShowCreateDialog(false);
       resetCreateForm();
@@ -172,6 +188,8 @@ export function UsersPage() {
     setCreateActive(true);
     setCreateSendWelcome(true);
     setCreateError(null);
+    setCreateAvatarFile(null);
+    setAvatarUploadError(null);
   }
 
   async function handleDelete(user: UserType) {
@@ -260,12 +278,12 @@ export function UsersPage() {
         </div>
         <div className="bg-white rounded-xl border border-border p-4">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Administrators</span>
-            <div className="w-8 h-8 bg-purple-50 rounded-lg flex items-center justify-center">
-              <span className="text-purple-600 text-sm font-semibold">{administrators}</span>
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">No Department</span>
+            <div className="w-8 h-8 bg-amber-50 rounded-lg flex items-center justify-center">
+              <span className="text-amber-600 text-sm font-semibold">{noDepartment}</span>
             </div>
           </div>
-          <p className="text-2xl font-bold text-foreground">{administrators}</p>
+          <p className="text-2xl font-bold text-foreground">{noDepartment}</p>
         </div>
       </div>
 
@@ -347,18 +365,36 @@ export function UsersPage() {
             </thead>
             <tbody>
               {paginatedUsers.map((user) => (
-                <tr key={user.id} className="border-b border-border hover:bg-muted/20">
+                <tr 
+                  key={user.id} 
+                  className="border-b border-border hover:bg-muted/20 cursor-pointer"
+                  onClick={() => navigate(`/users/${user.id}`)}
+                >
                   <td className="px-4 py-3">
                     <input
                       type="checkbox"
                       checked={selectedUserIds.has(user.id)}
-                      onChange={() => toggleUserSelection(user.id)}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        toggleUserSelection(user.id);
+                      }}
                       className="w-4 h-4 accent-blue-600"
                     />
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
-                      <Av name={user.name} />
+                      {user.hasAvatar ? (
+                        <img
+                          src={`${import.meta.env.VITE_API_BASE_URL || "http://localhost:8000"}/users/${user.id}/avatar`}
+                          alt={user.name}
+                          className="w-8 h-8 rounded-full object-cover"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = 'none';
+                            (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
+                          }}
+                        />
+                      ) : null}
+                      <Av name={user.name} className={user.hasAvatar ? 'hidden' : ''} />
                       <span className="text-sm font-medium text-foreground">{user.name}</span>
                     </div>
                   </td>
@@ -398,7 +434,10 @@ export function UsersPage() {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => navigate(`/users/${user.id}`)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/users/${user.id}`);
+                        }}
                         className="p-1.5 hover:bg-muted rounded-lg transition-colors cursor-pointer"
                         title="Edit"
                       >
@@ -406,7 +445,10 @@ export function UsersPage() {
                       </button>
                       {canManage && (
                         <button
-                          onClick={() => setDeleteConfirmUser(user)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeleteConfirmUser(user);
+                          }}
                           className="p-1.5 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
                           title="Delete"
                         >
@@ -544,6 +586,48 @@ export function UsersPage() {
               onChange={(e) => setCreateRole(e.target.value)}
               required
             />
+
+            {/* Avatar Upload */}
+            <div>
+              <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                Profile Picture
+              </label>
+              <div className="border-2 border-dashed border-border rounded-lg p-4 text-center hover:border-blue-400 transition-colors cursor-pointer">
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      if (file.size > 2 * 1024 * 1024) {
+                        setAvatarUploadError("Image must be under 2MB");
+                        return;
+                      }
+                      setCreateAvatarFile(file);
+                      setAvatarUploadError(null);
+                    }
+                  }}
+                  className="hidden"
+                  id="avatar-upload"
+                />
+                <label htmlFor="avatar-upload" className="cursor-pointer">
+                  {createAvatarFile ? (
+                    <div className="flex items-center justify-center gap-2">
+                      <Upload size={16} className="text-blue-500" />
+                      <span className="text-sm text-foreground">{createAvatarFile.name}</span>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-2">
+                      <Upload size={20} className="text-muted-foreground" />
+                      <span className="text-sm text-muted-foreground">Upload photo, JPG/PNG up to 2MB</span>
+                    </div>
+                  )}
+                </label>
+              </div>
+              {avatarUploadError && (
+                <p className="text-xs text-red-600 mt-1">{avatarUploadError}</p>
+              )}
+            </div>
 
             <div>
               <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">

@@ -49,6 +49,7 @@ export interface UserType {
   department: Department | null;
   createdAt: string;
   manager: { id: number; name: string; email: string } | null;
+  hasAvatar: boolean;
 }
 
 export interface Project {

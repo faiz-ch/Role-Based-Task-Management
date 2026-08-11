@@ -1,4 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi.responses import FileResponse
+import os
+import uuid
 from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +26,9 @@ from app.services.activity_log import log_activity
 from app.schemas.activity_log import ActivityLogOut
 
 router = APIRouter(prefix="/users", tags=["users"])
+UPLOAD_DIR = "uploads"
+ALLOWED_AVATAR_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+MAX_AVATAR_SIZE = 2 * 1024 * 1024  # 2MB
 
 
 @router.get("", response_model=list[UserOut])
@@ -662,3 +668,55 @@ async def get_user_activity(
         .order_by(ActivityLog.created_at.desc())
     )
     return logs_result.scalars().all()
+
+@router.post("/{user_id}/avatar", response_model=UserOut)
+async def upload_avatar(
+    user_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.id != user_id and not has_permission(current_user, "user:manage"):
+        raise HTTPException(status_code=403, detail="Not allowed to change this user's picture")
+
+    if file.content_type not in ALLOWED_AVATAR_TYPES:
+        raise HTTPException(status_code=400, detail="File must be an image (JPEG, PNG, WEBP, or GIF)")
+
+    content = await file.read()
+    if len(content) > MAX_AVATAR_SIZE:
+        raise HTTPException(status_code=400, detail="Image must be under 2MB")
+
+    user_result = await db.execute(select(User).where(User.id == user_id))
+    user = user_result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Delete old avatar file if one exists, before saving the new one
+    if user.avatar_path and os.path.exists(user.avatar_path):
+        os.remove(user.avatar_path)
+
+    avatar_dir = os.path.join(UPLOAD_DIR, "avatars", str(user_id))
+    os.makedirs(avatar_dir, exist_ok=True)
+    ext = file.filename.split(".")[-1] if "." in file.filename else "jpg"
+    stored_name = f"{uuid.uuid4().hex}.{ext}"
+    stored_path = os.path.join(avatar_dir, stored_name)
+
+    with open(stored_path, "wb") as f:
+        f.write(content)
+
+    user.avatar_path = stored_path
+    await db.commit()
+    await db.refresh(user, ["role", "department", "manager"])
+    return user
+
+@router.get("/{user_id}/avatar")
+async def get_avatar(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    user_result = await db.execute(select(User).where(User.id == user_id))
+    user = user_result.scalar_one_or_none()
+    if user is None or not user.avatar_path or not os.path.exists(user.avatar_path):
+        raise HTTPException(status_code=404, detail="No avatar found")
+    return FileResponse(user.avatar_path)
