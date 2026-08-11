@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useParams, useNavigate, Link } from "react-router";
 import { Edit2, Trash2, MoreVertical, AlertTriangle, User, Briefcase, BarChart3, Clock, CheckCircle2, XCircle, Activity, Upload } from "lucide-react";
 import { UserType, Role, Department, UserPerformance } from "../types";
-import { getUser, getUserPerformance, getUserActivity, updateUser, deleteUser, assignRole, uploadAvatar, getAvatarUrl } from "../api/users";
+import { getUser, getUserPerformance, getUserActivity, updateUser, deleteUser, assignRole, uploadAvatar, deleteAvatar, getAvatarUrl } from "../api/users";
 import { getDepartments } from "../api/departments";
 import { getRoles } from "../api/roles";
 import { getUsers } from "../api/users";
@@ -149,23 +149,35 @@ export function UserDetailPage() {
       if (roleChanged) {
         updated = await assignRole(user.id, newRoleId);
       }
-      setUser(updated);
-      setShowEdit(false);
-      setEditForm({ ...editForm, password: "" });
-      
+
       // Upload avatar if a file was selected
       if (editAvatarFile) {
         try {
-          const avatarUpdated = await uploadAvatar(user.id, editAvatarFile);
-          setUser(avatarUpdated);
+          updated = await uploadAvatar(user.id, editAvatarFile);
           setEditAvatarFile(null);
         } catch (err: any) {
-          console.error("Avatar upload failed:", err);
-          setAvatarUploadError("Avatar upload failed");
+          setError(err?.message || "Avatar upload failed — other changes were saved.");
+          setUser(updated);
+          return; // keep dialog open so the person can see the error and retry
         }
       }
+
+      setUser(updated);
+      setShowEdit(false);
+      setEditForm({ ...editForm, password: "" });
     } catch (err: any) {
       setError(err?.message || "Failed to update user.");
+    }
+  }
+
+  async function handleRemoveAvatar() {
+    if (!user) return;
+    try {
+      const updated = await deleteAvatar(user.id);
+      setUser(updated);
+      setEditAvatarFile(null);
+    } catch (err: any) {
+      setError(err?.message || "Failed to remove picture.");
     }
   }
 
@@ -666,38 +678,70 @@ export function UserDetailPage() {
             {/* Avatar Upload */}
             <div>
               <label className="block text-sm font-medium text-foreground mb-2">Profile Picture</label>
-              <div className="border-2 border-dashed border-border rounded-lg p-4 text-center hover:border-blue-400 transition-colors cursor-pointer">
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      if (file.size > 2 * 1024 * 1024) {
-                        setAvatarUploadError("Image must be under 2MB");
-                        return;
-                      }
-                      setEditAvatarFile(file);
-                      setAvatarUploadError(null);
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    if (file.size > 2 * 1024 * 1024) {
+                      setAvatarUploadError("Image must be under 2MB");
+                      return;
                     }
-                  }}
-                  className="hidden"
-                  id="edit-avatar-upload"
-                />
-                <label htmlFor="edit-avatar-upload" className="cursor-pointer">
-                  {editAvatarFile ? (
-                    <div className="flex items-center justify-center gap-2">
-                      <Upload size={16} className="text-blue-500" />
-                      <span className="text-sm text-foreground">{editAvatarFile.name}</span>
-                    </div>
-                  ) : (
+                    setEditAvatarFile(file);
+                    setAvatarUploadError(null);
+                  }
+                }}
+                className="hidden"
+                id="edit-avatar-upload"
+              />
+
+              {editAvatarFile ? (
+                <div className="border-2 border-dashed border-border rounded-lg p-4 text-center">
+                  <div className="flex items-center justify-center gap-2">
+                    <Upload size={16} className="text-blue-500" />
+                    <span className="text-sm text-foreground">{editAvatarFile.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => setEditAvatarFile(null)}
+                      className="ml-2 text-muted-foreground hover:text-foreground"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              ) : user.hasAvatar ? (
+                <div className="flex items-center gap-4">
+                  <img
+                    src={getAvatarUrl(user.id)}
+                    alt="Current avatar"
+                    className="w-16 h-16 rounded-lg object-cover"
+                  />
+                  <div className="flex gap-2">
+                    <label htmlFor="edit-avatar-upload" className="cursor-pointer">
+                      <button type="button" className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600">
+                        Update Picture
+                      </button>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleRemoveAvatar}
+                      className="px-3 py-1.5 text-sm bg-red-500 text-white rounded hover:bg-red-600"
+                    >
+                      Remove Picture
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="border-2 border-dashed border-border rounded-lg p-4 text-center hover:border-blue-400 transition-colors cursor-pointer">
+                  <label htmlFor="edit-avatar-upload" className="cursor-pointer">
                     <div className="flex flex-col items-center gap-2">
                       <Upload size={20} className="text-muted-foreground" />
                       <span className="text-sm text-muted-foreground">Upload photo, JPG/PNG up to 2MB</span>
                     </div>
-                  )}
-                </label>
-              </div>
+                  </label>
+                </div>
+              )}
               {avatarUploadError && (
                 <p className="text-xs text-red-600 mt-1">{avatarUploadError}</p>
               )}

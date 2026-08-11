@@ -709,11 +709,32 @@ async def upload_avatar(
     await db.refresh(user, ["role", "department", "manager"])
     return user
 
+@router.delete("/{user_id}/avatar", response_model=UserOut)
+async def delete_avatar(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.id != user_id and not has_permission(current_user, "user:manage"):
+        raise HTTPException(status_code=403, detail="Not allowed to change this user's picture")
+
+    user_result = await db.execute(select(User).where(User.id == user_id))
+    user = user_result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.avatar_path and os.path.exists(user.avatar_path):
+        os.remove(user.avatar_path)
+    user.avatar_path = None
+
+    await db.commit()
+    await db.refresh(user, ["role", "department", "manager"])
+    return user
+
 @router.get("/{user_id}/avatar")
 async def get_avatar(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
 ):
     user_result = await db.execute(select(User).where(User.id == user_id))
     user = user_result.scalar_one_or_none()

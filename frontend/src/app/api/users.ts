@@ -161,3 +161,8 @@ export async function uploadAvatar(userId: number, file: File): Promise<UserType
   });
   return mapUser(res);
 }
+
+export async function deleteAvatar(userId: number): Promise<UserType> {
+  const res = await apiFetch(`/users/${userId}/avatar`, { method: "DELETE" });
+  return mapUser(res);
+}
