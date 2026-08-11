@@ -261,8 +261,7 @@ def get_assignable_user_pool(db_users: list[User], department_ids: set[int]) -> 
     """
     Given a list of candidate users, return those in the given department_ids.
     Team/lead eligibility for projects, tasks, and subtasks is based purely on
-    department membership — not on the selector's assignable_categories, which
-    is a separate, unrelated setting for user-creation permission delegation.
+    department membership.
     """
     return [u for u in db_users if u.department_id in department_ids]
 

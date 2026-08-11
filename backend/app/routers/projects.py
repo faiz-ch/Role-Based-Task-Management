@@ -63,6 +63,20 @@ async def create_project(
                 detail=f"The following department_ids are outside your scope: {out_of_scope}"
             )
 
+    # Validate due date is not in the past
+    if payload.due_date:
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        # Ensure payload.due_date is timezone-aware
+        if payload.due_date.tzinfo is None:
+            due_date = payload.due_date.replace(tzinfo=timezone.utc)
+        else:
+            due_date = payload.due_date
+        if due_date < today:
+            raise HTTPException(
+                status_code=400,
+                detail="Due date cannot be before today"
+            )
+
     # Create project
     project = Project(
         name=payload.name,
@@ -223,7 +237,7 @@ async def get_project_candidates(
             .selectinload(Role.category)
             .selectinload(Category.permissions),
             selectinload(User.role).selectinload(Role.departments),
-            selectinload(User.role).selectinload(Role.assignable_categories).selectinload(Category.permissions),
+            selectinload(User.role).selectinload(Role.permissions),
         ).where(User.department_id.in_(project_dept_ids))
     )
     candidates = candidates_result.scalars().all()
@@ -251,6 +265,20 @@ async def update_project(
     project_dept_ids = {d.id for d in project.departments}
     if scoped_dept_ids is not None and not (project_dept_ids & scoped_dept_ids):
         raise HTTPException(status_code=403, detail="This project is outside your department scope")
+
+    # Validate due date is not in the past
+    if payload.due_date is not None:
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        # Ensure payload.due_date is timezone-aware
+        if payload.due_date.tzinfo is None:
+            due_date = payload.due_date.replace(tzinfo=timezone.utc)
+        else:
+            due_date = payload.due_date
+        if due_date < today:
+            raise HTTPException(
+                status_code=400,
+                detail="Due date cannot be before today"
+            )
 
     # Apply provided fields
     if payload.name is not None:
@@ -346,14 +374,14 @@ async def approve_project(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Approve a project pending approval. Only users whose role's category is 'Admin' can do this."""
+    """Approve a project pending approval. Only users with project:manage permission can do this."""
     project = await _get_project_or_404_with_loads(db, project_id)
 
-    # Permission check: only Admin category users can approve
-    if not current_user.role or not current_user.role.category or current_user.role.category.name != "Admin":
+    # Permission check: only users with project:manage permission can approve
+    if not has_permission(current_user, "project:manage"):
         raise HTTPException(
             status_code=403,
-            detail="Only Admin category users can approve projects"
+            detail="You do not have permission to approve projects"
         )
 
     # Check if project is pending approval
@@ -384,14 +412,14 @@ async def reject_project(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Reject a project pending approval, sending it back to Active. Requires a reason. Only Admin category users can do this."""
+    """Reject a project pending approval, sending it back to Active. Requires a reason. Only users with project:manage permission can do this."""
     project = await _get_project_or_404_with_loads(db, project_id)
 
-    # Permission check: only Admin category users can reject
-    if not current_user.role or not current_user.role.category or current_user.role.category.name != "Admin":
+    # Permission check: only users with project:manage permission can reject
+    if not has_permission(current_user, "project:manage"):
         raise HTTPException(
             status_code=403,
-            detail="Only Admin category users can reject projects"
+            detail="You do not have permission to reject projects"
         )
 
     # Check if project is pending approval
@@ -489,7 +517,7 @@ async def update_project_team(
             .selectinload(Role.category)
             .selectinload(Category.permissions),
             selectinload(User.role).selectinload(Role.departments),
-            selectinload(User.role).selectinload(Role.assignable_categories).selectinload(Category.permissions),
+            selectinload(User.role).selectinload(Role.permissions),
         ).where(User.department_id.in_(project_dept_ids))
     )
     candidates = candidates_result.scalars().all()
@@ -508,17 +536,31 @@ async def update_project_team(
                 detail=f"User {user_id} is not in your assignable pool for this project"
             )
 
-    # If lead_id is provided, validate it's in the user_ids list and in assignable pool
+    # If lead_id is provided, validate it's in assignable pool and has required permissions
     if payload.lead_id is not None:
-        if payload.lead_id not in payload.user_ids:
-            raise HTTPException(
-                status_code=400,
-                detail="Lead must be one of the assigned team members"
-            )
         if payload.lead_id not in assignable_user_ids:
             raise HTTPException(
                 status_code=400,
                 detail="Lead is not in your assignable pool for this project"
+            )
+        # Load the lead user with their role and permissions to check eligibility
+        lead_user_result = await db.execute(
+            select(User).options(
+                selectinload(User.role).selectinload(Role.permissions)
+            ).where(User.id == payload.lead_id)
+        )
+        lead_user = lead_user_result.scalar_one_or_none()
+        if lead_user is None or lead_user.role is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Lead user not found or has no role assigned"
+            )
+        # Check if lead has either task:manage or task:create permission
+        lead_permissions = {p.name for p in lead_user.role.permissions}
+        if "task:manage" not in lead_permissions and "task:create" not in lead_permissions:
+            raise HTTPException(
+                status_code=400,
+                detail="Lead must have either task:manage or task:create permission"
             )
 
     # Delete existing team members

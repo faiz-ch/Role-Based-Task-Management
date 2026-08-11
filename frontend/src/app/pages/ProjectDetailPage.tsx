@@ -13,6 +13,7 @@ import { FldSelect } from "../components/FldSelect";
 import { Av } from "../components/Av";
 import { StatusBadge } from "../components/StatusBadge";
 import { PriBadge } from "../components/PriBadge";
+import { DatePicker } from "../components/DatePicker";
 
 const PROJECT_STATUS_STYLE: Record<string, { badge: string; dot: string }> = {
   Planning: {
@@ -666,15 +667,13 @@ export function ProjectDetailPage() {
                   <option value="High">High</option>
                 </select>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Due Date</label>
-                <input
-                  type="datetime-local"
-                  value={taskForm.dueDate}
-                  onChange={(e) => setTaskForm((f) => ({ ...f, dueDate: e.target.value }))}
-                  className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400"
-                />
-              </div>
+              <DatePicker
+                label="Due Date"
+                value={taskForm.dueDate}
+                onChange={(value) => setTaskForm((f) => ({ ...f, dueDate: value }))}
+                min={new Date().toISOString().slice(0, 16)}
+                max={project?.dueDate ? project.dueDate.slice(0, 16) : undefined}
+              />
             </div>
             <div className="flex flex-col gap-2">
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
@@ -791,15 +790,12 @@ export function ProjectDetailPage() {
                   <option value="High">High</option>
                 </select>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Due Date</label>
-                <input
-                  type="datetime-local"
-                  value={editForm.dueDate}
-                  onChange={(e) => setEditForm((f) => ({ ...f, dueDate: e.target.value }))}
-                  className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400"
-                />
-              </div>
+              <DatePicker
+                label="Due Date"
+                value={editForm.dueDate}
+                onChange={(value) => setEditForm((f) => ({ ...f, dueDate: value }))}
+                min={new Date().toISOString().slice(0, 16)}
+              />
             </div>
             <div className="flex flex-col gap-2">
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
@@ -941,19 +937,17 @@ export function ProjectDetailPage() {
                 )}
               </div>
             </div>
-            {selectedTeamIds.length > 0 && (
-              <FldSelect
-                label="Select Lead"
-                value={selectedLeadId}
-                onChange={(e) => setSelectedLeadId(e.target.value)}
-                options={[
-                  { value: "", label: "Select lead" },
-                  ...candidates
-                    .filter((u) => selectedTeamIds.includes(u.id))
-                    .map((u) => ({ value: u.id.toString(), label: u.name })),
-                ]}
-              />
-            )}
+            <FldSelect
+              label="Select Lead"
+              value={selectedLeadId}
+              onChange={(e) => setSelectedLeadId(e.target.value)}
+              options={[
+                { value: "", label: "Select lead" },
+                ...candidates
+                  .filter((u) => u.role?.permissions?.includes("task:manage") || u.role?.permissions?.includes("task:create"))
+                  .map((u) => ({ value: u.id.toString(), label: u.name })),
+              ]}
+            />
           </div>
           <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-border">
             <button
@@ -964,7 +958,7 @@ export function ProjectDetailPage() {
             </button>
             <button
               onClick={handleManageTeam}
-              disabled={selectedTeamIds.length === 0}
+              disabled={selectedTeamIds.length === 0 && !selectedLeadId}
               className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Save Team

@@ -190,6 +190,29 @@ async def create_task(
         if assignee is None:
             raise HTTPException(status_code=404, detail="Assignee user not found")
 
+    # Validate due date is not in the past and not after project's due date
+    if payload.due_date:
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        # Ensure payload.due_date is timezone-aware
+        if payload.due_date.tzinfo is None:
+            due_date = payload.due_date.replace(tzinfo=timezone.utc)
+        else:
+            due_date = payload.due_date
+        if due_date < today:
+            raise HTTPException(
+                status_code=400,
+                detail="Due date cannot be before today"
+            )
+        # If task is part of a project, check it's not after project's due date
+        if payload.project_id is not None and project.due_date:
+            project_due_date = project.due_date.replace(tzinfo=timezone.utc) if project.due_date.tzinfo is None else project.due_date
+            if due_date > project_due_date:
+                formatted_date = project_due_date.strftime("%b %d, %Y")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Due date cannot be after the project's due date ({formatted_date})"
+                )
+
     task = Task(
         title=payload.title,
         description=payload.description,
@@ -221,6 +244,29 @@ async def update_task(
 
     if not can_edit_delete_task(current_user, task):
         raise HTTPException(status_code=403, detail="You do not have permission to edit this task")
+
+    # Validate due date is not in the past and not after project's due date
+    if payload.due_date is not None:
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        # Ensure payload.due_date is timezone-aware
+        if payload.due_date.tzinfo is None:
+            due_date = payload.due_date.replace(tzinfo=timezone.utc)
+        else:
+            due_date = payload.due_date
+        if due_date < today:
+            raise HTTPException(
+                status_code=400,
+                detail="Due date cannot be before today"
+            )
+        # If task is part of a project, check it's not after project's due date
+        if task.project and task.project.due_date:
+            project_due_date = task.project.due_date.replace(tzinfo=timezone.utc) if task.project.due_date.tzinfo is None else task.project.due_date
+            if due_date > project_due_date:
+                formatted_date = project_due_date.strftime("%b %d, %Y")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Due date cannot be after the project's due date ({formatted_date})"
+                )
 
     update_data = payload.model_dump(exclude_unset=True)
     for field, value in update_data.items():

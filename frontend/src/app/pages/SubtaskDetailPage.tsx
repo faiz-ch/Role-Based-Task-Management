@@ -14,6 +14,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { PriBadge } from "../components/PriBadge";
 import { Av } from "../components/Av";
 import { Dlg } from "../components/Dlg";
+import { DatePicker } from "../components/DatePicker";
 
 function fmtDate(d: string) {
   if (!d) return "—";
@@ -401,14 +402,12 @@ export function SubtaskDetailPage() {
                 )}
                 {showReschedule && (
                   <div className="pt-3 border-t border-border">
-                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">
-                      New Due Date
-                    </label>
-                    <input
-                      type="datetime-local"
+                    <DatePicker
+                      label="New Due Date"
                       value={rescheduleDate}
-                      onChange={(e) => setRescheduleDate(e.target.value)}
-                      className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground"
+                      onChange={(value) => setRescheduleDate(value)}
+                      min={new Date().toISOString().slice(0, 16)}
+                      max={task?.dueDate ? task.dueDate.slice(0, 16) : undefined}
                     />
                     <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 mt-3 block">
                       Comment (required for reschedule)

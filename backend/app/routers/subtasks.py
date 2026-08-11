@@ -112,6 +112,25 @@ async def create_subtask(
                 detail=f"User {assignee_id} is not a member of this task's team"
             )
 
+    # Validate due date is not after parent task's due date
+    if payload.due_date and task.due_date:
+        # Ensure payload.due_date is timezone-aware
+        if payload.due_date.tzinfo is None:
+            due_date = payload.due_date.replace(tzinfo=timezone.utc)
+        else:
+            due_date = payload.due_date
+        # Ensure task.due_date is timezone-aware
+        if task.due_date.tzinfo is None:
+            task_due_date = task.due_date.replace(tzinfo=timezone.utc)
+        else:
+            task_due_date = task.due_date
+        if due_date > task_due_date:
+            formatted_date = task_due_date.strftime("%b %d, %Y")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Due date cannot be after the task's due date ({formatted_date})"
+            )
+
     # Create the subtask
     subtask = SubTask(
         task_id=task_id,
@@ -251,6 +270,25 @@ async def update_subtask(
 
     if not can_manage_subtask(current_user, subtask):
         raise HTTPException(status_code=403, detail="You do not have permission to edit this subtask")
+
+    # Validate due date is not after parent task's due date
+    if payload.due_date is not None and subtask.task.due_date:
+        # Ensure payload.due_date is timezone-aware
+        if payload.due_date.tzinfo is None:
+            due_date = payload.due_date.replace(tzinfo=timezone.utc)
+        else:
+            due_date = payload.due_date
+        # Ensure task.due_date is timezone-aware
+        if subtask.task.due_date.tzinfo is None:
+            task_due_date = subtask.task.due_date.replace(tzinfo=timezone.utc)
+        else:
+            task_due_date = subtask.task.due_date
+        if due_date > task_due_date:
+            formatted_date = task_due_date.strftime("%b %d, %Y")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Due date cannot be after the task's due date ({formatted_date})"
+            )
 
     update_data = payload.model_dump(exclude_unset=True)
     for field, value in update_data.items():

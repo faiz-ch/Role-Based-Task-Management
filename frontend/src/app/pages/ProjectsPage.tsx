@@ -12,6 +12,7 @@ import { Dlg } from "../components/Dlg";
 import { FldInput } from "../components/FldInput";
 import { FldSelect } from "../components/FldSelect";
 import { PriBadge } from "../components/PriBadge";
+import { DatePicker } from "../components/DatePicker";
 import { Check } from "lucide-react";
 
 const PROJECT_STATUSES: ProjectStatus[] = ["Planning", "Active", "Done", "Archived"];
@@ -388,13 +389,11 @@ export function ProjectsPage() {
                 }
                 options={PRIORITIES.map((p) => ({ value: p, label: p }))}
               />
-              <FldInput
+              <DatePicker
                 label="Due Date"
-                type="datetime-local"
                 value={form.dueDate}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, dueDate: e.target.value }))
-                }
+                onChange={(value) => setForm((f) => ({ ...f, dueDate: value }))}
+                min={new Date().toISOString().slice(0, 16)}
               />
             </div>
             <div className="flex flex-col gap-2">

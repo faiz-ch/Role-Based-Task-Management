@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router";
-import { ArrowLeft, AlertTriangle, Plus, Image, FileText, X, Trash2, Users, Edit2, Paperclip, MessageCircle } from "lucide-react";
+import { ArrowLeft, AlertTriangle, Plus, Image, FileText, X, Trash2, Users, Edit2, Paperclip, MessageCircle, MoreVertical, ChevronRight, Calendar, User, Clock, BarChart3, Download } from "lucide-react";
 import { Task, UserType, Department, Project, Subtask } from "../types";
 import { getTask, updateTaskStatus, updateTaskTeam, updateTask, deleteTask } from "../api/tasks";
 import { getSubtasks, createSubtask, updateSubtask, updateSubtaskStatus, updateSubtaskAssignees, deleteSubtask } from "../api/subtasks";
@@ -16,6 +16,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { PriBadge } from "../components/PriBadge";
 import { Dlg } from "../components/Dlg";
 import { Av } from "../components/Av";
+import { DatePicker } from "../components/DatePicker";
 
 function fmtDate(d: string) {
   if (!d) return "—";
@@ -85,7 +86,7 @@ export function TaskDetailPage() {
   const [teamMemberSearch, setTeamMemberSearch] = useState("");
   const [subtaskAssigneeSearch, setSubtaskAssigneeSearch] = useState("");
   const [reassignUserSearch, setReassignUserSearch] = useState("");
-  const [activeTab, setActiveTab] = useState<"overview" | "subtasks">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "subtasks" | "team" | "files" | "activity">("overview");
   const [subtaskForm, setSubtaskForm] = useState({
     title: "",
     description: "",
@@ -105,85 +106,30 @@ export function TaskDetailPage() {
       try {
         setLoading(true);
         setError(null);
-        const [taskResult, usersResult, departmentsResult, attachmentsResult] = await Promise.allSettled([
+        const [taskResult, usersResult, departmentsResult, candidatesResult, subtasksResult, attachmentsResult, reportsResult, commentsResult] = await Promise.allSettled([
           getTask(Number(taskId)),
           getUsers(),
           getDepartments(),
+          getProjectCandidates(Number(taskId)),
+          getSubtasks(),
           getAttachments(Number(taskId)),
+          getTaskReports(Number(taskId)),
+          getTaskComments(Number(taskId)),
         ]);
 
-        setTask(taskResult.status === "fulfilled" ? taskResult.value : null);
+        const loadedTask = taskResult.status === "fulfilled" ? taskResult.value : null;
+        setTask(loadedTask);
         setUsers(usersResult.status === "fulfilled" ? usersResult.value : []);
         setDepartments(departmentsResult.status === "fulfilled" ? departmentsResult.value : []);
+        setCandidates(candidatesResult.status === "fulfilled" ? candidatesResult.value : []);
+        setSubtasks(subtasksResult.status === "fulfilled" ? subtasksResult.value : []);
         setAttachments(attachmentsResult.status === "fulfilled" ? attachmentsResult.value : []);
+        setReports(reportsResult.status === "fulfilled" ? reportsResult.value : []);
+        setComments(commentsResult.status === "fulfilled" ? commentsResult.value : []);
 
-        // Load project after task is loaded
-        if (taskResult.status === "fulfilled" && taskResult.value) {
-          try {
-            const projectData = await getProject(taskResult.value.projectId);
-            setProject(projectData);
-            // Load candidates after project is loaded
-            try {
-              const candidatesData = await getProjectCandidates(projectData.id);
-              setCandidates(candidatesData);
-            } catch (err) {
-              console.error("Failed to load candidates:", err);
-            }
-          } catch (err) {
-            // Project loading failure shouldn't block the page
-            console.error("Failed to load project:", err);
-          }
-        }
-
-        // Load subtasks after task is loaded
-        if (taskResult.status === "fulfilled" && taskResult.value) {
-          try {
-            const subtasksData = await getSubtasks(taskResult.value.id);
-            setSubtasks(subtasksData);
-
-            // Load reports and attachments for each subtask
-            const reportsMap: Record<number, Report[]> = {};
-            const attachmentsMap: Record<number, Attachment[]> = {};
-            await Promise.all(
-              subtasksData.map(async (subtask) => {
-                try {
-                  const subtaskReportsData = await getSubtaskReports(subtask.id);
-                  reportsMap[subtask.id] = subtaskReportsData;
-                } catch (err) {
-                  console.error(`Failed to load reports for subtask ${subtask.id}:`, err);
-                  reportsMap[subtask.id] = [];
-                }
-                try {
-                  const subtaskAttachmentsData = await getSubtaskAttachments(subtask.id);
-                  attachmentsMap[subtask.id] = subtaskAttachmentsData;
-                } catch (err) {
-                  console.error(`Failed to load attachments for subtask ${subtask.id}:`, err);
-                  attachmentsMap[subtask.id] = [];
-                }
-              })
-            );
-            setSubtaskReports(reportsMap);
-            setSubtaskAttachments(attachmentsMap);
-          } catch (err) {
-            console.error("Failed to load subtasks:", err);
-          }
-        }
-
-        // Load reports after task is loaded
-        if (taskResult.status === "fulfilled" && taskResult.value) {
-          try {
-            const reportsData = await getTaskReports(taskResult.value.id);
-            setReports(reportsData);
-          } catch (err) {
-            console.error("Failed to load reports:", err);
-          }
-
-          try {
-            const commentsData = await getTaskComments(taskResult.value.id);
-            setComments(commentsData);
-          } catch (err) {
-            console.error("Failed to load comments:", err);
-          }
+        if (loadedTask?.projectId) {
+          const projectResult = await getProject(loadedTask.projectId);
+          setProject(projectResult);
         }
 
         if (taskResult.status === "rejected") {
@@ -196,16 +142,45 @@ export function TaskDetailPage() {
     loadData();
   }, [taskId]);
 
+  // Load subtask-specific data when subtasks are loaded
+  useEffect(() => {
+    async function loadSubtaskData() {
+      if (subtasks.length === 0) return;
+      
+      const reportsData: Record<number, Report[]> = {};
+      const attachmentsData: Record<number, Attachment[]> = {};
+
+      await Promise.all(
+        subtasks.map(async (subtask) => {
+          try {
+            const [reportsResult, attachmentsResult] = await Promise.allSettled([
+              getSubtaskReports(subtask.id),
+              getSubtaskAttachments(subtask.id),
+            ]);
+            reportsData[subtask.id] = reportsResult.status === "fulfilled" ? reportsResult.value : [];
+            attachmentsData[subtask.id] = attachmentsResult.status === "fulfilled" ? attachmentsResult.value : [];
+          } catch (err) {
+            console.error(`Failed to load data for subtask ${subtask.id}:`, err);
+            reportsData[subtask.id] = [];
+            attachmentsData[subtask.id] = [];
+          }
+        })
+      );
+
+      setSubtaskReports(reportsData);
+      setSubtaskAttachments(attachmentsData);
+    }
+    loadSubtaskData();
+  }, [subtasks]);
+
+  const taskLead = users.find((u) => u.id === task?.leadId);
   const teamMembers = candidates.filter((u) => task?.teamUserIds.includes(u.id));
-  const taskLead = teamMembers.find((u) => u.id === task?.leadId);
-  const projectLead = candidates.find((u) => u.id === project?.leadId);
-  const projectTeamMembers = candidates.filter((u) => project?.teamUserIds.includes(u.id));
+  const projectDepts = departments.filter((d) => project?.departmentIds.includes(d.id));
 
   const canManage = permissions.includes("project:manage") && (
     currentUser?.role?.allDepartments ||
     (project?.departmentIds && currentUser?.role?.departments?.some(d => project.departmentIds.includes(d.id)))
   );
-  const isProjectLeadOrManager = canManage || currentUser?.id === project?.leadId;
 
   function canManageTask(): boolean {
     if (!task || !project) return false;
@@ -216,96 +191,21 @@ export function TaskDetailPage() {
     );
   }
 
-  const canDeleteAttachments = canManageTask();
-
-  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file || !taskId) return;
-
-    try {
-      setUploading(true);
-      setError(null);
-      const uploaded = await uploadAttachment(Number(taskId), file);
-      setAttachments((prev) => [...prev, uploaded]);
-    } catch (err: any) {
-      setError(err?.message || "Failed to upload file");
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
-    }
+  function isTaskLead(): boolean {
+    return currentUser?.id === task?.leadId;
   }
 
-  async function handleAttachmentClick(attachment: Attachment) {
-  try {
-    if (attachment.contentType.startsWith("image/")) {
-      const blobUrl = await fetchAttachmentBlobUrl(attachment.id);
-      setPreviewFile({ id: attachment.id, url: blobUrl, filename: attachment.filename, isImage: true });
-    } else {
-      const blobUrl = await fetchAttachmentPreviewBlobUrl(attachment.id);
-      setPreviewFile({ id: attachment.id, url: blobUrl, filename: attachment.filename, isImage: false });
-    }
-  } catch (err: any) {
-    setError(err?.message || "Failed to preview this file. You can still download it.");
-  }
-}
-
-async function handleDownloadOriginal(attachment: { id: number; filename: string }) {
-  try {
-    const blobUrl = await fetchAttachmentBlobUrl(attachment.id);
-    const a = document.createElement("a");
-    a.href = blobUrl;
-    a.download = attachment.filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(blobUrl);
-  } catch (err: any) {
-    setError(err?.message || "Failed to download file");
-  }
-}
-
-  async function handleApprove() {
-    if (!task) return;
-    if (!approveComment.trim()) {
-      setError("A comment is required when approving a task.");
-      return;
-    }
-    try {
-      setError(null);
-      const updated = await updateTaskStatus(task.id, "Done", undefined, approveComment.trim());
-      setTask(updated);
-      setApproveComment("");
-    } catch (err: any) {
-      setError(err?.message || "Failed to approve task");
-    }
+  function isTaskAssignee(): boolean {
+    return currentUser?.id === task?.assigneeId;
   }
 
-  async function handleReschedule() {
-    if (!task || !rescheduleDate) return;
-    if (!rescheduleComment.trim()) {
-      setError("A comment is required when rescheduling a task.");
-      return;
-    }
-    try {
-      setRescheduleLoading(true);
-      setError(null);
-      const isoDate = new Date(rescheduleDate).toISOString();
-      const updated = await updateTaskStatus(task.id, "Reschedule", isoDate, rescheduleComment.trim());
-      setTask(updated);
-      setShowReschedule(false);
-      setRescheduleDate("");
-      setRescheduleComment("");
-    } catch (err: any) {
-      setError(err?.message || "Failed to reschedule task");
-    } finally {
-      setRescheduleLoading(false);
-    }
+  function getTaskProgress(): number {
+    if (subtasks.length === 0) return 0;
+    const completed = subtasks.filter(s => s.status === "Done").length;
+    return Math.round((completed / subtasks.length) * 100);
   }
 
   async function handleManageTeam() {
-    setTeamMemberSearch("");
     if (!task) return;
     try {
       setError(null);
@@ -321,30 +221,6 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
     } catch (err: any) {
       setError(err?.message || "Failed to update team");
     }
-  }
-
-  function toggleTeamMember(userId: number) {
-    // Prevent unchecking the current assignee
-    if (task?.assigneeId === userId && selectedTeamIds.includes(userId)) {
-      return; // Don't allow removing the current assignee
-    }
-    setSelectedTeamIds((prev) =>
-      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
-    );
-  }
-
-  function canManageSubtask(subtask: Subtask): boolean {
-    if (!task || !project) return false;
-    return (
-      canManage ||
-      currentUser?.id === project.leadId ||
-      currentUser?.id === task.leadId ||
-      subtask.assigneeIds.includes(currentUser?.id || 0)
-    );
-  }
-
-  function isSubtaskAssignee(subtask: Subtask): boolean {
-    return subtask.assigneeIds.includes(currentUser?.id || 0);
   }
 
   async function handleCreateSubtask() {
@@ -364,83 +240,6 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
     } catch (err: any) {
       setError(err?.message || "Failed to create subtask");
     }
-  }
-
-  async function handleUpdateSubtaskStatus(subtaskId: number, status: string, comment?: string) {
-    try {
-      setError(null);
-      const updated = await updateSubtaskStatus(subtaskId, status, comment);
-      setSubtasks((prev) => prev.map((s) => (s.id === subtaskId ? updated : s)));
-    } catch (err: any) {
-      setError(err?.message || "Failed to update subtask status");
-    }
-  }
-
-  async function handleDeleteSubtask(subtaskId: number) {
-    try {
-      setError(null);
-      await deleteSubtask(subtaskId);
-      setSubtasks((prev) => prev.filter((s) => s.id !== subtaskId));
-    } catch (err: any) {
-      setError(err?.message || "Failed to delete subtask");
-    }
-  }
-
-  async function handleUpdateSubtaskAssignees(subtaskId: number, userIds: number[]) {
-    try {
-      setError(null);
-      const updated = await updateSubtaskAssignees(subtaskId, userIds);
-      setSubtasks((prev) => prev.map((s) => (s.id === subtaskId ? updated : s)));
-      setShowReassignSubtask(null);
-    } catch (err: any) {
-      setError(err?.message || "Failed to reassign subtask");
-    }
-  }
-
-  function toggleSubtaskAssignee(userId: number) {
-    setSubtaskForm((prev) => ({
-      ...prev,
-      assigneeIds: prev.assigneeIds.includes(userId)
-        ? prev.assigneeIds.filter((id) => id !== userId)
-        : [...prev.assigneeIds, userId],
-    }));
-  }
-
-  function toggleReassignUser(userId: number) {
-    setReassignUserIds((prev) =>
-      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
-    );
-  }
-
-  async function handleDeleteAttachment(attachmentId: number) {
-    try {
-      await deleteAttachment(attachmentId);
-      setAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
-    } catch (err: any) {
-      setError(err?.message || "Failed to delete attachment");
-    }
-  }
-
-  async function handleSubmitForReview() {
-    if (!task) return;
-    try {
-      setError(null);
-      const updated = await updateTaskStatus(task.id, "Review");
-      setTask(updated);
-    } catch (err: any) {
-      setError(err?.message || "Failed to submit for review");
-    }
-  }
-
-  function openEditTask() {
-    if (!task) return;
-    setEditTaskForm({
-      title: task.title,
-      description: task.description,
-      priority: task.priority,
-      dueDate: task.dueDate,
-    });
-    setShowEditTask(true);
   }
 
   async function handleEditTask() {
@@ -471,32 +270,52 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
     }
   }
 
-  function canSubmitForReview(): boolean {
-    return (
-      currentUser?.id === task?.assigneeId &&
-      (task?.status === "To Do" || task?.status === "Reschedule") &&
-      reports.length > 0 &&
-      attachments.length > 0 &&
-      (subtasks.length === 0 || subtasks.every(s => s.status === "Done"))
-    );
+  async function handleReschedule() {
+    if (!task || !rescheduleDate || !rescheduleComment.trim()) return;
+    try {
+      setRescheduleLoading(true);
+      setError(null);
+      await updateTaskStatus(task.id, { status: "Reschedule", comment: rescheduleComment.trim() });
+      const updated = await getTask(task.id);
+      setTask(updated);
+      setShowReschedule(false);
+      setRescheduleDate("");
+      setRescheduleComment("");
+    } catch (err: any) {
+      setError(err?.message || "Failed to reschedule task");
+    } finally {
+      setRescheduleLoading(false);
+    }
   }
 
-  function getSubmitDisableReason(): string {
-    if (currentUser?.id !== task?.assigneeId) return "";
-    if (task?.status !== "To Do" && task?.status !== "Reschedule") return "";
-    if (subtasks.length > 0 && !subtasks.every(s => s.status === "Done")) {
-      return "Cannot submit for review — all subtasks must be Done first";
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const file = files[0];
+    try {
+      setUploading(true);
+      setError(null);
+      const uploaded = await uploadAttachment(Number(taskId), file);
+      setAttachments((prev) => [...prev, uploaded]);
+    } catch (err: any) {
+      setError(err?.message || "Failed to upload file");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
     }
-    if (reports.length === 0 && attachments.length === 0) {
-      return "Cannot submit for review — both a report and an attachment are required before submitting.";
+  }
+
+  async function handleDeleteAttachment(attachmentId: number) {
+    try {
+      setError(null);
+      await deleteAttachment(attachmentId);
+      setAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
+    } catch (err: any) {
+      setError(err?.message || "Failed to delete attachment");
     }
-    if (reports.length === 0) {
-      return "Cannot submit for review — a report is required before submitting.";
-    }
-    if (attachments.length === 0) {
-      return "Cannot submit for review — an attachment is required before submitting.";
-    }
-    return "";
   }
 
   async function handleCreateReport() {
@@ -512,6 +331,15 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
     }
   }
 
+  function getSubtaskStatusCounts() {
+    const total = subtasks.length;
+    const toDo = subtasks.filter(s => s.status === "To Do").length;
+    const review = subtasks.filter(s => s.status === "Review").length;
+    const done = subtasks.filter(s => s.status === "Done").length;
+    const reschedule = subtasks.filter(s => s.status === "Reschedule").length;
+    return { total, toDo, review, done, reschedule };
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -521,44 +349,139 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
     );
   }
 
-  if (error || !task) {
+  if (error) {
     return (
-      <div className="p-6">
-        <div className="mb-4 flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm">
-          <AlertTriangle size={14} className="text-red-500 flex-shrink-0" />
-          <span className="text-red-700">{error || "Task not found"}</span>
-        </div>
-        <button
-          onClick={() => navigate("/tasks")}
-          className="text-sm text-blue-600 hover:text-blue-800 transition-colors cursor-pointer"
-        >
-          ← Back to tasks
-        </button>
+      <div className="flex items-center justify-center h-64">
+        <AlertTriangle className="w-8 h-8 text-red-500 mr-3" />
+        <span className="text-sm text-muted-foreground">{error}</span>
       </div>
     );
   }
 
+  if (!task) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <span className="text-sm text-muted-foreground">Task not found</span>
+      </div>
+    );
+  }
+
+  const progress = getTaskProgress();
+  const statusCounts = getSubtaskStatusCounts();
+
   return (
-    <div className="p-6">
-      {/* Back button + breadcrumb */}
-      <div className="mb-6">
-        <button
-          onClick={() => navigate("/tasks")}
-          className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-        >
-          <ArrowLeft size={16} />
-          Back to tasks
-        </button>
+    <div className="min-h-screen bg-gray-50">
+      {/* Breadcrumb */}
+      <div className="bg-white border-b border-border px-6 py-3">
+        <div className="flex items-center gap-2 text-sm">
+          <button 
+            onClick={() => navigate("/projects")}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Projects
+          </button>
+          <ChevronRight className="w-4 h-4 text-muted-foreground" />
+          {project && (
+            <>
+              <button 
+                onClick={() => navigate(`/projects/${project.id}`)}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {project.name}
+              </button>
+              <ChevronRight className="w-4 h-4 text-muted-foreground" />
+            </>
+          )}
+          <button 
+            onClick={() => navigate("/tasks")}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Tasks
+          </button>
+          <ChevronRight className="w-4 h-4 text-muted-foreground" />
+          <span className="text-foreground font-medium">{task.title}</span>
+        </div>
       </div>
 
-      {/* Tab switcher */}
-      <div className="mb-6">
-        <div className="flex gap-2 border-b border-border">
+      {/* Header */}
+      <div className="bg-white border-b border-border px-6 py-4">
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <div className="flex items-center gap-3 mb-2">
+              <h1 className="text-2xl font-bold text-foreground">{task.title}</h1>
+              <StatusBadge status={task.status} />
+            </div>
+            {project && (
+              <p className="text-sm text-muted-foreground">{project.name}</p>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                setEditTaskForm({
+                  title: task.title,
+                  description: task.description,
+                  priority: task.priority,
+                  dueDate: task.dueDate,
+                });
+                setShowEditTask(true);
+              }}
+              className="flex items-center gap-2 px-3 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
+            >
+              <Edit2 className="w-4 h-4" />
+              Edit Task
+            </button>
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              className="flex items-center gap-2 px-3 py-2 text-sm border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition-colors cursor-pointer"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete
+            </button>
+          </div>
+        </div>
+
+        {/* Key Facts Row */}
+        <div className="flex items-center gap-6 mt-4 pt-4 border-t border-border">
+          <div className="flex items-center gap-2">
+            <User className="w-4 h-4 text-muted-foreground" />
+            <div>
+              <p className="text-xs text-muted-foreground">Task Lead</p>
+              <p className="text-sm font-medium text-foreground">{taskLead?.name || "Unassigned"}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 rounded-full border-2 border-gray-300" />
+            <div>
+              <p className="text-xs text-muted-foreground">Priority</p>
+              <PriBadge priority={task.priority} />
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-muted-foreground" />
+            <div>
+              <p className="text-xs text-muted-foreground">Due Date</p>
+              <p className="text-sm font-medium text-foreground">{fmtDate(task.dueDate)}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <BarChart3 className="w-4 h-4 text-muted-foreground" />
+            <div>
+              <p className="text-xs text-muted-foreground">Progress</p>
+              <p className="text-sm font-medium text-foreground">{progress}%</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="bg-white border-b border-border px-6">
+        <div className="flex gap-6">
           <button
             onClick={() => setActiveTab("overview")}
-            className={`px-4 py-2 text-sm font-medium transition-colors cursor-pointer border-b-2 ${
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
               activeTab === "overview"
-                ? "border-blue-600 text-blue-600"
+                ? "border-blue-500 text-blue-600"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
@@ -566,575 +489,367 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
           </button>
           <button
             onClick={() => setActiveTab("subtasks")}
-            className={`px-4 py-2 text-sm font-medium transition-colors cursor-pointer border-b-2 ${
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
               activeTab === "subtasks"
-                ? "border-blue-600 text-blue-600"
+                ? "border-blue-500 text-blue-600"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
-            Subtasks
+            Subtasks ({subtasks.length})
+          </button>
+          <button
+            onClick={() => setActiveTab("team")}
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === "team"
+                ? "border-blue-500 text-blue-600"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Team ({teamMembers.length})
+          </button>
+          <button
+            onClick={() => setActiveTab("files")}
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === "files"
+                ? "border-blue-500 text-blue-600"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Files ({attachments.length})
+          </button>
+          <button
+            onClick={() => setActiveTab("activity")}
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === "activity"
+                ? "border-blue-500 text-blue-600"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Activity
           </button>
         </div>
       </div>
 
-      {activeTab === "overview" && (
-        <div className="flex gap-6">
-          {/* Main content */}
-          <div className="flex-1 space-y-4">
-            {/* Title + status */}
+      {/* Tab Content */}
+      <div className="p-6">
+        {activeTab === "overview" && (
+          <div className="grid grid-cols-2 gap-6">
+            {/* Description */}
             <div className="bg-white rounded-xl border border-border p-6">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-3">
-                  <h1 className="text-xl font-bold text-foreground">{task.title}</h1>
-                  <StatusBadge status={task.status} />
-                  {currentUser?.id === task?.assigneeId && (task.status === "To Do" || task.status === "Reschedule") ? (
-                    canSubmitForReview() ? (
-                      <button
-                        onClick={handleSubmitForReview}
-                        className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
-                      >
-                        Submit for review
-                      </button>
-                    ) : (
-                      <button
-                        disabled
-                        className="px-4 py-2 bg-gray-300 text-gray-500 text-sm font-semibold rounded-lg cursor-not-allowed"
-                        title={getSubmitDisableReason()}
-                      >
-                        Submit for review
-                      </button>
-                    )
-                  ) : null}
-                </div>
-                {isProjectLeadOrManager && (
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={openEditTask}
-                      className="p-1.5 hover:bg-muted rounded transition-colors cursor-pointer"
-                      title="Edit task"
-                    >
-                      <Edit2 size={14} className="text-muted-foreground" />
-                    </button>
-                    <button
-                      onClick={() => setShowDeleteConfirm(true)}
-                      className="p-1.5 hover:bg-red-50 rounded transition-colors cursor-pointer"
-                      title="Delete task"
-                    >
-                      <Trash2 size={14} className="text-red-400" />
-                    </button>
-                  </div>
-                )}
-              </div>
+              <h2 className="text-lg font-semibold text-foreground mb-4">Description</h2>
+              <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                {task.description || "No description provided"}
+              </p>
             </div>
 
-          {/* Description */}
-          {task.description ? (
-            <div className="bg-white rounded-xl border border-border p-4">
-              <h2 className="text-sm font-semibold text-foreground mb-3">Description</h2>
-              <p className="text-sm text-muted-foreground whitespace-pre-wrap">{task.description}</p>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
-              <FileText size={12} />
-              <span>No description</span>
-            </div>
-          )}
-
-          {/* Attachments and Reports side by side */}
-          <div className="grid grid-cols-2 gap-4">
             {/* Attachments */}
-            <div className="bg-white rounded-xl border border-border p-4">
-              <div className="flex items-center justify-between mb-3">
+            <div className="bg-white rounded-xl border border-border p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold text-foreground">Attachments</h2>
                 <div className="flex items-center gap-2">
-                  <Paperclip size={14} className="text-muted-foreground" />
-                  <h2 className="text-sm font-semibold text-foreground">Attachments</h2>
-                </div>
-                {canManageTask() && (
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    onChange={handleFileUpload}
+                    className="hidden"
+                  />
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     disabled={uploading}
-                    className="flex items-center gap-1.5 px-2 py-1 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center gap-2 px-3 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {uploading ? (
-                      <>
-                        <div className="animate-spin rounded-full h-2 w-2 border-b-2 border-white" />
-                      </>
-                    ) : (
-                      <Plus size={10} />
-                    )}
+                    <Plus className="w-4 h-4" />
+                    {uploading ? "Uploading..." : "Upload"}
                   </button>
-                )}
+                </div>
+              </div>
+              {attachments.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">No attachments yet</p>
+              ) : (
+                <div className="space-y-2">
+                  {attachments.map((attachment) => (
+                    <div
+                      key={attachment.id}
+                      className="flex items-center justify-between p-3 border border-border rounded-lg hover:bg-muted transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        {attachment.filename.toLowerCase().endsWith(('.png', '.jpg', '.jpeg', '.gif', '.webp')) ? (
+                          <Image className="w-8 h-8 text-muted-foreground" />
+                        ) : (
+                          <FileText className="w-8 h-8 text-muted-foreground" />
+                        )}
+                        <div>
+                          <p className="text-sm font-medium text-foreground">{attachment.filename}</p>
+                          <p className="text-xs text-muted-foreground">{formatFileSize(attachment.file_size)}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={async () => {
+                            try {
+                              const url = await getAttachmentDownloadUrl(attachment.id);
+                              window.open(url, '_blank');
+                            } catch (err) {
+                              setError("Failed to download attachment");
+                            }
+                          }}
+                          className="p-2 text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteAttachment(attachment.id)}
+                          className="p-2 text-red-600 hover:text-red-700 transition-colors"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === "subtasks" && (
+          <div className="bg-white rounded-xl border border-border">
+            <div className="p-6 border-b border-border">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-foreground">Subtasks</h2>
+                <button
+                  onClick={() => setShowNewSubtask(true)}
+                  className="flex items-center gap-2 px-3 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add Subtask
+                </button>
+              </div>
+            </div>
+
+            {/* Subtask Table */}
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Subtask</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Assigned To</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Due Date</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Progress</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {subtasks.map((subtask) => (
+                    <tr key={subtask.id} className="border-b border-border hover:bg-muted transition-colors">
+                      <td className="px-6 py-4">
+                        <p className="text-sm font-medium text-foreground">{subtask.title}</p>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2">
+                          {subtask.assigneeIds.map((assigneeId) => {
+                            const assignee = users.find((u) => u.id === assigneeId);
+                            return assignee ? (
+                              <Av key={assignee.id} name={assignee.name} size="sm" />
+                            ) : null;
+                          })}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <p className="text-sm text-muted-foreground">{fmtDate(subtask.dueDate)}</p>
+                      </td>
+                      <td className="px-6 py-4">
+                        <StatusBadge status={subtask.status} />
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-24 bg-gray-200 rounded-full h-2">
+                            <div 
+                              className="bg-blue-500 h-2 rounded-full"
+                              style={{ width: `${subtask.status === "Done" ? 100 : 0}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-muted-foreground">{subtask.status === "Done" ? "100%" : "0%"}</span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Summary Footer */}
+            <div className="p-6 border-t border-border bg-gray-50">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-6">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Total Subtasks</p>
+                    <p className="text-lg font-semibold text-foreground">{statusCounts.total}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">To Do</p>
+                    <p className="text-lg font-semibold text-gray-600">{statusCounts.toDo}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Review</p>
+                    <p className="text-lg font-semibold text-blue-600">{statusCounts.review}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Done</p>
+                    <p className="text-lg font-semibold text-green-600">{statusCounts.done}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Reschedule</p>
+                    <p className="text-lg font-semibold text-orange-600">{statusCounts.reschedule}</p>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Overall Progress</p>
+                  <p className="text-lg font-semibold text-foreground">{progress}%</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "team" && (
+          <div className="bg-white rounded-xl border border-border p-6">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-lg font-semibold text-foreground">Team Members</h2>
+              <button
+                onClick={() => {
+                  const teamIds = [...(task?.teamUserIds || [])];
+                  setSelectedTeamIds(teamIds);
+                  setSelectedLeadId(task?.leadId?.toString() || "");
+                  setShowManageTeam(true);
+                }}
+                className="flex items-center gap-2 px-3 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer"
+              >
+                <Users className="w-4 h-4" />
+                Manage Team
+              </button>
+            </div>
+            {teamMembers.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">No team members assigned</p>
+            ) : (
+              <div className="grid grid-cols-2 gap-4">
+                {teamMembers.map((member) => (
+                  <div
+                    key={member.id}
+                    className="flex items-center gap-3 p-4 border border-border rounded-lg"
+                  >
+                    <Av name={member.name} />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{member.name}</p>
+                      {member.id === task.leadId && (
+                        <p className="text-xs text-muted-foreground">Task Lead</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "files" && (
+          <div className="bg-white rounded-xl border border-border p-6">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-lg font-semibold text-foreground">Files</h2>
+              <div className="flex items-center gap-2">
                 <input
                   ref={fileInputRef}
                   type="file"
                   onChange={handleFileUpload}
                   className="hidden"
                 />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="flex items-center gap-2 px-3 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Plus className="w-4 h-4" />
+                  {uploading ? "Uploading..." : "Upload"}
+                </button>
               </div>
-              {attachments.length === 0 ? (
-                <div className="text-xs text-muted-foreground text-center py-4">
-                  No attachments yet
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {attachments.map((attachment) => {
-                    const uploader = users.find((u) => u.id === attachment.uploadedBy);
-                    return (
-                      <div
-                        key={attachment.id}
-                        onClick={() => handleAttachmentClick(attachment)}
-                        className="flex items-center gap-2 p-2 rounded-lg border border-border hover:bg-muted/40 transition-colors cursor-pointer"
-                      >
-                        {attachment.contentType.startsWith("image/") ? (
-                          <Image size={14} className="text-muted-foreground flex-shrink-0" />
-                        ) : (
-                          <FileText size={14} className="text-muted-foreground flex-shrink-0" />
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium text-foreground truncate">{attachment.filename}</p>
-                          <p className="text-[10px] text-muted-foreground">
-                            {uploader?.name || "Unknown"} · {formatFileSize(attachment.sizeBytes)}
-                          </p>
-                        </div>
-                        {((attachment.uploadedBy === currentUser?.id && (task?.status === "To Do" || task?.status === "Reschedule")) || canManage) && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteAttachment(attachment.id);
-                            }}
-                            className="p-1 hover:bg-red-50 rounded transition-colors cursor-pointer"
-                            title="Delete attachment"
-                          >
-                            <Trash2 size={12} className="text-red-400" />
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
             </div>
-
-            {/* Reports */}
-            <div className="bg-white rounded-xl border border-border p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <FileText size={14} className="text-muted-foreground" />
-                  <h2 className="text-sm font-semibold text-foreground">Reports</h2>
-                </div>
-                {currentUser?.id === task?.leadId && (
-                  <button
-                    onClick={() => setShowNewReport(true)}
-                    className="flex items-center gap-1.5 px-2 py-1 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
-                  >
-                    <Plus size={10} />
-                  </button>
-                )}
-              </div>
-              {reports.length === 0 ? (
-                <div className="text-xs text-muted-foreground text-center py-4">
-                  No reports yet
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {reports.map((report) => {
-                    const author = users.find((u) => u.id === report.createdBy);
-                    return (
-                      <div key={report.id} className="border-b border-border pb-2:last:pb-0 last:border-0">
-                        <div className="flex items-center justify-between mb-1">
-                          <div className="flex items-center gap-1.5">
-                            {author && <Av name={author.name} size="sm" />}
-                            <span className="text-xs font-medium text-foreground">{author?.name || "Unknown"}</span>
-                          </div>
-                          <span className="text-[10px] text-muted-foreground">{fmtDate(report.createdAt)}</span>
-                        </div>
-                        <p className="text-xs text-muted-foreground whitespace-pre-wrap line-clamp-2">{report.content}</p>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Action area */}
-          <div className="bg-white rounded-xl border border-border p-4">
-            {isProjectLeadOrManager && task.status === "Review" ? (
-              <div className="space-y-3">
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => {
-                      setShowApproveComment(true);
-                      setShowReschedule(false);
-                    }}
-                    className="flex-1 px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition-colors cursor-pointer"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowReschedule(!showReschedule);
-                      setShowApproveComment(false);
-                    }}
-                    className="flex-1 px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors cursor-pointer"
-                  >
-                    Reschedule
-                  </button>
-                </div>
-                {showApproveComment && (
-                  <div className="pt-3 border-t border-border">
-                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">
-                      Comment (required for approval)
-                    </label>
-                    <textarea
-                      value={approveComment}
-                      onChange={(e) => setApproveComment(e.target.value)}
-                      placeholder="Add a comment explaining your approval decision..."
-                      className="w-full p-2 border border-border rounded-lg text-sm resize-none"
-                      rows={2}
-                    />
-                    <button
-                      onClick={handleApprove}
-                      disabled={!approveComment.trim()}
-                      className="mt-2 w-full px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Confirm approval
-                    </button>
-                  </div>
-                )}
-                {showReschedule && (
-                  <div className="pt-3 border-t border-border">
-                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">
-                      New Due Date
-                    </label>
-                    <input
-                      type="datetime-local"
-                      value={rescheduleDate}
-                      onChange={(e) => setRescheduleDate(e.target.value)}
-                      className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground"
-                    />
-                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 mt-3 block">
-                      Comment (required for reschedule)
-                    </label>
-                    <textarea
-                      value={rescheduleComment}
-                      onChange={(e) => setRescheduleComment(e.target.value)}
-                      placeholder="Add a comment explaining why you're rescheduling..."
-                      className="w-full p-2 border border-border rounded-lg text-sm resize-none"
-                      rows={2}
-                    />
-                    <button
-                      onClick={handleReschedule}
-                      disabled={!rescheduleDate || !rescheduleComment.trim() || rescheduleLoading}
-                      className="mt-2 w-full px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {rescheduleLoading ? "Confirming..." : "Confirm reschedule"}
-                    </button>
-                  </div>
-                )}
-              </div>
+            {attachments.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">No files uploaded yet</p>
             ) : (
-              <div className="text-sm text-muted-foreground text-center">
-                {task.status === "Review" && "Waiting for review."}
-                {task.status === "Reschedule" && "Rescheduled — waiting for team to resubmit."}
-                {task.status === "Done" && "This task is complete."}
+              <div className="grid grid-cols-2 gap-4">
+                {attachments.map((attachment) => (
+                  <div
+                    key={attachment.id}
+                    className="flex items-center justify-between p-4 border border-border rounded-lg hover:bg-muted transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      {attachment.filename.toLowerCase().endsWith(('.png', '.jpg', '.jpeg', '.gif', '.webp')) ? (
+                        <Image className="w-8 h-8 text-muted-foreground" />
+                      ) : (
+                        <FileText className="w-8 h-8 text-muted-foreground" />
+                      )}
+                      <div>
+                        <p className="text-sm font-medium text-foreground">{attachment.filename}</p>
+                        <p className="text-xs text-muted-foreground">{formatFileSize(attachment.file_size)}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={async () => {
+                          try {
+                            const url = await getAttachmentDownloadUrl(attachment.id);
+                            window.open(url, '_blank');
+                          } catch (err) {
+                            setError("Failed to download file");
+                          }
+                        }}
+                        className="p-2 text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        <Download className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteAttachment(attachment.id)}
+                        className="p-2 text-red-600 hover:text-red-700 transition-colors"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
+        )}
 
-          {/* Comments */}
-          <div className="bg-white rounded-xl border border-border p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <MessageCircle size={14} className="text-muted-foreground" />
-                <h2 className="text-sm font-semibold text-foreground">Comments</h2>
-              </div>
-            </div>
-            <p className="text-[10px] text-muted-foreground mb-3">From approve/reschedule decisions</p>
+        {activeTab === "activity" && (
+          <div className="bg-white rounded-xl border border-border p-6">
+            <h2 className="text-lg font-semibold text-foreground mb-6">Activity</h2>
             {comments.length === 0 ? (
-              <div className="text-xs text-muted-foreground text-center py-4">
-                No comments yet
-              </div>
+              <p className="text-sm text-muted-foreground text-center py-8">No activity yet</p>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-4">
                 {comments.map((comment) => {
                   const author = users.find((u) => u.id === comment.authorId);
                   return (
-                    <div key={comment.id} className="border-b border-border pb-2:last:pb-0 last:border-0">
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-2">
-                          {author && <Av name={author.name} size="sm" />}
-                          <span className="text-xs font-medium text-foreground">{author?.name || "Unknown"}</span>
-                          {comment.action === "approved" && (
-                            <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-medium rounded">Approved</span>
-                          )}
-                          {comment.action === "rescheduled" && (
-                            <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-medium rounded">Rescheduled</span>
-                          )}
+                    <div key={comment.id} className="flex gap-3 pb-4 border-b border-border last:border-0">
+                      <Av name={author?.name || "Unknown"} />
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="text-sm font-medium text-foreground">{author?.name || "Unknown"}</p>
+                          <p className="text-xs text-muted-foreground">{fmtDate(comment.createdAt)}</p>
                         </div>
-                        <span className="text-[10px] text-muted-foreground">{fmtDate(comment.createdAt)}</span>
+                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">{comment.content}</p>
                       </div>
-                      <p className="text-xs text-muted-foreground whitespace-pre-wrap">{comment.content}</p>
                     </div>
                   );
                 })}
               </div>
             )}
           </div>
-        </div>
+        )}
+      </div>
 
-          {/* Sidebar */}
-          <div className="w-72 space-y-4">
-            <div className="bg-white rounded-xl border border-border p-4">
-              <h2 className="text-sm font-semibold text-foreground mb-3">Details</h2>
-              <div className="space-y-3">
-                <div>
-                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Priority</span>
-                  <div className="mt-1">
-                    <PriBadge priority={task.priority} />
-                  </div>
-                </div>
-                <div>
-                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Due Date</span>
-                  <p className="text-sm text-foreground mt-1">{fmtDate(task.dueDate)}</p>
-                </div>
-                <div>
-                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Project</span>
-                  <p className="text-sm text-foreground mt-1">
-                    {project ? project.name : "None"}
-                  </p>
-                </div>
-                <div>
-                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Task Lead</span>
-                  <p className="text-sm text-foreground mt-1">
-                    {taskLead ? taskLead.name : "Unassigned"}
-                  </p>
-                </div>
-                <div>
-                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Task Team</span>
-                  <div className="mt-1">
-                    {teamMembers.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No team members</p>
-                    ) : (
-                      <div className="space-y-1">
-                        {teamMembers.map((member) => (
-                          <div key={member.id} className="text-sm text-foreground">
-                            {member.name}
-                            {member.id === task.leadId && (
-                              <span className="text-xs text-muted-foreground"> (Lead)</span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {currentUser?.id === project?.leadId && (
-                      <button
-                        onClick={() => {
-                          const teamIds = [...(task?.teamUserIds || [])];
-                          // Ensure current assignee is always in the team selection
-                          if (task?.assigneeId && !teamIds.includes(task.assigneeId)) {
-                            teamIds.push(task.assigneeId);
-                          }
-                          setSelectedTeamIds(teamIds);
-                          setSelectedLeadId(task?.leadId?.toString() || "");
-                          setShowManageTeam(true);
-                        }}
-                        className="mt-2 text-xs text-blue-600 hover:text-blue-800 cursor-pointer"
-                      >
-                        Manage Team
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {task?.teamApprovedAt && (
-                  <div>
-                    <span className="text-xs text-muted-foreground uppercase tracking-wider">Team Approved</span>
-                    <p className="text-sm text-emerald-600 mt-1">{fmtDate(task.teamApprovedAt)}</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeTab === "subtasks" && (
-        <div className="space-y-6">
-          {/* Header with New Subtask button */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <h2 className="text-lg font-semibold text-foreground">Subtasks</h2>
-              {subtasks.length > 0 && (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <span>Progress:</span>
-                  <span className="font-medium text-foreground">
-                    {subtasks.filter((s) => s.status === "Done").length} of {subtasks.length} done
-                  </span>
-                  <span className="text-muted-foreground">
-                    ({Math.round((subtasks.filter((s) => s.status === "Done").length / subtasks.length) * 100)}%)
-                  </span>
-                </div>
-              )}
-            </div>
-            {(currentUser?.id === task?.leadId || currentUser?.id === project?.leadId || canManage) && (
-              <button
-                onClick={() => setShowNewSubtask(true)}
-                className="flex items-center gap-1.5 px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
-              >
-                <Plus size={14} /> New Subtask
-              </button>
-            )}
-          </div>
-
-          {/* Kanban Board */}
-          {subtasks.length === 0 ? (
-            <div className="bg-white rounded-xl border border-border p-12 text-center">
-              <p className="text-sm text-muted-foreground">No subtasks yet</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-4 gap-4">
-              {["To Do", "Review", "Done", "Reschedule"].map((status) => {
-                const columnSubtasks = subtasks.filter((s) => s.status === status);
-                return (
-                  <div key={status} className="bg-gray-50 rounded-xl p-4">
-                    {/* Column Header */}
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-sm font-semibold text-foreground">{status}</h3>
-                      <span className="px-2 py-0.5 bg-gray-200 text-gray-700 text-xs font-medium rounded-full">
-                        {columnSubtasks.length}
-                      </span>
-                    </div>
-
-                    {/* Column Cards */}
-                    <div className="space-y-3">
-                      {columnSubtasks.map((subtask) => {
-                        const assignees = users.filter((u) => subtask.assigneeIds.includes(u.id));
-                        return (
-                          <div
-                            key={subtask.id}
-                            onClick={() => navigate(`/subtasks/${subtask.id}`)}
-                            className="bg-white rounded-lg border border-border p-4 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
-                          >
-                            <div className="flex items-start justify-between mb-2">
-                              <h4 className="text-sm font-medium text-foreground flex-1 pr-2">
-                                {subtask.title}
-                              </h4>
-                              <PriBadge priority={subtask.priority} />
-                            </div>
-                            {assignees.length > 0 && (
-                              <div className="flex items-center gap-1 mt-3">
-                                <div className="flex -space-x-2">
-                                  {assignees.slice(0, 3).map((a) => (
-                                    <Av key={a.id} name={a.name} size="sm" />
-                                  ))}
-                                  {assignees.length > 3 && (
-                                    <span className="w-7 h-7 rounded-full bg-gray-200 text-xs flex items-center justify-center text-gray-600">
-                                      +{assignees.length - 3}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                      {columnSubtasks.length === 0 && (
-                        <div className="text-center py-8">
-                          <p className="text-xs text-muted-foreground">No subtasks</p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {showManageTeam && (
-        <Dlg title="Manage Task Team" onClose={() => setShowManageTeam(false)}>
-          <div className="space-y-4">
-            <div className="flex flex-col gap-2">
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                Select Team Members (from project team)
-              </span>
-              {task?.assigneeId && (
-                <p className="text-xs text-amber-600 bg-amber-50 px-3 py-2 rounded-lg border border-amber-200">
-                  The current assignee must remain in the team. You can reassign the task before changing the team if needed.
-                </p>
-              )}
-              <input
-                type="text"
-                placeholder="Search team members..."
-                value={teamMemberSearch}
-                onChange={(e) => setTeamMemberSearch(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 mb-2"
-              />
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {projectTeamMembers.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-4">
-                    No project team members available. Add team members to the project first.
-                  </p>
-                ) : (
-                  projectTeamMembers
-                    .filter((user) => user.name.toLowerCase().includes(teamMemberSearch.toLowerCase()))
-                    .map((user) => (
-                    <label
-                      key={user.id}
-                      className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg hover:bg-muted/30 cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedTeamIds.includes(user.id)}
-                        onChange={() => toggleTeamMember(user.id)}
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
-                      <Av name={user.name} size="sm" />
-                      <span className="text-sm text-foreground">{user.name}</span>
-                    </label>
-                  ))
-                )}
-              </div>
-            </div>
-            {selectedTeamIds.length > 0 && (
-              <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Select Lead</label>
-                <select
-                  value={selectedLeadId}
-                  onChange={(e) => setSelectedLeadId(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400"
-                >
-                  <option value="">Select lead</option>
-                  {projectTeamMembers
-                    .filter((u) => selectedTeamIds.includes(u.id))
-                    .map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.name}
-                      </option>
-                    ))}
-                </select>
-              </div>
-            )}
-          </div>
-          <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-border">
-            <button
-              onClick={() => setShowManageTeam(false)}
-              className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleManageTeam}
-              disabled={selectedTeamIds.length === 0}
-              className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Save Team
-            </button>
-          </div>
-        </Dlg>
-      )}
-
+      {/* Dialogs */}
       {showNewSubtask && (
         <Dlg title="New Subtask" onClose={() => setShowNewSubtask(false)}>
           <div className="space-y-4">
@@ -1157,62 +872,47 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
                 rows={3}
               />
             </div>
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Priority</label>
-              <select
-                value={subtaskForm.priority}
-                onChange={(e) => setSubtaskForm({ ...subtaskForm, priority: e.target.value })}
-                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400"
-              >
-                <option value="Low">Low</option>
-                <option value="Medium">Medium</option>
-                <option value="High">High</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Due Date</label>
-              <input
-                type="datetime-local"
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Priority</label>
+                <select
+                  value={subtaskForm.priority}
+                  onChange={(e) => setSubtaskForm({ ...subtaskForm, priority: e.target.value as any })}
+                  className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400"
+                >
+                  <option value="Low">Low</option>
+                  <option value="Medium">Medium</option>
+                  <option value="High">High</option>
+                </select>
+              </div>
+              <DatePicker
+                label="Due Date"
                 value={subtaskForm.dueDate}
-                onChange={(e) => setSubtaskForm({ ...subtaskForm, dueDate: e.target.value })}
-                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400"
+                onChange={(value) => setSubtaskForm({ ...subtaskForm, dueDate: value })}
+                min={new Date().toISOString().slice(0, 16)}
+                max={task?.dueDate ? task.dueDate.slice(0, 16) : undefined}
               />
             </div>
             <div>
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">
-                Assignees (from task team)
-              </span>
-              <input
-                type="text"
-                placeholder="Search assignees..."
-                value={subtaskAssigneeSearch}
-                onChange={(e) => setSubtaskAssigneeSearch(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 mb-2"
-              />
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {teamMembers.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-4">
-                    No task team members available. Add team members to the task first.
-                  </p>
-                ) : (
-                  teamMembers
-                    .filter((user) => user.name.toLowerCase().includes(subtaskAssigneeSearch.toLowerCase()))
-                    .map((user) => (
-                    <label
-                      key={user.id}
-                      className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg hover:bg-muted/30 cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={subtaskForm.assigneeIds.includes(user.id)}
-                        onChange={() => toggleSubtaskAssignee(user.id)}
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
-                      <Av name={user.name} size="sm" />
-                      <span className="text-sm text-foreground">{user.name}</span>
-                    </label>
-                  ))
-                )}
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Assignees</label>
+              <div className="space-y-2">
+                {teamMembers.map((member) => (
+                  <label key={member.id} className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={subtaskForm.assigneeIds.includes(member.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSubtaskForm({ ...subtaskForm, assigneeIds: [...subtaskForm.assigneeIds, member.id] });
+                        } else {
+                          setSubtaskForm({ ...subtaskForm, assigneeIds: subtaskForm.assigneeIds.filter(id => id !== member.id) });
+                        }
+                      }}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="text-sm text-foreground">{member.name}</span>
+                  </label>
+                ))}
               </div>
             </div>
           </div>
@@ -1229,64 +929,6 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
               className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Create Subtask
-            </button>
-          </div>
-        </Dlg>
-      )}
-
-      {showReassignSubtask && (
-        <Dlg title="Reassign Subtask" onClose={() => setShowReassignSubtask(null)}>
-          <div className="space-y-4">
-            <div>
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">
-                Assignees (from task team)
-              </span>
-              <input
-                type="text"
-                placeholder="Search assignees..."
-                value={reassignUserSearch}
-                onChange={(e) => setReassignUserSearch(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 mb-2"
-              />
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {teamMembers.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-4">
-                    No task team members available. Add team members to the task first.
-                  </p>
-                ) : (
-                  teamMembers
-                    .filter((user) => user.name.toLowerCase().includes(reassignUserSearch.toLowerCase()))
-                    .map((user) => (
-                    <label
-                      key={user.id}
-                      className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg hover:bg-muted/30 cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={reassignUserIds.includes(user.id)}
-                        onChange={() => toggleReassignUser(user.id)}
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
-                      <Av name={user.name} size="sm" />
-                      <span className="text-sm text-foreground">{user.name}</span>
-                    </label>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-border">
-            <button
-              onClick={() => setShowReassignSubtask(null)}
-              className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => handleUpdateSubtaskAssignees(showReassignSubtask.id, reassignUserIds)}
-              className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
-            >
-              Reassign
             </button>
           </div>
         </Dlg>
@@ -1327,15 +969,13 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
                   <option value="High">High</option>
                 </select>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Due Date</label>
-                <input
-                  type="datetime-local"
-                  value={editTaskForm.dueDate}
-                  onChange={(e) => setEditTaskForm({ ...editTaskForm, dueDate: e.target.value })}
-                  className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400"
-                />
-              </div>
+              <DatePicker
+                label="Due Date"
+                value={editTaskForm.dueDate}
+                onChange={(value) => setEditTaskForm({ ...editTaskForm, dueDate: value })}
+                min={new Date().toISOString().slice(0, 16)}
+                max={task?.projectId && project?.dueDate ? project.dueDate.slice(0, 16) : undefined}
+              />
             </div>
           </div>
           <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-border">
@@ -1380,164 +1020,71 @@ async function handleDownloadOriginal(attachment: { id: number; filename: string
         </Dlg>
       )}
 
-      {showSubtaskApproveDialog && (
-        <Dlg title="Approve subtask" onClose={() => setShowSubtaskApproveDialog(null)}>
+      {showManageTeam && (
+        <Dlg title="Manage Team" onClose={() => setShowManageTeam(false)}>
           <div className="space-y-4">
-            <p className="text-sm text-foreground">
-              Approving this subtask will mark it as Done. Please provide a comment explaining your decision.
-            </p>
             <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Comment (required)</label>
-              <textarea
-                value={subtaskApproveComment}
-                onChange={(e) => setSubtaskApproveComment(e.target.value)}
-                placeholder="Add a comment explaining your approval decision..."
-                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400 min-h-[120px] resize-y"
-                rows={4}
-                autoFocus
-              />
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Select Lead</label>
+              <select
+                value={selectedLeadId}
+                onChange={(e) => setSelectedLeadId(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400"
+              >
+                <option value="">No lead</option>
+                {candidates
+                  .filter((u) => u.role?.permissions?.includes("task:manage") || u.role?.permissions?.includes("task:create"))
+                  .map((u) => ({ value: u.id.toString(), label: u.name }))
+                  .map((u) => (
+                    <option key={u.value} value={u.value}>{u.label}</option>
+                  ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Team Members</label>
+              <div className="space-y-2 max-h-60 overflow-y-auto">
+                {candidates
+                  .filter((user) => user.name.toLowerCase().includes(teamMemberSearch.toLowerCase()))
+                  .map((user) => (
+                    <label
+                      key={user.id}
+                      className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg hover:bg-muted/30 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedTeamIds.includes(user.id)}
+                        onChange={() => {
+                          if (selectedTeamIds.includes(user.id)) {
+                            setSelectedTeamIds(selectedTeamIds.filter(id => id !== user.id));
+                          } else {
+                            setSelectedTeamIds([...selectedTeamIds, user.id]);
+                          }
+                        }}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <Av name={user.name} size="sm" />
+                      <span className="text-sm text-foreground">{user.name}</span>
+                    </label>
+                  ))}
+              </div>
             </div>
           </div>
           <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-border">
             <button
-              onClick={() => {
-                setShowSubtaskApproveDialog(null);
-                setSubtaskApproveComment("");
-              }}
+              onClick={() => setShowManageTeam(false)}
               className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
             >
               Cancel
             </button>
             <button
-              onClick={() => {
-                if (showSubtaskApproveDialog && subtaskApproveComment.trim()) {
-                  handleUpdateSubtaskStatus(showSubtaskApproveDialog.id, "Done", subtaskApproveComment.trim());
-                  setShowSubtaskApproveDialog(null);
-                  setSubtaskApproveComment("");
-                }
-              }}
-              disabled={!subtaskApproveComment.trim()}
-              className="px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Approve
-            </button>
-          </div>
-        </Dlg>
-      )}
-
-      {showSubtaskRescheduleDialog && (
-        <Dlg title="Reschedule subtask" onClose={() => setShowSubtaskRescheduleDialog(null)}>
-          <div className="space-y-4">
-            <p className="text-sm text-foreground">
-              Rescheduling this subtask will send it back to the assignee. Please provide a comment explaining why.
-            </p>
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Comment (required)</label>
-              <textarea
-                value={subtaskRescheduleComment}
-                onChange={(e) => setSubtaskRescheduleComment(e.target.value)}
-                placeholder="Add a comment explaining why you're rescheduling..."
-                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400 min-h-[120px] resize-y"
-                rows={4}
-                autoFocus
-              />
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-border">
-            <button
-              onClick={() => {
-                setShowSubtaskRescheduleDialog(null);
-                setSubtaskRescheduleComment("");
-              }}
-              className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => {
-                if (showSubtaskRescheduleDialog && subtaskRescheduleComment.trim()) {
-                  handleUpdateSubtaskStatus(showSubtaskRescheduleDialog.id, "Reschedule", subtaskRescheduleComment.trim());
-                  setShowSubtaskRescheduleDialog(null);
-                  setSubtaskRescheduleComment("");
-                }
-              }}
-              disabled={!subtaskRescheduleComment.trim()}
-              className="px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Send back
-            </button>
-          </div>
-        </Dlg>
-      )}
-
-      {showNewReport && (
-        <Dlg title="New Report" onClose={() => setShowNewReport(false)}>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Content</label>
-              <textarea
-                value={reportContent}
-                onChange={(e) => setReportContent(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400 min-h-[120px] resize-y"
-                rows={5}
-                autoFocus
-              />
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-border">
-            <button
-              onClick={() => setShowNewReport(false)}
-              className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleCreateReport}
-              disabled={!reportContent.trim()}
+              onClick={handleManageTeam}
+              disabled={selectedTeamIds.length === 0 && !selectedLeadId}
               className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Submit Report
+              Save Team
             </button>
           </div>
         </Dlg>
       )}
-
-      {previewFile && (
-  <div
-    className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-6"
-    onClick={() => setPreviewFile(null)}
-  >
-    <div
-      className="bg-white rounded-xl w-full h-full max-w-5xl flex flex-col overflow-hidden"
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
-        <p className="text-sm font-medium text-foreground truncate">{previewFile.filename}</p>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => handleDownloadOriginal(previewFile)}
-            className="px-3 py-1.5 text-xs font-semibold border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
-          >
-            Download original
-          </button>
-          <button
-            onClick={() => setPreviewFile(null)}
-            className="p-1.5 hover:bg-muted rounded-lg transition-colors cursor-pointer"
-          >
-            <X size={16} className="text-muted-foreground" />
-          </button>
-        </div>
-      </div>
-      <div className="flex-1 bg-slate-100 flex items-center justify-center overflow-auto">
-        {previewFile.isImage ? (
-          <img src={previewFile.url} alt={previewFile.filename} className="max-w-full max-h-full object-contain" />
-        ) : (
-          <iframe src={previewFile.url} title={previewFile.filename} className="w-full h-full" />
-        )}
-      </div>
-    </div>
-  </div>
-)}
     </div>
   );
 }

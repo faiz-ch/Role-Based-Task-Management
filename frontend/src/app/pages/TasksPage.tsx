@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
-import { Plus, Edit2, Trash2, AlertTriangle, Search } from "lucide-react";
-import { Task, UserType, Status, Priority, Department, Project } from "../types";
+import { Plus, Edit2, Trash2, AlertTriangle, Search, MoreVertical, ChevronRight } from "lucide-react";
+import { Task, UserType, Status, Priority, Department, Project, Subtask } from "../types";
 import { useAuth } from "../context/AuthContext";
 import {
   getTasks,
@@ -12,6 +12,7 @@ import {
   deleteTask,
 } from "../api/tasks";
 import { getProjects, getProjectCandidates } from "../api/projects";
+import { getSubtasks } from "../api/subtasks";
 import { getUsers } from "../api/users";
 import { getDepartments } from "../api/departments";
 import { Av } from "../components/Av";
@@ -19,6 +20,8 @@ import { Dlg } from "../components/Dlg";
 import { FldInput } from "../components/FldInput";
 import { FldSelect } from "../components/FldSelect";
 import { PriBadge } from "../components/PriBadge";
+import { DatePicker } from "../components/DatePicker";
+import { StatusBadge } from "../components/StatusBadge";
 
 const STATUSES: Status[] = ["To Do", "Review", "Done", "Reschedule"];
 const PRIORITIES: Priority[] = ["Low", "Medium", "High"];
@@ -43,12 +46,6 @@ function fmtDate(d: string) {
   });
 }
 
-function fmtMonthYear(d: string) {
-  if (!d) return "";
-  const dt = new Date(d + "T12:00:00");
-  return dt.toLocaleDateString("en-US", { month: "long", year: "numeric" });
-}
-
 function isOverdue(dueDate: string, status: Status) {
   return (
     status !== "Done" &&
@@ -68,11 +65,18 @@ function getDueDateColor(dueDate: string): string {
   return "text-muted-foreground";
 }
 
+function getTaskProgress(task: Task, subtasks: Subtask[]): number {
+  const taskSubtasks = subtasks.filter(s => s.taskId === task.id);
+  if (taskSubtasks.length === 0) return 0;
+  const completed = taskSubtasks.filter(s => s.status === "Done").length;
+  return Math.round((completed / taskSubtasks.length) * 100);
+}
 
 export function TasksPage() {
   const navigate = useNavigate();
   const { currentUser, permissions } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [subtasks, setSubtasks] = useState<Subtask[]>([]);
   const [users, setUsers] = useState<UserType[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -127,33 +131,33 @@ export function TasksPage() {
   }
 
   useEffect(() => {
-  async function loadData() {
-    try {
-      setLoading(true);
-      setError(null);
-      const [tasksResult, usersResult, departmentsResult, projectsResult] = await Promise.allSettled([
-        scope === "mine" && currentUser ? getTasks({ assignedTo: currentUser.id }) : getTasks(),
-        getUsers(),
-        getDepartments(),
-        getProjects(),
-      ]);
+    async function loadData() {
+      try {
+        setLoading(true);
+        setError(null);
+        const [tasksResult, subtasksResult, usersResult, departmentsResult, projectsResult] = await Promise.allSettled([
+          scope === "mine" && currentUser ? getTasks({ assignedTo: currentUser.id }) : getTasks(),
+          getSubtasks(),
+          getUsers(),
+          getDepartments(),
+          getProjects(),
+        ]);
 
-      setTasks(tasksResult.status === "fulfilled" ? tasksResult.value : []);
-      setUsers(usersResult.status === "fulfilled" ? usersResult.value : []);
-      setDepartments(departmentsResult.status === "fulfilled" ? departmentsResult.value : []);
-      setProjects(projectsResult.status === "fulfilled" ? projectsResult.value : []);
+        setTasks(tasksResult.status === "fulfilled" ? tasksResult.value : []);
+        setSubtasks(subtasksResult.status === "fulfilled" ? subtasksResult.value : []);
+        setUsers(usersResult.status === "fulfilled" ? usersResult.value : []);
+        setDepartments(departmentsResult.status === "fulfilled" ? departmentsResult.value : []);
+        setProjects(projectsResult.status === "fulfilled" ? projectsResult.value : []);
 
-      if (tasksResult.status === "rejected") {
-        setError((tasksResult.reason as any)?.message || "Failed to load tasks.");
+        if (tasksResult.status === "rejected") {
+          setError((tasksResult.reason as any)?.message || "Failed to load tasks.");
+        }
+      } finally {
+        setLoading(false);
       }
-      // Intentionally silent if users/departments fail — those are
-      // supplementary data (names/dropdowns), not the core content of this page.
-    } finally {
-      setLoading(false);
     }
-  }
-  loadData();
-}, [scope, currentUser]);
+    loadData();
+  }, [scope, currentUser]);
 
   // Filter tasks
   const filteredTasks = tasks.filter((task) => {
@@ -260,16 +264,6 @@ export function TasksPage() {
     }
   }
 
-  async function handleAssign(task: Task, assigneeId: number | null) {
-    try {
-      setError(null);
-      const updated = await assignTask(task.id, assigneeId);
-      setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
-    } catch (err: any) {
-      setError(err?.message || "Failed to assign task.");
-    }
-  }
-
   async function handleDelete(taskId: number) {
     try {
       setError(null);
@@ -281,10 +275,10 @@ export function TasksPage() {
     }
   }
 
-  async function handleStatusTransition(task: Task, newStatus: Status) {
+  async function handleStatusChange(task: Task, newStatus: Status) {
     try {
       setError(null);
-      const updated = await updateTaskStatus(task.id, newStatus);
+      const updated = await updateTaskStatus(task.id, { status: newStatus });
       setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
     } catch (err: any) {
       setError(err?.message || "Failed to update task status.");
@@ -300,130 +294,115 @@ export function TasksPage() {
     );
   }
 
-  return (
-    <div className="p-6 flex flex-col h-full">
-      <div className="flex items-center justify-between mb-6 flex-shrink-0">
-        <div>
-          <h1 className="text-xl font-bold text-foreground">Tasks</h1>
-          <p className="text-sm text-muted-foreground">
-            {tasks.length} total tasks
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center bg-muted/40 rounded-lg p-1">
-            <button
-              onClick={() => setScope("all")}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
-                scope === "all"
-                  ? "bg-white text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              All Tasks
-            </button>
-            <button
-              onClick={() => setScope("mine")}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
-                scope === "mine"
-                  ? "bg-white text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              My Tasks
-            </button>
-          </div>
-          <button
-            onClick={openNew}
-            className="flex items-center gap-1.5 px-3 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
-          >
-            <Plus size={14} /> New Task
-          </button>
-        </div>
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <AlertTriangle className="w-8 h-8 text-red-500 mr-3" />
+        <span className="text-sm text-muted-foreground">{error}</span>
       </div>
+    );
+  }
 
-      {error && (
-        <div className="mb-4 flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm flex-shrink-0">
-          <AlertTriangle size={14} className="text-red-500 flex-shrink-0" />
-          <span className="text-red-700">{error}</span>
+  return (
+    <div className="flex flex-col h-screen bg-gray-50">
+      {/* Header with filters */}
+      <div className="bg-white border-b border-border px-6 py-4">
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="text-2xl font-bold text-foreground">Tasks</h1>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">Group by:</span>
+            <span className="text-sm font-medium text-foreground">Status</span>
+          </div>
         </div>
-      )}
-
-      {/* Filter bar */}
-      <div className="flex items-center gap-3 mb-6 flex-shrink-0 flex-wrap">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Search tasks..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground"
-          />
+        
+        <div className="flex items-center gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search tasks..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10 pr-4 py-2 w-full text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground"
+            />
+          </div>
+          
+          <select
+            value={filterAssignee}
+            onChange={(e) => setFilterAssignee(e.target.value)}
+            className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground"
+          >
+            <option value="">All assignees</option>
+            {users.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name}
+              </option>
+            ))}
+          </select>
+          
+          <select
+            value={filterPriority}
+            onChange={(e) => setFilterPriority(e.target.value)}
+            className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground"
+          >
+            <option value="">All priorities</option>
+            {PRIORITIES.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+          
+          <select
+            value={filterDueDate}
+            onChange={(e) => setFilterDueDate(e.target.value)}
+            className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground"
+          >
+            <option value="">All due dates</option>
+            <option value="overdue">Overdue</option>
+            <option value="this_week">This week</option>
+            <option value="this_month">This month</option>
+            <option value="no_due_date">No due date</option>
+          </select>
+          
+          <select
+            value={filterProject}
+            onChange={(e) => setFilterProject(e.target.value)}
+            className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground"
+          >
+            <option value="">All projects</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
         </div>
-        <select
-          value={filterAssignee}
-          onChange={(e) => setFilterAssignee(e.target.value)}
-          className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground"
-        >
-          <option value="">All assignees</option>
-          {users.map((u) => (
-            <option key={u.id} value={u.id}>
-              {u.name}
-            </option>
-          ))}
-        </select>
-        <select
-          value={filterPriority}
-          onChange={(e) => setFilterPriority(e.target.value)}
-          className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground"
-        >
-          <option value="">All priorities</option>
-          {PRIORITIES.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
-        <select
-          value={filterDueDate}
-          onChange={(e) => setFilterDueDate(e.target.value)}
-          className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground"
-        >
-          <option value="">All due dates</option>
-          <option value="overdue">Overdue</option>
-          <option value="this_week">This week</option>
-          <option value="this_month">This month</option>
-          <option value="no_due_date">No due date</option>
-        </select>
-        <select
-          value={filterProject}
-          onChange={(e) => setFilterProject(e.target.value)}
-          className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground"
-        >
-          <option value="">All projects</option>
-          {projects.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
       </div>
 
       {/* Kanban Board */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-x-auto p-6">
         {filteredTasks.length === 0 ? (
           <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
             No tasks match the current filters
           </div>
         ) : (
-          <div className="grid grid-cols-4 gap-4">
+          <div className="flex gap-4 min-w-max">
             {STATUSES.map((status) => {
               const columnTasks = filteredTasks.filter((t) => t.status === status);
               return (
-                <div key={status} className="bg-gray-50 rounded-xl p-4">
+                <div key={status} className="w-80 flex-shrink-0">
                   {/* Column Header */}
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-sm font-semibold text-foreground">{status}</h3>
+                  <div className="flex items-center justify-between mb-4 px-2">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-3 h-3 rounded-full ${
+                        status === "To Do" ? "bg-gray-400" :
+                        status === "Review" ? "bg-blue-500" :
+                        status === "Done" ? "bg-green-500" :
+                        "bg-orange-500"
+                      }`} />
+                      <h3 className="text-sm font-semibold text-foreground">{status}</h3>
+                    </div>
                     <span className="px-2 py-0.5 bg-gray-200 text-gray-700 text-xs font-medium rounded-full">
                       {columnTasks.length}
                     </span>
@@ -434,24 +413,46 @@ export function TasksPage() {
                     {columnTasks.map((task) => {
                       const assignee = users.find((u) => u.id === task.assigneeId);
                       const project = projectsById[task.projectId];
+                      const progress = getTaskProgress(task, subtasks);
                       return (
                         <div
                           key={task.id}
                           onClick={() => navigate(`/tasks/${task.id}`)}
                           className="bg-white rounded-lg border border-border p-4 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
                         >
-                          <div className="flex items-start justify-between mb-2">
-                            <h4 className="text-sm font-medium text-foreground flex-1 pr-2">
+                          <div className="flex items-start justify-between mb-3">
+                            <h4 className="text-sm font-medium text-foreground flex-1 pr-2 line-clamp-2">
                               {task.title}
                             </h4>
                             <PriBadge priority={task.priority} />
                           </div>
+                          
                           {project && (
-                            <p className="text-xs text-muted-foreground mb-2">{project.name}</p>
+                            <p className="text-xs text-muted-foreground mb-3 truncate">{project.name}</p>
                           )}
+                          
+                          {/* Progress bar for tasks with subtasks */}
+                          {progress > 0 && (
+                            <div className="mb-3">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-xs text-muted-foreground">Progress</span>
+                                <span className="text-xs font-medium text-foreground">{progress}%</span>
+                              </div>
+                              <div className="w-full bg-gray-200 rounded-full h-1.5">
+                                <div 
+                                  className="bg-blue-500 h-1.5 rounded-full transition-all"
+                                  style={{ width: `${progress}%` }}
+                                />
+                              </div>
+                            </div>
+                          )}
+                          
                           <div className="flex items-center justify-between mt-3">
                             {assignee && (
-                              <Av name={assignee.name} size="sm" />
+                              <div className="flex items-center gap-2">
+                                <Av name={assignee.name} size="sm" />
+                                <span className="text-xs text-muted-foreground">{assignee.name}</span>
+                              </div>
                             )}
                             {task.dueDate && (
                               <p className={`text-xs ${getDueDateColor(task.dueDate)}`}>
@@ -462,11 +463,15 @@ export function TasksPage() {
                         </div>
                       );
                     })}
-                    {columnTasks.length === 0 && (
-                      <div className="text-center py-8">
-                        <p className="text-xs text-muted-foreground">No tasks</p>
-                      </div>
-                    )}
+                    
+                    {/* Add Task Button */}
+                    <button
+                      onClick={() => openNew()}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed border-gray-300 rounded-lg text-sm text-muted-foreground hover:border-blue-400 hover:text-blue-500 transition-colors cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Add Task
+                    </button>
                   </div>
                 </div>
               );
@@ -475,6 +480,7 @@ export function TasksPage() {
         )}
       </div>
 
+      {/* New Task Dialog */}
       {showNew && (
         <Dlg title="New Task" onClose={() => setShowNew(false)}>
           <div className="space-y-4">
@@ -533,13 +539,12 @@ export function TasksPage() {
                 }
                 options={PRIORITIES.map((p) => ({ value: p, label: p }))}
               />
-              <FldInput
+              <DatePicker
                 label="Due Date"
-                type="datetime-local"
                 value={form.dueDate}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, dueDate: e.target.value }))
-                }
+                onChange={(value) => setForm((f) => ({ ...f, dueDate: value }))}
+                min={new Date().toISOString().slice(0, 16)}
+                max={form.projectId && projectsById[form.projectId]?.dueDate ? projectsById[form.projectId].dueDate.slice(0, 16) : undefined}
               />
             </div>
             <div>
@@ -593,6 +598,7 @@ export function TasksPage() {
         </Dlg>
       )}
 
+      {/* Edit Task Dialog */}
       {editTask && (
         <Dlg title="Edit Task" onClose={() => setEditTask(null)}>
           <div className="space-y-4">
@@ -626,13 +632,12 @@ export function TasksPage() {
                 }
                 options={PRIORITIES.map((p) => ({ value: p, label: p }))}
               />
-              <FldInput
+              <DatePicker
                 label="Due Date"
-                type="datetime-local"
                 value={form.dueDate}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, dueDate: e.target.value }))
-                }
+                onChange={(value) => setForm((f) => ({ ...f, dueDate: value }))}
+                min={new Date().toISOString().slice(0, 16)}
+                max={form.projectId && projectsById[form.projectId]?.dueDate ? projectsById[form.projectId].dueDate.slice(0, 16) : undefined}
               />
             </div>
           </div>
@@ -653,6 +658,7 @@ export function TasksPage() {
         </Dlg>
       )}
 
+      {/* Delete Confirmation Dialog */}
       {deleteConfirmTaskId !== null && (
         <Dlg title="Delete task" onClose={() => setDeleteConfirmTaskId(null)}>
           <div className="space-y-4">
