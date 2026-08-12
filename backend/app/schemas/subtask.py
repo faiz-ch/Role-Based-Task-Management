@@ -3,7 +3,7 @@ from typing import List, TYPE_CHECKING
 
 from pydantic import BaseModel
 
-from app.models.subtask import SubTaskStatus, SubTaskPriority
+from app.models.task import TaskStatus, TaskPriority
 
 if TYPE_CHECKING:
     from app.schemas.attachment import AttachmentOut
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 class SubtaskCreate(BaseModel):
     title: str
     description: str | None = None
-    priority: SubTaskPriority = SubTaskPriority.MEDIUM
+    priority: TaskPriority = TaskPriority.MEDIUM
     due_date: datetime | None = None
     assigned_to: int | None = None
 
@@ -20,17 +20,17 @@ class SubtaskCreate(BaseModel):
 class SubtaskUpdate(BaseModel):
     title: str | None = None
     description: str | None = None
-    priority: SubTaskPriority | None = None
+    priority: TaskPriority | None = None
     due_date: datetime | None = None
 
 
 class SubtaskStatusUpdate(BaseModel):
-    status: SubTaskStatus
+    status: TaskStatus
     due_date: datetime | None = None
     comment: str | None = None
 
 
-class SubtaskAssignRequest(BaseModel):
+class SubtaskAssigneeUpdate(BaseModel):
     assigned_to: int | None = None
 
 
@@ -38,8 +38,8 @@ class SubtaskOut(BaseModel):
     id: int
     title: str
     description: str | None
-    status: SubTaskStatus
-    priority: SubTaskPriority
+    status: TaskStatus
+    priority: TaskPriority
     due_date: datetime | None
     created_at: datetime
     created_by: int

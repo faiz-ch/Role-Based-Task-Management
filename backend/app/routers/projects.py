@@ -116,6 +116,16 @@ async def create_project(
     await db.commit()
     await db.refresh(project)
 
+    # Handle lead_id and team_user_ids if provided
+    if payload.lead_id is not None or payload.team_user_ids is not None:
+        await _validate_and_set_project_team(
+            db, 
+            project, 
+            payload.lead_id, 
+            payload.team_user_ids or [], 
+            current_user
+        )
+
     # Load relationships for response
     project_with_loads = await _get_project_with_loads(db, project.id)
     return _project_to_out(project_with_loads)
@@ -810,6 +820,95 @@ async def list_project_reports(
     reports = result.scalars().all()
 
     return [_report_to_out(r) for r in reports]
+
+
+async def _validate_and_set_project_team(
+    db: AsyncSession,
+    project: Project,
+    lead_id: int | None,
+    user_ids: list[int],
+    current_user: User
+):
+    """Validate and set project team (lead and members). Reuses validation logic from update_project_team."""
+    project_dept_ids = {d.id for d in project.departments}
+
+    # Get candidate pool: users in project's departments
+    from app.models.category import Category
+    candidates_result = await db.execute(
+        select(User).options(
+            selectinload(User.role)
+            .selectinload(Role.category)
+            .selectinload(Category.permissions),
+            selectinload(User.role).selectinload(Role.departments),
+            selectinload(User.role).selectinload(Role.permissions),
+        ).where(User.department_id.in_(project_dept_ids))
+    )
+    candidates = candidates_result.scalars().all()
+
+    # Filter through assignable categories
+    assignable_pool = get_assignable_user_pool(
+        list(candidates), project_dept_ids
+    )
+    assignable_user_ids = {u.id for u in assignable_pool}
+
+    # Validate all requested user_ids are in the filtered pool
+    for user_id in user_ids:
+        if user_id not in assignable_user_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"User {user_id} is not in your assignable pool for this project"
+            )
+
+    # If lead_id is provided, validate it's in assignable pool and has required permissions
+    if lead_id is not None:
+        if lead_id not in assignable_user_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="Lead is not in your assignable pool for this project"
+            )
+        # Load the lead user with their role and permissions to check eligibility
+        lead_user_result = await db.execute(
+            select(User).options(
+                selectinload(User.role).selectinload(Role.permissions)
+            ).where(User.id == lead_id)
+        )
+        lead_user = lead_user_result.scalar_one_or_none()
+        if lead_user is None or lead_user.role is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Lead user not found or has no role assigned"
+            )
+        # Check if lead has either task:manage or task:create permission
+        lead_permissions = {p.name for p in lead_user.role.permissions}
+        if "task:manage" not in lead_permissions and "task:create" not in lead_permissions:
+            raise HTTPException(
+                status_code=400,
+                detail="Lead must have either task:manage or task:create permission"
+            )
+
+    # Insert team members
+    for user_id in user_ids:
+        team_member = ProjectTeam(
+            project_id=project.id,
+            user_id=user_id,
+            added_by=current_user.id,
+        )
+        db.add(team_member)
+
+    # Set lead_id if provided
+    if lead_id is not None:
+        project.lead_id = lead_id
+
+    # Set assignment markers (reusing approval columns)
+    project.team_approved_by = current_user.id
+    project.team_approved_at = datetime.now(timezone.utc)
+
+    # Transition from Planning to Active if applicable
+    if project.status == ProjectStatus.PLANNING:
+        project.status = ProjectStatus.ACTIVE
+
+    await db.commit()
+    await db.refresh(project)
 
 
 async def _get_project_or_404(db: AsyncSession, project_id: int) -> Project:

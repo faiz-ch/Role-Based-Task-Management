@@ -110,10 +110,7 @@ export function ProjectsPage() {
     teamUserIds: [],
   });
 
-  const canCreate = permissions.includes("project:manage") && (
-    currentUser?.role?.allDepartments ||
-    (currentUser?.role?.departments && currentUser.role.departments.length > 0)
-  );
+  const canCreate = permissions.includes("project:manage");
 
   useEffect(() => {
     async function loadData() {

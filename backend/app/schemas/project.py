@@ -14,6 +14,8 @@ class ProjectCreate(BaseModel):
     due_date: datetime | None = None
     color: str | None = None
     department_ids: List[int] = Field(..., min_length=1, description="At least one department is required")
+    lead_id: int | None = None
+    team_user_ids: List[int] | None = None
 
 
 class ProjectOut(BaseModel):
