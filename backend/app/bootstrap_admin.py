@@ -35,6 +35,9 @@ async def bootstrap_admin(email: str):
             print(f"No user found with email {email}. Register this user first via /auth/register.")
             return
 
+        # Fetch all permissions first (needed for both category and role)
+        all_permissions = (await db.execute(select(Permission))).scalars().all()
+
         # Admin category: all permissions (no departments or assignable categories - those live on Role now)
         cat_result = await db.execute(
             select(Category).where(Category.name == "Admin")
@@ -42,13 +45,15 @@ async def bootstrap_admin(email: str):
         admin_category = cat_result.scalar_one_or_none()
 
         if admin_category is None:
-            all_permissions = (await db.execute(select(Permission))).scalars().all()
             admin_category = Category(
                 name="Admin",
                 permissions=list(all_permissions),
             )
             db.add(admin_category)
             await db.flush()  # get admin_category.id
+        else:
+            # Update existing category with all permissions
+            admin_category.permissions = list(all_permissions)
 
         role_result = await db.execute(select(Role).where(Role.name == "Admin"))
         admin_role = role_result.scalar_one_or_none()
@@ -57,7 +62,8 @@ async def bootstrap_admin(email: str):
             admin_role = Role(
                 name="Admin",
                 category_id=admin_category.id,
-                all_departments=True
+                all_departments=True,
+                permissions=list(all_permissions)
             )
             db.add(admin_role)
             await db.flush()  # get admin_role.id
@@ -66,6 +72,8 @@ async def bootstrap_admin(email: str):
                 admin_role.category_id = admin_category.id
             if not admin_role.all_departments:
                 admin_role.all_departments = True
+            # Always update direct permissions
+            admin_role.permissions = list(all_permissions)
 
         user.role_id = admin_role.id
         await db.commit()
