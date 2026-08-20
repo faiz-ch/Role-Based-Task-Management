@@ -16,6 +16,7 @@ function mapRole(r: any): Role {
     permissions: Array.isArray(r.permissions) ? r.permissions.map((p: any) => p.name) : [],
     allDepartments: r.all_departments || false,
     departments: Array.isArray(r.departments) ? r.departments.map((d: any) => ({ id: d.id, name: d.name })) : [],
+    allRoles: r.all_roles || false,
     assignableRoles: Array.isArray(r.assignable_roles) ? r.assignable_roles.map((ar: any) => ({ id: ar.id, name: ar.name })) : [],
     userCount: r.user_count,
   };
@@ -41,6 +42,7 @@ export async function createRole(input: {
   permissionIds?: number[];
   allDepartments?: boolean;
   departmentIds?: number[];
+  allRoles?: boolean;
   assignableRoleIds?: number[];
 }): Promise<Role> {
   const payload: any = { name: input.name };
@@ -52,6 +54,7 @@ export async function createRole(input: {
   if (input.permissionIds !== undefined) payload.permission_ids = input.permissionIds;
   if (input.allDepartments !== undefined) payload.all_departments = input.allDepartments;
   if (input.departmentIds !== undefined) payload.department_ids = input.departmentIds;
+  if (input.allRoles !== undefined) payload.all_roles = input.allRoles;
   if (input.assignableRoleIds !== undefined) payload.assignable_role_ids = input.assignableRoleIds;
   const data = await apiFetch("/roles", {
     method: "POST",
@@ -69,6 +72,7 @@ export async function updateRole(id: number, input: Partial<{
   permissionIds: number[];
   allDepartments: boolean;
   departmentIds: number[];
+  allRoles: boolean;
   assignableRoleIds: number[];
 }>): Promise<Role> {
   const payload: any = {};
@@ -80,6 +84,7 @@ export async function updateRole(id: number, input: Partial<{
   if (input.permissionIds !== undefined) payload.permission_ids = input.permissionIds;
   if (input.allDepartments !== undefined) payload.all_departments = input.allDepartments;
   if (input.departmentIds !== undefined) payload.department_ids = input.departmentIds;
+  if (input.allRoles !== undefined) payload.all_roles = input.allRoles;
   if (input.assignableRoleIds !== undefined) payload.assignable_role_ids = input.assignableRoleIds;
   const data = await apiFetch(`/roles/${id}`, {
     method: "PATCH",

@@ -22,6 +22,7 @@ import { FldSelect } from "../components/FldSelect";
 import { PriBadge } from "../components/PriBadge";
 import { DatePicker } from "../components/DatePicker";
 import { StatusBadge } from "../components/StatusBadge";
+import { getEffectiveDepartmentIds } from "../utils/roleAccess";
 
 const STATUSES: Status[] = ["To Do", "Review", "Done", "Reschedule"];
 const PRIORITIES: Priority[] = ["Low", "Medium", "High"];
@@ -115,9 +116,10 @@ export function TasksPage() {
   function canManageTask(task: Task): boolean {
     const project = projectsById[task.projectId];
     if (!project) return false;
+    const effectiveDepartmentIds = getEffectiveDepartmentIds(currentUser?.role, departments);
     const hasProjectManagePermission = permissions.includes("project:manage") && (
       currentUser?.role?.allDepartments ||
-      (project.departmentIds && currentUser?.role?.departments?.some(d => project.departmentIds.includes(d.id)))
+      (project.departmentIds && project.departmentIds.some(deptId => effectiveDepartmentIds.includes(deptId)))
     );
     return (
       hasProjectManagePermission ||

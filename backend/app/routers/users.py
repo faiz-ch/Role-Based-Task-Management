@@ -97,12 +97,14 @@ async def create_user(
                 status_code=403,
                 detail="You cannot assign roles because you have no role"
             )
-        assignable_role_ids = {r.id for r in current_user.role.assignable_roles}
-        if role.id not in assignable_role_ids:
-            raise HTTPException(
-                status_code=403,
-                detail="You are not allowed to assign this role"
-            )
+        # Skip assignable role check if user has all_roles=True
+        if not current_user.role.all_roles:
+            assignable_role_ids = {r.id for r in current_user.role.assignable_roles}
+            if role.id not in assignable_role_ids:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You are not allowed to assign this role"
+                )
 
     if final_department_id is not None:
         dept_result = await db.execute(select(Department).where(Department.id == final_department_id))
@@ -387,12 +389,14 @@ async def assign_role(
                 status_code=403,
                 detail="You cannot assign roles because you have no role"
             )
-        assignable_role_ids = {r.id for r in current_user.role.assignable_roles}
-        if role.id not in assignable_role_ids:
-            raise HTTPException(
-                status_code=403,
-                detail="You are not allowed to assign this role"
-            )
+        # Skip assignable role check if user has all_roles=True
+        if not current_user.role.all_roles:
+            assignable_role_ids = {r.id for r in current_user.role.assignable_roles}
+            if role.id not in assignable_role_ids:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You are not allowed to assign this role"
+                )
 
         user.role_id = role.id
 

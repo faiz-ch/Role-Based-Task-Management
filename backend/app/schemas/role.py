@@ -42,6 +42,7 @@ class RoleCreate(BaseModel):
     permission_ids: list[int] = []  # explicit permissions; if empty and category_id given, copy from category
     all_departments: bool = False
     department_ids: list[int] = []
+    all_roles: bool = False
     assignable_role_ids: list[int] = []
 
 class RoleUpdate(BaseModel):
@@ -53,6 +54,7 @@ class RoleUpdate(BaseModel):
     permission_ids: list[int] | None = None
     all_departments: bool | None = None
     department_ids: list[int] | None = None
+    all_roles: bool | None = None
     assignable_role_ids: list[int] | None = None
 
 class RoleOut(BaseModel):
@@ -69,6 +71,7 @@ class RoleOut(BaseModel):
     permissions: list[PermissionOut] = []
     all_departments: bool = False
     departments: list[DepartmentOut] = []
+    all_roles: bool = False
     assignable_roles: list[RoleBrief] = []
     user_count: int
     class Config:

@@ -17,6 +17,7 @@ import { PriBadge } from "../components/PriBadge";
 import { Dlg } from "../components/Dlg";
 import { Av } from "../components/Av";
 import { DatePicker } from "../components/DatePicker";
+import { getEffectiveDepartmentIds } from "../utils/roleAccess";
 
 function fmtDate(d: string) {
   if (!d) return "—";
@@ -177,9 +178,10 @@ export function TaskDetailPage() {
   const teamMembers = candidates.filter((u) => task?.teamUserIds.includes(u.id));
   const projectDepts = departments.filter((d) => project?.departmentIds.includes(d.id));
 
+  const effectiveDepartmentIds = getEffectiveDepartmentIds(currentUser?.role, departments);
   const canManage = permissions.includes("project:manage") && (
     currentUser?.role?.allDepartments ||
-    (project?.departmentIds && currentUser?.role?.departments?.some(d => project.departmentIds.includes(d.id)))
+    (project?.departmentIds && project.departmentIds.some(deptId => effectiveDepartmentIds.includes(deptId)))
   );
 
   function canManageTask(): boolean {

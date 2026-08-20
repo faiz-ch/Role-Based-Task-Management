@@ -11,6 +11,7 @@ import { FldSelect } from "../components/FldSelect";
 import { FldInput } from "../components/FldInput";
 import { Av } from "../components/Av";
 import { useAuth } from "../context/AuthContext";
+import { getEffectiveAssignableRoles } from "../utils/roleAccess";
 
 function getInitials(name: string) {
   if (!name) return "";
@@ -118,8 +119,7 @@ export function UserDetailPage() {
   }, [userId]);
 
   // Filter roles based on assignable roles (same logic as UsersPage)
-  const assignableRoleIds = (currentUser?.role?.assignableRoles ?? []).map((r) => r.id);
-  const assignableRoles = roles.filter((role) => assignableRoleIds.includes(role.id));
+  const assignableRoles = getEffectiveAssignableRoles(currentUser?.role, roles);
 
   // Filter out current user from manager options
   const managerOptions = allUsers.filter((u) => u.id !== Number(userId));

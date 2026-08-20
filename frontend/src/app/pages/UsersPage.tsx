@@ -10,6 +10,7 @@ import { FldInput } from "../components/FldInput";
 import { FldSelect } from "../components/FldSelect";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router";
+import { getEffectiveAssignableRoles } from "../utils/roleAccess";
 
 function fmtDate(d: string) {
   if (!d) return "—";
@@ -94,8 +95,7 @@ export function UsersPage() {
   }, []);
 
   // Filter roles based on assignable roles
-  const assignableRoleIds = (currentUser?.role?.assignableRoles ?? []).map((r) => r.id);
-  const assignableRoles = roles.filter((role) => assignableRoleIds.includes(role.id));
+  const assignableRoles = getEffectiveAssignableRoles(currentUser?.role, roles);
 
   // Filter users based on search and filters
   const filteredUsers = users.filter((user) => {
