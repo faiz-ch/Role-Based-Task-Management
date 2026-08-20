@@ -28,7 +28,6 @@ export function RolesPage() {
   
   // Step 2 form state
   const [newPermissionIds, setNewPermissionIds] = useState<number[]>([]);
-  const [newAllDepartments, setNewAllDepartments] = useState(false);
   const [newDepartmentIds, setNewDepartmentIds] = useState<number[]>([]);
   const [departmentSearchQuery, setDepartmentSearchQuery] = useState("");
   const [newAssignableRoleIds, setNewAssignableRoleIds] = useState<number[]>([]);
@@ -117,16 +116,20 @@ export function RolesPage() {
     try {
       setError(null);
       
+      const computedAllDepartments = newDepartmentIds.length === departments.length;
+      const computedAllRoles = newAssignableRoleIds.length === roles.length;
+      
       const newRole = await createRole({
         name: newRoleName.trim(),
         description: newRoleDescription.trim() || undefined,
         color: newRoleColor,
         isActive: true,
         isSystem: false,
-        allDepartments: newAllDepartments,
-        departmentIds: newAllDepartments ? [] : newDepartmentIds,
+        allDepartments: computedAllDepartments,
+        departmentIds: computedAllDepartments ? [] : newDepartmentIds,
+        allRoles: computedAllRoles,
+        assignableRoleIds: computedAllRoles ? [] : newAssignableRoleIds,
         permissionIds: newPermissionIds,
-        assignableRoleIds: newAssignableRoleIds,
       });
 
       setRoles((prev) => [...prev, newRole]);
@@ -154,7 +157,6 @@ export function RolesPage() {
     setNewRoleDescription("");
     setNewRoleColor("blue");
     setNewPermissionIds([]);
-    setNewAllDepartments(false);
     setNewDepartmentIds([]);
     setDepartmentSearchQuery("");
     setNewAssignableRoleIds([]);
@@ -185,6 +187,24 @@ export function RolesPage() {
         const moduleIds = currentModulePermissions.map((p) => p.id);
         return [...new Set([...prev, ...moduleIds])];
       });
+    }
+  }
+
+  function toggleAllDepartments() {
+    const allSelected = departments.every((d) => newDepartmentIds.includes(d.id));
+    if (allSelected) {
+      setNewDepartmentIds([]);
+    } else {
+      setNewDepartmentIds(departments.map((d) => d.id));
+    }
+  }
+
+  function toggleAllAssignableRoles() {
+    const allSelected = roles.every((r) => newAssignableRoleIds.includes(r.id));
+    if (allSelected) {
+      setNewAssignableRoleIds([]);
+    } else {
+      setNewAssignableRoleIds(roles.map((r) => r.id));
     }
   }
 
@@ -472,63 +492,65 @@ export function RolesPage() {
                 {/* Department Access Card - only show if permissions are selected */}
                 {newPermissionIds.length > 0 && (
                   <div className="bg-muted/30 rounded-xl p-6 border border-border">
-                    <h3 className="text-sm font-semibold text-foreground mb-4">Department Access</h3>
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-sm font-semibold text-foreground">Department Access</h3>
+                      <button
+                        onClick={toggleAllDepartments}
+                        className="text-xs text-blue-600 hover:text-blue-700 cursor-pointer"
+                      >
+                        {departments.length > 0 && departments.every((d) => newDepartmentIds.includes(d.id)) ? "Deselect All" : "Select All"}
+                      </button>
+                    </div>
 
-                    <label className="flex items-center gap-2 cursor-pointer mb-4">
-                      <input
-                        type="checkbox"
-                        checked={newAllDepartments}
-                        onChange={(e) => setNewAllDepartments(e.target.checked)}
-                        className="w-4 h-4 accent-blue-600"
-                      />
-                      <span className="text-sm text-foreground">All Departments</span>
-                    </label>
-
-                    {!newAllDepartments && (
-                      <>
-                        {departments.length > 6 && (
-                          <div className="mb-3">
-                            <input
-                              type="text"
-                              placeholder="Search departments..."
-                              value={departmentSearchQuery}
-                              onChange={(e) => setDepartmentSearchQuery(e.target.value)}
-                              className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            />
-                          </div>
-                        )}
-                        <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border border-border rounded-lg p-2">
-                          {departments
-                            .filter((dept) =>
-                              dept.name.toLowerCase().includes(departmentSearchQuery.toLowerCase())
-                            )
-                            .map((dept) => (
-                              <label key={dept.id} className="flex items-center gap-2 cursor-pointer">
-                                <input
-                                  type="checkbox"
-                                  checked={newDepartmentIds.includes(dept.id)}
-                                  onChange={(e) => {
-                                    if (e.target.checked) {
-                                      setNewDepartmentIds((prev) => [...prev, dept.id]);
-                                    } else {
-                                      setNewDepartmentIds((prev) => prev.filter((id) => id !== dept.id));
-                                    }
-                                  }}
-                                  className="w-4 h-4 accent-blue-600"
-                                />
-                                <span className="text-sm text-foreground">{dept.name}</span>
-                              </label>
-                            ))}
-                        </div>
-                      </>
+                    {departments.length > 6 && (
+                      <div className="mb-3">
+                        <input
+                          type="text"
+                          placeholder="Search departments..."
+                          value={departmentSearchQuery}
+                          onChange={(e) => setDepartmentSearchQuery(e.target.value)}
+                          className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
                     )}
+                    <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border border-border rounded-lg p-2">
+                      {departments
+                        .filter((dept) =>
+                          dept.name.toLowerCase().includes(departmentSearchQuery.toLowerCase())
+                        )
+                        .map((dept) => (
+                          <label key={dept.id} className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={newDepartmentIds.includes(dept.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setNewDepartmentIds((prev) => [...prev, dept.id]);
+                                } else {
+                                  setNewDepartmentIds((prev) => prev.filter((id) => id !== dept.id));
+                                }
+                              }}
+                              className="w-4 h-4 accent-blue-600"
+                            />
+                            <span className="text-sm text-foreground">{dept.name}</span>
+                          </label>
+                        ))}
+                    </div>
                   </div>
                 )}
 
                 {/* Assignable Roles Card - only show if user:manage permission is selected */}
                 {newPermissionIds.length > 0 && allPermissions.find(p => p.name === "user:manage") && newPermissionIds.includes(allPermissions.find(p => p.name === "user:manage")!.id) && (
                   <div className="bg-muted/30 rounded-xl p-6 border border-border">
-                    <h3 className="text-sm font-semibold text-foreground mb-4">Assignable Roles</h3>
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-sm font-semibold text-foreground">Assignable Roles</h3>
+                      <button
+                        onClick={toggleAllAssignableRoles}
+                        className="text-xs text-blue-600 hover:text-blue-700 cursor-pointer"
+                      >
+                        {roles.length > 0 && roles.every((r) => newAssignableRoleIds.includes(r.id)) ? "Deselect All" : "Select All"}
+                      </button>
+                    </div>
                     <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border border-border rounded-lg p-2">
                       {roles.map((role) => (
                         <label key={role.id} className="flex items-center gap-2 cursor-pointer">

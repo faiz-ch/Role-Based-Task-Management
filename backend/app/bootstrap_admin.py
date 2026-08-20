@@ -63,6 +63,7 @@ async def bootstrap_admin(email: str):
                 name="Admin",
                 category_id=admin_category.id,
                 all_departments=True,
+                all_roles=True,
                 permissions=list(all_permissions)
             )
             db.add(admin_role)
@@ -72,6 +73,8 @@ async def bootstrap_admin(email: str):
                 admin_role.category_id = admin_category.id
             if not admin_role.all_departments:
                 admin_role.all_departments = True
+            if not admin_role.all_roles:
+                admin_role.all_roles = True
             # Always update direct permissions
             admin_role.permissions = list(all_permissions)
 

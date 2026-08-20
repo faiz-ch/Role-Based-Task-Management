@@ -13,6 +13,7 @@ import { FldInput } from "../components/FldInput";
 import { FldSelect } from "../components/FldSelect";
 import { PriBadge } from "../components/PriBadge";
 import { DatePicker } from "../components/DatePicker";
+import { getEffectiveDepartmentIds } from "../utils/roleAccess";
 
 const PROJECT_STATUSES: ProjectStatus[] = ["Planning", "Active", "Done", "Archived"];
 const PRIORITIES: Priority[] = ["Low", "Medium", "High"];

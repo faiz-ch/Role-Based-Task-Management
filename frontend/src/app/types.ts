@@ -36,6 +36,7 @@ export interface Role {
   permissions: string[];
   allDepartments: boolean;
   departments: { id: number; name: string }[];
+  allRoles: boolean;
   assignableRoles: { id: number; name: string }[];
   userCount: number;
 }

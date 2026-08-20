@@ -75,7 +75,6 @@ export function RoleDetailPage() {
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [localPermissionIds, setLocalPermissionIds] = useState<number[]>([]);
   const [selectedModule, setSelectedModule] = useState<string>("");
-  const [localAllDepartments, setLocalAllDepartments] = useState(false);
   const [localDepartmentIds, setLocalDepartmentIds] = useState<number[]>([]);
   const [localAssignableRoleIds, setLocalAssignableRoleIds] = useState<number[]>([]);
 
@@ -84,6 +83,11 @@ export function RoleDetailPage() {
   const [editDescription, setEditDescription] = useState("");
   const [editColor, setEditColor] = useState("blue");
   const [editError, setEditError] = useState<string | null>(null);
+
+  // Filter out the current role from the list for assignable roles
+  const otherRoles = useMemo(() => {
+    return allRoles.filter((r) => r.id !== role?.id);
+  }, [allRoles, role]);
 
   useEffect(() => {
     async function loadData() {
@@ -121,11 +125,14 @@ export function RoleDetailPage() {
         const perm = allPermissions.find((ap) => ap.name === p);
         return perm?.id || 0;
       }).filter((id) => id !== 0));
-      setLocalAllDepartments(role.allDepartments);
-      setLocalDepartmentIds(role.departments.map((d) => d.id));
-      setLocalAssignableRoleIds(role.assignableRoles.map((r) => r.id));
+      setLocalDepartmentIds(
+        role.allDepartments ? allDepartments.map((d) => d.id) : role.departments.map((d) => d.id)
+      );
+      setLocalAssignableRoleIds(
+        role.allRoles ? otherRoles.map((r) => r.id) : role.assignableRoles.map((r) => r.id)
+      );
     }
-  }, [activeTab, role, allPermissions]);
+  }, [activeTab, role, allPermissions, allDepartments, otherRoles]);
 
   // Group permissions by module (part before colon)
   const permissionModules = useMemo(() => {
@@ -164,32 +171,36 @@ export function RoleDetailPage() {
     if (sortedOriginalPermissions.some((id, i) => id !== sortedLocalPermissions[i])) return true;
 
     // Check departments
-    if (role.allDepartments !== localAllDepartments) return true;
+    const computedAllDepartments = localDepartmentIds.length === allDepartments.length;
+    if (role.allDepartments !== computedAllDepartments) return true;
     const originalDepartmentIds = role.departments.map((d) => d.id).sort((a, b) => a - b);
     const sortedLocalDepartments = [...localDepartmentIds].sort((a, b) => a - b);
     if (originalDepartmentIds.length !== sortedLocalDepartments.length) return true;
     if (originalDepartmentIds.some((id, i) => id !== sortedLocalDepartments[i])) return true;
 
     // Check assignable roles
+    const computedAllRoles = localAssignableRoleIds.length === otherRoles.length;
+    if (role.allRoles !== computedAllRoles) return true;
     const originalAssignableIds = role.assignableRoles.map((r) => r.id).sort((a, b) => a - b);
     const sortedLocalAssignable = [...localAssignableRoleIds].sort((a, b) => a - b);
     if (originalAssignableIds.length !== sortedLocalAssignable.length) return true;
     if (originalAssignableIds.some((id, i) => id !== sortedLocalAssignable[i])) return true;
 
     return false;
-  }, [role, allPermissions, localPermissionIds, localAllDepartments, localDepartmentIds, localAssignableRoleIds]);
-
-  const otherRoles = allRoles.filter((r) => r.id !== role?.id);
+  }, [role, allPermissions, localPermissionIds, localDepartmentIds, allDepartments, localAssignableRoleIds, allRoles]);
 
   async function handleSavePermissions() {
     if (!role) return;
     try {
       setError(null);
+      const computedAllDepartments = localDepartmentIds.length === allDepartments.length;
+      const computedAllRoles = localAssignableRoleIds.length === otherRoles.length;
       await updateRole(role.id, {
         permissionIds: localPermissionIds,
-        allDepartments: localAllDepartments,
-        departmentIds: localAllDepartments ? [] : localDepartmentIds,
-        assignableRoleIds: localAssignableRoleIds,
+        allDepartments: computedAllDepartments,
+        departmentIds: computedAllDepartments ? [] : localDepartmentIds,
+        allRoles: computedAllRoles,
+        assignableRoleIds: computedAllRoles ? [] : localAssignableRoleIds,
       });
       const updatedRole = await getRole(role.id);
       setRole(updatedRole);
@@ -250,6 +261,24 @@ export function RoleDetailPage() {
         const moduleIds = currentModulePermissions.map((p) => p.id);
         return [...new Set([...prev, ...moduleIds])];
       });
+    }
+  }
+
+  function toggleAllDepartments() {
+    const allSelected = allDepartments.every((d) => localDepartmentIds.includes(d.id));
+    if (allSelected) {
+      setLocalDepartmentIds([]);
+    } else {
+      setLocalDepartmentIds(allDepartments.map((d) => d.id));
+    }
+  }
+
+  function toggleAllAssignableRoles() {
+    const allSelected = otherRoles.every((r) => localAssignableRoleIds.includes(r.id));
+    if (allSelected) {
+      setLocalAssignableRoleIds([]);
+    } else {
+      setLocalAssignableRoleIds(otherRoles.map((r) => r.id));
     }
   }
 
@@ -477,42 +506,37 @@ export function RoleDetailPage() {
             {/* Department Access Section - only show if permissions are selected */}
             {localPermissionIds.length > 0 && (
               <div className="pt-3 border-t border-border">
-                <h3 className="text-sm font-semibold text-foreground mb-3">Department Access</h3>
-                <div className="flex items-center gap-2 mb-3">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={localAllDepartments}
-                      onChange={(e) => setLocalAllDepartments(e.target.checked)}
-                      className="w-4 h-4 accent-blue-600"
-                    />
-                    <span className="text-sm font-medium text-foreground">All Departments</span>
-                  </label>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-foreground">Department Access</h3>
+                  <button
+                    onClick={toggleAllDepartments}
+                    className="text-xs text-blue-600 hover:text-blue-700 cursor-pointer"
+                  >
+                    {allDepartments.length > 0 && allDepartments.every((d) => localDepartmentIds.includes(d.id)) ? "Deselect All" : "Select All"}
+                  </button>
                 </div>
-                {!localAllDepartments && (
-                  allDepartments.length > 0 ? (
-                    <div className="border border-border rounded-lg p-3 grid grid-cols-2 lg:grid-cols-3 gap-2 max-h-96 overflow-y-auto">
-                      {allDepartments.map((dept) => (
-                        <label key={dept.id} className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={localDepartmentIds.includes(dept.id)}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setLocalDepartmentIds((prev) => [...prev, dept.id]);
-                              } else {
-                                setLocalDepartmentIds((prev) => prev.filter((id) => id !== dept.id));
-                              }
-                            }}
-                            className="w-4 h-4 accent-blue-600"
-                          />
-                          <span className="text-sm text-foreground">{dept.name}</span>
-                        </label>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">No departments exist yet</p>
-                  )
+                {allDepartments.length > 0 ? (
+                  <div className="border border-border rounded-lg p-3 grid grid-cols-2 lg:grid-cols-3 gap-2 max-h-96 overflow-y-auto">
+                    {allDepartments.map((dept) => (
+                      <label key={dept.id} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={localDepartmentIds.includes(dept.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setLocalDepartmentIds((prev) => [...prev, dept.id]);
+                            } else {
+                              setLocalDepartmentIds((prev) => prev.filter((id) => id !== dept.id));
+                            }
+                          }}
+                          className="w-4 h-4 accent-blue-600"
+                        />
+                        <span className="text-sm text-foreground">{dept.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No departments exist yet</p>
                 )}
               </div>
             )}
@@ -520,7 +544,15 @@ export function RoleDetailPage() {
             {/* Assignable Roles Section - only show if user:manage permission is selected */}
             {localPermissionIds.length > 0 && allPermissions.find(p => p.name === "user:manage") && localPermissionIds.includes(allPermissions.find(p => p.name === "user:manage")!.id) && (
               <div className="pt-3 border-t border-border">
-                <h3 className="text-sm font-semibold text-foreground mb-3">Assignable Roles</h3>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-foreground">Assignable Roles</h3>
+                  <button
+                    onClick={toggleAllAssignableRoles}
+                    className="text-xs text-blue-600 hover:text-blue-700 cursor-pointer"
+                  >
+                    {otherRoles.length > 0 && otherRoles.every((r) => localAssignableRoleIds.includes(r.id)) ? "Deselect All" : "Select All"}
+                  </button>
+                </div>
                 {otherRoles.length > 0 ? (
                   <div className="border border-border rounded-lg p-3 grid grid-cols-2 lg:grid-cols-3 gap-2 max-h-96 overflow-y-auto">
                     {otherRoles.map((r) => (

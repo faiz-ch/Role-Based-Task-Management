@@ -20,6 +20,7 @@ import { TimelineTab } from "./project-detail/TimelineTab";
 import { FilesTab } from "./project-detail/FilesTab";
 import { ActivityTab } from "./project-detail/ActivityTab";
 import { SettingsTab } from "./project-detail/SettingsTab";
+import { getEffectiveDepartmentIds } from "../utils/roleAccess";
 
 const PROJECT_STATUS_STYLE: Record<string, { badge: string; dot: string }> = {
   Planning: {
@@ -90,9 +91,10 @@ export function ProjectDetailPage() {
   const [rejectReason, setRejectReason] = useState("");
   const [reportContent, setReportContent] = useState("");
 
+  const effectiveDepartmentIds = getEffectiveDepartmentIds(currentUser?.role, departments);
   const canManage = permissions.includes("project:manage") && (
     currentUser?.role?.allDepartments ||
-    (project?.departmentIds && currentUser?.role?.departments?.some(d => project.departmentIds.includes(d.id)))
+    (project?.departmentIds && project.departmentIds.some(deptId => effectiveDepartmentIds.includes(deptId)))
   );
 
   useEffect(() => {

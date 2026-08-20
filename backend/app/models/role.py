@@ -42,6 +42,7 @@ class Role(Base):
     is_system = Column(Boolean, nullable=False, default=False, server_default=false())
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
     all_departments = Column(Boolean, nullable=False, default=False, server_default=false())
+    all_roles = Column(Boolean, nullable=False, default=False, server_default=false())
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

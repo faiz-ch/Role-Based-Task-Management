@@ -40,6 +40,7 @@ async def _role_to_out(db: AsyncSession, role: Role) -> RoleOut:
         permissions=list(role.permissions),
         all_departments=role.all_departments,
         departments=list(role.departments),
+        all_roles=role.all_roles,
         assignable_roles=list(role.assignable_roles),
         user_count=user_count,
     )
@@ -127,6 +128,7 @@ async def create_role(
         is_system=payload.is_system,
         category_id=payload.category_id,
         all_departments=payload.all_departments,
+        all_roles=payload.all_roles,
         created_by=current_user.id,
     )
     db.add(role)
@@ -153,8 +155,8 @@ async def create_role(
         for dept_id in payload.department_ids:
             await db.execute(role_department.insert().values(role_id=role.id, department_id=dept_id))
 
-    # Insert assignable role associations
-    if payload.assignable_role_ids:
+    # Insert assignable role associations (skip if all_roles is true)
+    if not role.all_roles and payload.assignable_role_ids:
         for assignable_role_id in payload.assignable_role_ids:
             await db.execute(role_assignable_role.insert().values(role_id=role.id, assignable_role_id=assignable_role_id))
 
@@ -236,14 +238,21 @@ async def update_role(
         elif payload.department_ids is not None:
             changed_fields.append("departments")
 
-    # Handle assignable roles update
-    if payload.assignable_role_ids is not None:
+    # Handle assignable roles/all_roles update
+    if payload.assignable_role_ids is not None or payload.all_roles is not None:
+        if payload.all_roles is not None:
+            role.all_roles = payload.all_roles
+            changed_fields.append("all_roles")
+
         # Clear existing assignable role associations
         await db.execute(role_assignable_role.delete().where(role_assignable_role.c.role_id == role_id))
-        # Add new assignable role associations
-        for assignable_role_id in payload.assignable_role_ids:
-            await db.execute(role_assignable_role.insert().values(role_id=role_id, assignable_role_id=assignable_role_id))
-        changed_fields.append("assignable_roles")
+
+        # Add new assignable role associations if not all_roles
+        if not role.all_roles and payload.assignable_role_ids:
+            for assignable_role_id in payload.assignable_role_ids:
+                await db.execute(role_assignable_role.insert().values(role_id=role_id, assignable_role_id=assignable_role_id))
+        elif payload.assignable_role_ids is not None:
+            changed_fields.append("assignable_roles")
 
     if not changed_fields:
         # No fields to update

@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router";
 import { ArrowLeft, AlertTriangle, Plus, Image, FileText, X, Trash2, Paperclip, MessageCircle } from "lucide-react";
-import { Subtask, UserType, Task, Project } from "../types";
+import { Subtask, UserType, Task, Project, Department } from "../types";
 import { getSubtask, updateSubtaskStatus } from "../api/subtasks";
 import { getTask } from "../api/tasks";
 import { getProject } from "../api/projects";
 import { getUsers } from "../api/users";
+import { getDepartments } from "../api/departments";
 import { getSubtaskReports, createSubtaskReport, Report } from "../api/reports";
 import { getSubtaskComments, Comment } from "../api/comments";
 import { uploadSubtaskAttachment, getSubtaskAttachments, getAttachmentDownloadUrl, fetchAttachmentBlobUrl, fetchAttachmentPreviewBlobUrl, deleteAttachment, Attachment } from "../api/attachments";
@@ -15,6 +16,7 @@ import { PriBadge } from "../components/PriBadge";
 import { Av } from "../components/Av";
 import { Dlg } from "../components/Dlg";
 import { DatePicker } from "../components/DatePicker";
+import { getEffectiveDepartmentIds } from "../utils/roleAccess";
 
 function fmtDate(d: string) {
   if (!d) return "—";
@@ -35,6 +37,7 @@ export function SubtaskDetailPage() {
   const [task, setTask] = useState<Task | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [users, setUsers] = useState<UserType[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
   const [comments, setComments] = useState<Comment[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -50,9 +53,10 @@ export function SubtaskDetailPage() {
   const [approveComment, setApproveComment] = useState("");
   const [rescheduleComment, setRescheduleComment] = useState("");
 
+  const effectiveDepartmentIds = getEffectiveDepartmentIds(currentUser?.role, departments);
   const canManage = permissions.includes("project:manage") && (
     currentUser?.role?.allDepartments ||
-    (project?.departmentIds && currentUser?.role?.departments?.some(d => project.departmentIds.includes(d.id)))
+    (project?.departmentIds && project.departmentIds.some(deptId => effectiveDepartmentIds.includes(deptId)))
   );
 
   function canManageSubtask(): boolean {
@@ -227,13 +231,15 @@ export function SubtaskDetailPage() {
       try {
         setLoading(true);
         setError(null);
-        const [subtaskResult, usersResult] = await Promise.allSettled([
+        const [subtaskResult, usersResult, departmentsResult] = await Promise.allSettled([
           getSubtask(Number(subtaskId)),
           getUsers(),
+          getDepartments(),
         ]);
 
         setSubtask(subtaskResult.status === "fulfilled" ? subtaskResult.value : null);
         setUsers(usersResult.status === "fulfilled" ? usersResult.value : []);
+        setDepartments(departmentsResult.status === "fulfilled" ? departmentsResult.value : []);
 
         if (subtaskResult.status === "fulfilled" && subtaskResult.value) {
           try {
