@@ -35,7 +35,8 @@ async def bootstrap_admin(email: str):
             print(f"No user found with email {email}. Register this user first via /auth/register.")
             return
 
-        # Fetch all permissions first (needed for both category and role)
+        # Always fetch all permissions up front so it's available regardless
+        # of whether the Admin category/role already exist.
         all_permissions = (await db.execute(select(Permission))).scalars().all()
 
         # Admin category: all permissions (no departments or assignable categories - those live on Role now)

@@ -13,12 +13,24 @@ class DepartmentBrief(BaseModel):
         from_attributes = True
 
 
+class RoleBriefMinimal(BaseModel):
+    id: int
+    name: str
+
+    class Config:
+        from_attributes = True
+
+
 class RoleBrief(BaseModel):
     id: int
     name: str
     color: str
     is_active: bool
     permissions: list[PermissionOut] = []
+    all_departments: bool = False
+    departments: list[DepartmentBrief] = []
+    all_roles: bool = False
+    assignable_roles: list[RoleBriefMinimal] = []
 
     class Config:
         from_attributes = True

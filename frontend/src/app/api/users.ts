@@ -17,6 +17,7 @@ function mapRole(r: any): Role {
     permissions: Array.isArray(r.permissions) ? r.permissions.map((p: any) => p.name) : [],
     allDepartments: r.all_departments || false,
     departments: Array.isArray(r.departments) ? r.departments.map((d: any) => ({ id: d.id, name: d.name })) : [],
+    allRoles: r.all_roles || false,
     assignableRoles: Array.isArray(r.assignable_roles) ? r.assignable_roles.map((ar: any) => ({ id: ar.id, name: ar.name })) : [],
     userCount: r.user_count || 0,
   };
