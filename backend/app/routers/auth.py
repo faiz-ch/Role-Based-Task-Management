@@ -38,7 +38,11 @@ async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db))
     await db.commit()
     # Re-fetch with eager load to avoid MissingGreenlet error
     result = await db.execute(
-        select(User).options(selectinload(User.role)).where(User.id == user.id)
+        select(User).options(
+            selectinload(User.role).selectinload(Role.permissions),
+            selectinload(User.role).selectinload(Role.departments),
+            selectinload(User.role).selectinload(Role.assignable_roles),
+        ).where(User.id == user.id)
     )
     return result.scalar_one()
 

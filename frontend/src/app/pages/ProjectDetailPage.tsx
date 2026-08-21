@@ -4,12 +4,9 @@ import { ArrowLeft, AlertTriangle } from "lucide-react";
 import { Project, UserType, Department, Task, Subtask, Milestone, Attachment } from "../types";
 import { getProject, updateProjectTeam, getProjectCandidates, updateProject, deleteProject, sendProjectForApproval, approveProject, rejectProject, closeProject, reopenProject, getProjectMilestones, createMilestone, updateMilestone, deleteMilestone, getProjectAttachments, uploadProjectAttachment, deleteAttachment, getAttachmentDownloadUrl, getProjectActivity } from "../api/projects";
 import { getTasks, createTask, updateTaskTeam } from "../api/tasks";
-import { getUsers } from "../api/users";
 import { getDepartments } from "../api/departments";
 import { getProjectReports, createProjectReport, Report } from "../api/reports";
-import { getSubtasks } from "../api/subtasks";
 import { useAuth } from "../context/AuthContext";
-import { Dlg } from "../components/Dlg";
 import { StatusBadge } from "../components/StatusBadge";
 import { PriBadge } from "../components/PriBadge";
 import { OverviewTab } from "./project-detail/OverviewTab";
@@ -76,7 +73,6 @@ export function ProjectDetailPage() {
   const [project, setProject] = useState<Project | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [subtasks, setSubtasks] = useState<Subtask[]>([]);
-  const [users, setUsers] = useState<UserType[]>([]);
   const [candidates, setCandidates] = useState<UserType[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
@@ -86,10 +82,6 @@ export function ProjectDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("overview");
-
-  const [showRejectDialog, setShowRejectDialog] = useState(false);
-  const [rejectReason, setRejectReason] = useState("");
-  const [reportContent, setReportContent] = useState("");
 
   const effectiveDepartmentIds = getEffectiveDepartmentIds(currentUser?.role, departments);
   const canManage = permissions.includes("project:manage") && (
@@ -107,11 +99,9 @@ export function ProjectDetailPage() {
       try {
         setLoading(true);
         setError(null);
-        const [projectResult, tasksResult, subtasksResult, usersResult, departmentsResult, candidatesResult, reportsResult, milestonesResult, attachmentsResult, activityResult] = await Promise.allSettled([
+        const [projectResult, tasksResult, departmentsResult, candidatesResult, reportsResult, milestonesResult, attachmentsResult, activityResult] = await Promise.allSettled([
           getProject(Number(projectId)),
           getTasks(),
-          getSubtasks(),
-          getUsers(),
           getDepartments(),
           getProjectCandidates(Number(projectId)),
           getProjectReports(Number(projectId)),
@@ -122,18 +112,12 @@ export function ProjectDetailPage() {
 
         setProject(projectResult.status === "fulfilled" ? projectResult.value : null);
         setTasks(tasksResult.status === "fulfilled" ? tasksResult.value : []);
-        setSubtasks(subtasksResult.status === "fulfilled" ? subtasksResult.value : []);
-        setUsers(usersResult.status === "fulfilled" ? usersResult.value : []);
         setDepartments(departmentsResult.status === "fulfilled" ? departmentsResult.value : []);
         setCandidates(candidatesResult.status === "fulfilled" ? candidatesResult.value : []);
         setReports(reportsResult.status === "fulfilled" ? reportsResult.value : []);
         setMilestones(milestonesResult.status === "fulfilled" ? milestonesResult.value : []);
         setAttachments(attachmentsResult.status === "fulfilled" ? attachmentsResult.value : []);
         setActivity(activityResult.status === "fulfilled" ? activityResult.value : []);
-
-        if (reportsResult.status === "fulfilled" && reportsResult.value.length > 0) {
-          setReportContent(reportsResult.value[0].content);
-        }
 
         if (projectResult.status === "rejected") {
           setError((projectResult.reason as any)?.message || "Failed to load project.");
@@ -149,7 +133,6 @@ export function ProjectDetailPage() {
   const projectDepts = departments.filter((d) => project?.departmentIds.includes(d.id));
   const teamMembers = candidates.filter((u) => project?.teamUserIds.includes(u.id));
   const lead = teamMembers.find((u) => u.id === project?.leadId);
-  const existingReport = reports.length > 0 ? reports[0] : null;
 
   async function handleEditProject(projectData: any) {
     if (!project) return;
@@ -199,17 +182,18 @@ export function ProjectDetailPage() {
     }
   }
 
-  async function handleCreateReport() {
-    if (!project || !reportContent.trim()) return;
+  async function handleCreateReport(content: string) {
+    if (!project || !content.trim()) return;
     try {
       setError(null);
-      const newReport = await createProjectReport(project.id, { content: reportContent.trim() });
+      const newReport = await createProjectReport(project.id, { content: content.trim() });
       setReports([newReport]);
       // Refetch project to pick up possibly-updated status
       const updatedProject = await getProject(project.id);
       setProject(updatedProject);
     } catch (err: any) {
       setError(err?.message || "Failed to save report");
+      throw err;
     }
   }
 
@@ -221,6 +205,7 @@ export function ProjectDetailPage() {
       setProject(updated);
     } catch (err: any) {
       setError(err?.message || "Failed to send for approval");
+      throw err;
     }
   }
 
@@ -232,19 +217,19 @@ export function ProjectDetailPage() {
       setProject(updated);
     } catch (err: any) {
       setError(err?.message || "Failed to approve project");
+      throw err;
     }
   }
 
-  async function handleReject() {
-    if (!project || !rejectReason.trim()) return;
+  async function handleReject(reason: string) {
+    if (!project || !reason.trim()) return;
     try {
       setError(null);
-      const updated = await rejectProject(project.id, rejectReason.trim());
+      const updated = await rejectProject(project.id, reason.trim());
       setProject(updated);
-      setShowRejectDialog(false);
-      setRejectReason("");
     } catch (err: any) {
       setError(err?.message || "Failed to reject project");
+      throw err;
     }
   }
 
@@ -384,7 +369,7 @@ export function ProjectDetailPage() {
     { id: "timeline", label: "Timeline" },
     { id: "files", label: "Files" },
     { id: "activity", label: "Activity" },
-    { id: "settings", label: "Settings" },
+    ...(permissions.includes("project:manage") ? [{ id: "settings", label: "Settings" }] : []),
   ];
 
   return (
@@ -436,7 +421,13 @@ export function ProjectDetailPage() {
           project={project} 
           tasks={projectTasks} 
           subtasks={subtasks} 
-          activity={activity} 
+          activity={activity}
+          reports={reports}
+          canManage={canManage}
+          onCreateReport={handleCreateReport}
+          onSendForApproval={handleSendForApproval}
+          onApprove={handleApprove}
+          onReject={handleReject}
         />
       )}
 
@@ -486,7 +477,7 @@ export function ProjectDetailPage() {
         <ActivityTab activity={activity} />
       )}
 
-      {activeTab === "settings" && (
+      {activeTab === "settings" && permissions.includes("project:manage") && (
         <SettingsTab 
           project={project} 
           departments={departments}
@@ -496,112 +487,6 @@ export function ProjectDetailPage() {
           onCloseProject={handleCloseProject}
           onReopenProject={handleReopenProject}
         />
-      )}
-
-      {/* Report Section - Kept from original */}
-      <div className="bg-white rounded-xl border border-border p-6 mt-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-semibold text-foreground">Project Report</h2>
-        </div>
-        {currentUser?.id === project?.leadId ? (
-          <>
-            <textarea
-              value={reportContent}
-              onChange={(e) => setReportContent(e.target.value)}
-              placeholder="Enter project report..."
-              className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400 min-h-[120px] resize-y mb-4"
-              rows={5}
-            />
-            <div className="flex justify-end">
-              <button
-                onClick={handleCreateReport}
-                disabled={!reportContent.trim()}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Submit Report
-              </button>
-            </div>
-          </>
-        ) : (
-          <div className="text-sm text-muted-foreground">
-            {existingReport ? (
-              <p className="whitespace-pre-wrap">{existingReport.content}</p>
-            ) : (
-              <p className="text-center py-8">No report submitted yet</p>
-            )}
-          </div>
-        )}
-        
-        {/* Send for Approval button */}
-        {(currentUser?.id === project?.leadId || canManage) &&
-         project?.status === "Active" &&
-         projectTasks.length > 0 &&
-         projectTasks.every(t => t.status === "Done") && (
-          <div className="mt-4 pt-4 border-t border-border">
-            <button
-              onClick={handleSendForApproval}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
-            >
-              Send for Approval
-            </button>
-          </div>
-        )}
-        
-        {/* Approve and Reject buttons for Admin category users */}
-        {project?.status === "Pending Approval" &&
-         currentUser?.role?.category?.name === "Admin" && (
-          <div className="mt-4 pt-4 border-t border-border flex gap-2">
-            <button
-              onClick={handleApprove}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg hover:bg-emerald-700 transition-colors cursor-pointer"
-            >
-              Approve
-            </button>
-            <button
-              onClick={() => setShowRejectDialog(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-lg hover:bg-red-700 transition-colors cursor-pointer"
-            >
-              Reject
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Reject Dialog */}
-      {showRejectDialog && (
-        <Dlg title="Reject project" onClose={() => setShowRejectDialog(false)}>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Reason for rejection</label>
-              <textarea
-                value={rejectReason}
-                onChange={(e) => setRejectReason(e.target.value)}
-                placeholder="Enter the reason for rejecting this project..."
-                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400 min-h-[100px] resize-y"
-                rows={4}
-                autoFocus
-              />
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                onClick={() => {
-                  setShowRejectDialog(false);
-                  setRejectReason("");
-                }}
-                className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleReject}
-                disabled={!rejectReason.trim()}
-                className="px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Reject
-              </button>
-            </div>
-          </div>
-        </Dlg>
       )}
     </div>
   );

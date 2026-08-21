@@ -1,14 +1,23 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { AlertTriangle, CheckCircle, Clock, Activity } from "lucide-react";
 import { Project, Task, Subtask } from "../../types";
 import { StatusBadge } from "../../components/StatusBadge";
 import { PriBadge } from "../../components/PriBadge";
+import { Report } from "../../api/reports";
+import { Dlg } from "../../components/Dlg";
+import { useAuth } from "../../context/AuthContext";
 
 interface OverviewTabProps {
   project: Project;
   tasks: Task[];
   subtasks: Subtask[];
   activity: any[];
+  reports: Report[];
+  canManage?: boolean;
+  onCreateReport?: (content: string) => Promise<void>;
+  onSendForApproval?: () => Promise<void>;
+  onApprove?: () => Promise<void>;
+  onReject?: (reason: string) => Promise<void>;
 }
 
 function fmtDate(d: string) {
@@ -50,7 +59,29 @@ function isDueToday(dueDate: string) {
   );
 }
 
-export function OverviewTab({ project, tasks, subtasks, activity }: OverviewTabProps) {
+export function OverviewTab({
+  project,
+  tasks,
+  subtasks,
+  activity,
+  reports,
+  canManage,
+  onCreateReport,
+  onSendForApproval,
+  onApprove,
+  onReject,
+}: OverviewTabProps) {
+  const { currentUser } = useAuth();
+  const [reportContent, setReportContent] = useState("");
+  const [showRejectDialog, setShowRejectDialog] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+
+  useEffect(() => {
+    if (reports && reports.length > 0) {
+      setReportContent(reports[0].content);
+    }
+  }, [reports]);
+
   const projectTasks = tasks.filter((t) => t.projectId === project.id);
   const completedTasks = projectTasks.filter((t) => t.status === "Done").length;
   const taskProgress = projectTasks.length > 0 
@@ -63,6 +94,45 @@ export function OverviewTab({ project, tasks, subtasks, activity }: OverviewTabP
   const subtasksDueToday = projectSubtasks.filter((s) => isDueToday(s.dueDate));
 
   const recentActivity = activity.slice(0, 10);
+  const existingReport = reports && reports.length > 0 ? reports[0] : null;
+
+  async function handleCreateReport() {
+    if (!onCreateReport || !reportContent.trim()) return;
+    try {
+      await onCreateReport(reportContent.trim());
+    } catch (err) {
+      console.error("Failed to save report:", err);
+    }
+  }
+
+  async function handleSendForApproval() {
+    if (!onSendForApproval) return;
+    try {
+      await onSendForApproval();
+    } catch (err) {
+      console.error("Failed to send for approval:", err);
+    }
+  }
+
+  async function handleApprove() {
+    if (!onApprove) return;
+    try {
+      await onApprove();
+    } catch (err) {
+      console.error("Failed to approve project:", err);
+    }
+  }
+
+  async function handleReject() {
+    if (!onReject || !rejectReason.trim()) return;
+    try {
+      await onReject(rejectReason.trim());
+      setShowRejectDialog(false);
+      setRejectReason("");
+    } catch (err) {
+      console.error("Failed to reject project:", err);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -247,6 +317,112 @@ export function OverviewTab({ project, tasks, subtasks, activity }: OverviewTabP
           </div>
         )}
       </div>
+
+      {/* Project Report Section */}
+      <div className="bg-white rounded-xl border border-border p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold text-foreground">Project Report</h2>
+        </div>
+        {currentUser?.id === project?.leadId ? (
+          <>
+            <textarea
+              value={reportContent}
+              onChange={(e) => setReportContent(e.target.value)}
+              placeholder="Enter project report..."
+              className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400 min-h-[120px] resize-y mb-4"
+              rows={5}
+            />
+            <div className="flex justify-end">
+              <button
+                onClick={handleCreateReport}
+                disabled={!reportContent.trim()}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Submit Report
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="text-sm text-muted-foreground">
+            {existingReport ? (
+              <p className="whitespace-pre-wrap">{existingReport.content}</p>
+            ) : (
+              <p className="text-center py-8">No report submitted yet</p>
+            )}
+          </div>
+        )}
+        
+        {/* Send for Approval button */}
+        {(currentUser?.id === project?.leadId || canManage) &&
+         project?.status === "Active" &&
+         projectTasks.length > 0 &&
+         projectTasks.every(t => t.status === "Done") && (
+          <div className="mt-4 pt-4 border-t border-border">
+            <button
+              onClick={handleSendForApproval}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+            >
+              Send for Approval
+            </button>
+          </div>
+        )}
+        
+        {/* Approve and Reject buttons for Admin category users */}
+        {project?.status === "Pending Approval" &&
+         currentUser?.role?.category?.name === "Admin" && (
+          <div className="mt-4 pt-4 border-t border-border flex gap-2">
+            <button
+              onClick={handleApprove}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg hover:bg-emerald-700 transition-colors cursor-pointer"
+            >
+              Approve
+            </button>
+            <button
+              onClick={() => setShowRejectDialog(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-lg hover:bg-red-700 transition-colors cursor-pointer"
+            >
+              Reject
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Reject Dialog */}
+      {showRejectDialog && (
+        <Dlg title="Reject project" onClose={() => setShowRejectDialog(false)}>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Reason for rejection</label>
+              <textarea
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Enter the reason for rejecting this project..."
+                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400 min-h-[100px] resize-y"
+                rows={4}
+                autoFocus
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => {
+                  setShowRejectDialog(false);
+                  setRejectReason("");
+                }}
+                className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReject}
+                disabled={!rejectReason.trim()}
+                className="px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Reject
+              </button>
+            </div>
+          </div>
+        </Dlg>
+      )}
     </div>
   );
 }

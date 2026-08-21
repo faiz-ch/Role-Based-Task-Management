@@ -25,7 +25,7 @@ from app.models.attachment import Attachment
 from app.models.role import Role
 from app.models.report import Report
 from app.models.activity_log import ActivityLog
-from app.schemas.project import ProjectCreate, ProjectOut, ProjectTeamUpdate, ProjectUpdate, ProjectRejectRequest
+from app.schemas.project import ProjectCreate, ProjectOut, ProjectTeamUpdate, ProjectUpdate, ProjectRejectRequest, LeadOut, TeamMemberOut
 from app.schemas.user import UserOut
 from app.schemas.report import ReportCreate, ReportOut
 from app.schemas.activity_log import ActivityLogOut
@@ -141,7 +141,8 @@ async def list_projects(
     # Load all projects with relationships
     query = select(Project).options(
         selectinload(Project.departments),
-        selectinload(Project.team_members),
+        selectinload(Project.team_members).selectinload(ProjectTeam.user),
+        selectinload(Project.lead),
     )
     result = await db.execute(query)
     projects = result.scalars().all()
@@ -265,6 +266,7 @@ async def get_project_candidates(
             .selectinload(Category.permissions),
             selectinload(User.role).selectinload(Role.departments),
             selectinload(User.role).selectinload(Role.permissions),
+            selectinload(User.role).selectinload(Role.assignable_roles),
         ).where(User.department_id.in_(project_dept_ids))
     )
     candidates = candidates_result.scalars().all()
@@ -662,6 +664,7 @@ async def update_project_team(
             .selectinload(Category.permissions),
             selectinload(User.role).selectinload(Role.departments),
             selectinload(User.role).selectinload(Role.permissions),
+            selectinload(User.role).selectinload(Role.assignable_roles),
         ).where(User.department_id.in_(project_dept_ids))
     )
     candidates = candidates_result.scalars().all()
@@ -830,7 +833,12 @@ async def _validate_and_set_project_team(
     current_user: User
 ):
     """Validate and set project team (lead and members). Reuses validation logic from update_project_team."""
-    project_dept_ids = {d.id for d in project.departments}
+    # Query department_ids directly from the join table to avoid lazy-loading the relationship
+    from app.models.project import project_department
+    dept_ids_result = await db.execute(
+        select(project_department.c.department_id).where(project_department.c.project_id == project.id)
+    )
+    project_dept_ids = {row[0] for row in dept_ids_result}
 
     # Get candidate pool: users in project's departments
     from app.models.category import Category
@@ -841,6 +849,7 @@ async def _validate_and_set_project_team(
             .selectinload(Category.permissions),
             selectinload(User.role).selectinload(Role.departments),
             selectinload(User.role).selectinload(Role.permissions),
+            selectinload(User.role).selectinload(Role.assignable_roles),
         ).where(User.department_id.in_(project_dept_ids))
     )
     candidates = candidates_result.scalars().all()
@@ -924,7 +933,8 @@ async def _get_project_or_404_with_loads(db: AsyncSession, project_id: int) -> P
     result = await db.execute(
         select(Project).options(
             selectinload(Project.departments),
-            selectinload(Project.team_members),
+            selectinload(Project.team_members).selectinload(ProjectTeam.user),
+            selectinload(Project.lead),
         ).where(Project.id == project_id)
     )
     project = result.scalar_one_or_none()
@@ -951,12 +961,17 @@ def _project_to_out(project: Project) -> ProjectOut:
         color=project.color,
         created_by=project.created_by,
         lead_id=project.lead_id,
+        lead=LeadOut.model_validate(project.lead) if project.lead else None,
         team_approved_by=project.team_approved_by,
         team_approved_at=project.team_approved_at,
         created_at=project.created_at,
         completed_at=project.completed_at,
         department_ids=[d.id for d in project.departments],
         team_user_ids=[tm.user_id for tm in project.team_members],
+        team_members=[
+            TeamMemberOut(id=tm.user.id, name=tm.user.name)
+            for tm in project.team_members if tm.user
+        ],
         closing_notes=project.closing_notes,
         reopened_reason=project.reopened_reason,
         reopened_by=project.reopened_by,

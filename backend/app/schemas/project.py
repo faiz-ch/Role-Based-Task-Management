@@ -6,6 +6,22 @@ from pydantic import BaseModel, Field
 from app.models.project import ProjectPriority
 
 
+class LeadOut(BaseModel):
+    id: int
+    name: str
+
+    class Config:
+        from_attributes = True
+
+
+class TeamMemberOut(BaseModel):
+    id: int
+    name: str
+
+    class Config:
+        from_attributes = True
+
+
 class ProjectCreate(BaseModel):
     name: str
     description: str | None = None
@@ -29,12 +45,14 @@ class ProjectOut(BaseModel):
     color: str | None
     created_by: int
     lead_id: int | None
+    lead: LeadOut | None = None
     team_approved_by: int | None
     team_approved_at: datetime | None
     created_at: datetime
     completed_at: datetime | None
     department_ids: List[int]
     team_user_ids: List[int]
+    team_members: List[TeamMemberOut] = []
     closing_notes: str | None
     reopened_reason: str | None
     reopened_by: int | None

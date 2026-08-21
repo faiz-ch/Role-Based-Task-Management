@@ -118,17 +118,20 @@ export function ProjectsPage() {
       try {
         setLoading(true);
         setError(null);
-        const [projectsResult, usersResult, departmentsResult, tasksResult] = await Promise.allSettled([
+        const [projectsResult, departmentsResult, tasksResult] = await Promise.allSettled([
           getProjects(),
-          getUsers(),
           getDepartments(),
           getTasks(),
         ]);
 
         setProjects(projectsResult.status === "fulfilled" ? projectsResult.value : []);
-        setUsers(usersResult.status === "fulfilled" ? usersResult.value : []);
         setDepartments(departmentsResult.status === "fulfilled" ? departmentsResult.value : []);
         setTasks(tasksResult.status === "fulfilled" ? tasksResult.value : []);
+
+        if (canCreate) {
+          const usersResult = await getUsers();
+          setUsers(usersResult);
+        }
 
         if (projectsResult.status === "rejected") {
           setError((projectsResult.reason as any)?.message || "Failed to load projects.");
@@ -325,7 +328,7 @@ export function ProjectsPage() {
           const hasTasks = totalTasks > 0;
           const progressPercent = hasTasks ? Math.round((doneTasks / totalTasks) * 100) : 0;
           
-          const teamMembers = users.filter((u) => project.teamUserIds.includes(u.id));
+          const teamMembers = project.teamMembers || [];
           const visibleAvatars = teamMembers.slice(0, 3);
           const overflowCount = Math.max(0, teamMembers.length - 3);
           

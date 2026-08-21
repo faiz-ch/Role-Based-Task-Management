@@ -29,8 +29,6 @@ export function TeamTab({ project, teamMembers, candidates, onUpdateTeam }: Team
   const [selectedLeadId, setSelectedLeadId] = useState<string>("");
   const [projectTeamSearch, setProjectTeamSearch] = useState("");
 
-  const lead = teamMembers.find((u) => u.id === project.leadId);
-
   async function handleManageTeam() {
     try {
       await onUpdateTeam(
@@ -77,10 +75,10 @@ export function TeamTab({ project, teamMembers, candidates, onUpdateTeam }: Team
         <div className="mb-6">
           <span className="text-xs text-muted-foreground uppercase tracking-wider">Lead</span>
           <div className="flex items-center gap-2 mt-2">
-            {lead ? (
+            {project.lead ? (
               <>
-                <Av name={lead.name} size="sm" />
-                <span className="text-sm text-foreground">{lead.name}</span>
+                <Av name={project.lead.name} size="sm" />
+                <span className="text-sm text-foreground">{project.lead.name}</span>
               </>
             ) : (
               <span className="text-sm text-muted-foreground">Unassigned</span>

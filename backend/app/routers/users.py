@@ -710,8 +710,16 @@ async def upload_avatar(
 
     user.avatar_path = stored_path
     await db.commit()
-    await db.refresh(user, ["role", "department", "manager"])
-    return user
+    # Re-fetch with eager load to avoid MissingGreenlet error
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.role).selectinload(Role.permissions),
+        selectinload(User.role).selectinload(Role.departments),
+        selectinload(User.role).selectinload(Role.assignable_roles),
+        selectinload(User.department))
+        .where(User.id == user.id)
+    )
+    return result.scalar_one()
 
 @router.delete("/{user_id}/avatar", response_model=UserOut)
 async def delete_avatar(
@@ -732,8 +740,16 @@ async def delete_avatar(
     user.avatar_path = None
 
     await db.commit()
-    await db.refresh(user, ["role", "department", "manager"])
-    return user
+    # Re-fetch with eager load to avoid MissingGreenlet error
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.role).selectinload(Role.permissions),
+        selectinload(User.role).selectinload(Role.departments),
+        selectinload(User.role).selectinload(Role.assignable_roles),
+        selectinload(User.department))
+        .where(User.id == user.id)
+    )
+    return result.scalar_one()
 
 @router.get("/{user_id}/avatar")
 async def get_avatar(

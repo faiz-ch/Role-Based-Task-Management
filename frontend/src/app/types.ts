@@ -61,12 +61,14 @@ export interface Project {
   priority: Priority;
   createdBy: number;
   leadId: number | null;
+  lead: { id: number; name: string } | null;
   teamApprovedBy: number | null;
   teamApprovedAt: string | null;
   dueDate: string;
   createdAt: string;
   departmentIds: number[];
   teamUserIds: number[];
+  teamMembers: { id: number; name: string }[];
   startDate: string | null;
   color: string | null;
   completedAt: string | null;

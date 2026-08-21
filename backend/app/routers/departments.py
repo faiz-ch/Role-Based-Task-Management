@@ -24,8 +24,13 @@ router = APIRouter(prefix="/departments", tags=["departments"])
 
 async def _department_to_out(db: AsyncSession, department: Department) -> DepartmentOut:
     """Convert Department model to DepartmentOut schema with counts and loaded relationships."""
-    # Load head relationship
-    await db.refresh(department, ["head", "projects"])
+    # Load head and projects relationships with proper eager loading
+    result = await db.execute(
+        select(Department)
+        .options(selectinload(Department.head), selectinload(Department.projects))
+        .where(Department.id == department.id)
+    )
+    department = result.scalar_one()
 
     # Count members (users where User.department_id == department.id)
     member_count_result = await db.execute(
