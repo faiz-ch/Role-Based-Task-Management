@@ -1,0 +1,60 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: taskmanager
+      POSTGRES_PASSWORD: taskmanager
+      POSTGRES_DB: taskmanager
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taskmanager -d taskmanager"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Handles docx/doc -> PDF conversion for task attachments (see
+  # backend/app/services/conversion.py). Official Gotenberg image,
+  # nothing to build - it's used as-is.
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    restart: unless-stopped
+    expose:
+      - "3000"
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      gotenberg:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+asyncpg://taskmanager:taskmanager@db:5432/taskmanager
+      SECRET_KEY: ${SECRET_KEY}
+      GOTENBERG_URL: http://gotenberg:3000
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      EMAIL_ADDRESS: ${EMAIL_ADDRESS}
+      EMAIL_PASSWORD: ${EMAIL_PASSWORD}
+      EMAIL_REPLY_TO: ${EMAIL_REPLY_TO}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
+      ENV: production
+    expose:
+      - "8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: /api
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+
+volumes:
+  pgdata:
