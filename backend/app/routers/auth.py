@@ -12,6 +12,7 @@ from app.core.security import (
 )
 from app.database import get_db
 from app.models.user import User
+from app.models.role import Role
 from app.schemas.auth import RegisterRequest, LoginRequest, RefreshRequest, TokenResponse
 from app.schemas.user import UserOut
 from app.services.activity_log import log_activity
