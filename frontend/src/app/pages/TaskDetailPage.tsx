@@ -107,22 +107,30 @@ export function TaskDetailPage() {
       try {
         setLoading(true);
         setError(null);
-        const [taskResult, usersResult, departmentsResult, candidatesResult, subtasksResult, attachmentsResult, reportsResult, commentsResult] = await Promise.allSettled([
-          getTask(Number(taskId)),
+        
+        // Fetch task first to get projectId
+        const loadedTask = await getTask(Number(taskId));
+        setTask(loadedTask);
+
+        // Fetch candidates using the task's projectId, or empty array if no projectId
+        let candidates: UserType[] = [];
+        if (loadedTask?.projectId) {
+          candidates = await getProjectCandidates(loadedTask.projectId);
+        }
+        setCandidates(candidates);
+
+        // Fetch the rest in parallel
+        const [usersResult, departmentsResult, subtasksResult, attachmentsResult, reportsResult, commentsResult] = await Promise.allSettled([
           getUsers(),
           getDepartments(),
-          getProjectCandidates(Number(taskId)),
           getSubtasks(),
           getAttachments(Number(taskId)),
           getTaskReports(Number(taskId)),
           getTaskComments(Number(taskId)),
         ]);
 
-        const loadedTask = taskResult.status === "fulfilled" ? taskResult.value : null;
-        setTask(loadedTask);
         setUsers(usersResult.status === "fulfilled" ? usersResult.value : []);
         setDepartments(departmentsResult.status === "fulfilled" ? departmentsResult.value : []);
-        setCandidates(candidatesResult.status === "fulfilled" ? candidatesResult.value : []);
         setSubtasks(subtasksResult.status === "fulfilled" ? subtasksResult.value : []);
         setAttachments(attachmentsResult.status === "fulfilled" ? attachmentsResult.value : []);
         setReports(reportsResult.status === "fulfilled" ? reportsResult.value : []);
@@ -132,10 +140,8 @@ export function TaskDetailPage() {
           const projectResult = await getProject(loadedTask.projectId);
           setProject(projectResult);
         }
-
-        if (taskResult.status === "rejected") {
-          setError((taskResult.reason as any)?.message || "Failed to load task.");
-        }
+      } catch (err) {
+        setError((err as any)?.message || "Failed to load task.");
       } finally {
         setLoading(false);
       }
