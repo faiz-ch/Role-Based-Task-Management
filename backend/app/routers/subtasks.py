@@ -177,10 +177,12 @@ async def list_subtasks_for_task(
     """
     task = await _get_task_or_404_with_loads(db, task_id)
 
-    # Load all subtasks for this task with assignees
+    # Load all subtasks for this task with assignees and task relationships for permission checks
     result = await db.execute(
         select(SubTask).options(
             selectinload(SubTask.assignees),
+            selectinload(SubTask.task).selectinload(Task.project).selectinload(Project.departments),
+            selectinload(SubTask.task).selectinload(Task.team_members),
         ).where(SubTask.task_id == task_id)
     )
     subtasks = result.scalars().all()

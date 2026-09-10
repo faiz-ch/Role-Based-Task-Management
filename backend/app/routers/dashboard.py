@@ -116,6 +116,7 @@ async def get_manager_dashboard(db: AsyncSession, current_user: User) -> dict:
     task_query = select(Task).options(
         selectinload(Task.project).selectinload(Project.departments),
         selectinload(Task.creator),
+        selectinload(Task.team_members),
     )
     
     result = await db.execute(task_query)
@@ -130,6 +131,8 @@ async def get_manager_dashboard(db: AsyncSession, current_user: User) -> dict:
     # Get all subtasks within scope (via parent task visibility)
     subtask_query = select(SubTask).options(
         selectinload(SubTask.task).selectinload(Task.project).selectinload(Project.departments),
+        selectinload(SubTask.task).selectinload(Task.team_members),
+        selectinload(SubTask.assignees),
     )
     
     result = await db.execute(subtask_query)
