@@ -5,7 +5,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.deps import get_current_user, has_permission, get_scoped_department_ids, can_view_task, can_view_subtask
+from app.core.deps import get_current_user, has_permission, get_scoped_department_ids, can_view_task, can_view_subtask, is_project_lead
 from app.database import get_db
 from app.models.task import Task, TaskStatus
 from app.models.project import Project
@@ -21,7 +21,13 @@ async def get_summary(
     current_user: User = Depends(get_current_user),
 ):
     is_manager = has_permission(current_user, "project:manage")
-    
+
+    if not is_manager:
+        led_result = await db.execute(
+            select(func.count()).select_from(Project).where(Project.lead_id == current_user.id)
+        )
+        is_manager = (led_result.scalar() or 0) > 0
+
     if is_manager:
         return await get_manager_dashboard(db, current_user)
     else:
@@ -144,13 +150,13 @@ async def get_manager_dashboard(db: AsyncSession, current_user: User) -> dict:
             scoped_subtasks.append(subtask)
     
     # Get projects within scope
-    project_query = select(Project).options(selectinload(Project.departments))
+    project_query = select(Project).options(selectinload(Project.departments), selectinload(Project.lead))
     result = await db.execute(project_query)
     all_projects = result.scalars().all()
-    
+
     scoped_projects = []
     for project in all_projects:
-        if is_global or any(d.id in scoped_dept_ids for d in project.departments):
+        if is_global or is_project_lead(current_user, project) or any(d.id in scoped_dept_ids for d in project.departments):
             scoped_projects.append(project)
     
     # Group tasks by status
