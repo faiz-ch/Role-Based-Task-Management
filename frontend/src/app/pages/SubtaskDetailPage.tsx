@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router";
 import { ArrowLeft, AlertTriangle, Plus, Image, FileText, X, Trash2, Paperclip, MessageCircle } from "lucide-react";
 import { Subtask, UserType, Task, Project, Department } from "../types";
-import { getSubtask, updateSubtaskStatus } from "../api/subtasks";
+import { getSubtask, updateSubtaskStatus, deleteSubtask } from "../api/subtasks";
 import { getTask } from "../api/tasks";
 import { getProject } from "../api/projects";
 import { getUsers } from "../api/users";
@@ -49,6 +49,7 @@ export function SubtaskDetailPage() {
   const [previewFile, setPreviewFile] = useState<{ id: number; url: string; filename: string; isImage: boolean } | null>(null);
   const [showReschedule, setShowReschedule] = useState(false);
   const [showApproveComment, setShowApproveComment] = useState(true);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [rescheduleDate, setRescheduleDate] = useState("");
   const [approveComment, setApproveComment] = useState("");
   const [rescheduleComment, setRescheduleComment] = useState("");
@@ -166,6 +167,17 @@ export function SubtaskDetailPage() {
       setShowNewReport(false);
     } catch (err: any) {
       setError(err?.message || "Failed to create report");
+    }
+  }
+
+  async function handleDeleteSubtask() {
+    if (!subtask) return;
+    try {
+      setError(null);
+      await deleteSubtask(subtask.id);
+      navigate(task ? `/tasks/${task.id}` : "/tasks");
+    } catch (err: any) {
+      setError(err?.message || "Failed to delete subtask");
     }
   }
 
@@ -343,24 +355,35 @@ export function SubtaskDetailPage() {
                 <StatusBadge status={subtask.status} />
                 <PriBadge priority={subtask.priority} />
               </div>
-              {isSubtaskAssignee() && (subtask.status === "To Do" || subtask.status === "Reschedule") ? (
-                canSubmitForReview() ? (
+              <div className="flex items-center gap-2">
+                {canApproveSubtask() && (
                   <button
-                    onClick={handleSubmitForReview}
-                    className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+                    onClick={() => setShowDeleteConfirm(true)}
+                    className="flex items-center gap-2 px-3 py-2 text-sm border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition-colors cursor-pointer"
                   >
-                    Submit for review
+                    <Trash2 className="w-4 h-4" />
+                    Delete
                   </button>
-                ) : (
-                  <button
-                    disabled
-                    className="px-4 py-2 bg-gray-300 text-gray-500 text-sm font-semibold rounded-lg cursor-not-allowed"
-                    title={getSubmitDisableReason()}
-                  >
-                    Submit for review
-                  </button>
-                )
-              ) : null}
+                )}
+                {isSubtaskAssignee() && (subtask.status === "To Do" || subtask.status === "Reschedule") ? (
+                  canSubmitForReview() ? (
+                    <button
+                      onClick={handleSubmitForReview}
+                      className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+                    >
+                      Submit for review
+                    </button>
+                  ) : (
+                    <button
+                      disabled
+                      className="px-4 py-2 bg-gray-300 text-gray-500 text-sm font-semibold rounded-lg cursor-not-allowed"
+                      title={getSubmitDisableReason()}
+                    >
+                      Submit for review
+                    </button>
+                  )
+                ) : null}
+              </div>
             </div>
             {/* Approve/Reschedule actions */}
             {canApproveSubtask() && subtask.status === "Review" && (
@@ -682,6 +705,30 @@ export function SubtaskDetailPage() {
             >
               Submit Report
             </button>
+          </div>
+        </Dlg>
+      )}
+
+      {showDeleteConfirm && (
+        <Dlg title="Delete subtask" onClose={() => setShowDeleteConfirm(false)}>
+          <div className="space-y-4">
+            <p className="text-sm text-foreground">
+              Are you sure you want to delete this subtask? This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteSubtask}
+                className="px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors cursor-pointer"
+              >
+                Delete
+              </button>
+            </div>
           </div>
         </Dlg>
       )}

@@ -649,7 +649,7 @@ export function TaskDetailPage() {
                 </thead>
                 <tbody>
                   {subtasks.map((subtask) => (
-                    <tr key={subtask.id} className="border-b border-border hover:bg-muted transition-colors">
+                    <tr key={subtask.id} className="border-b border-border hover:bg-muted transition-colors cursor-pointer" onClick={() => navigate(`/subtasks/${subtask.id}`)}>
                       <td className="px-6 py-4">
                         <p className="text-sm font-medium text-foreground">{subtask.title}</p>
                       </td>
