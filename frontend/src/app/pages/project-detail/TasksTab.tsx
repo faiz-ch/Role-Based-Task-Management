@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useNavigate } from "react-router";
 import { Plus } from "lucide-react";
 import { Project, Task, UserType } from "../../types";
 import { StatusBadge } from "../../components/StatusBadge";
@@ -26,6 +27,7 @@ interface TaskForm {
 }
 
 export function TasksTab({ project, tasks, teamMembers, onCreateTask }: TasksTabProps) {
+  const navigate = useNavigate();
   const [showNewTask, setShowNewTask] = useState(false);
   const [taskTeamSearch, setTaskTeamSearch] = useState("");
   const [taskForm, setTaskForm] = useState<TaskForm>({
@@ -113,6 +115,7 @@ export function TasksTab({ project, tasks, teamMembers, onCreateTask }: TasksTab
               <div
                 key={task.id}
                 className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-muted/40 transition-colors cursor-pointer"
+                onClick={() => navigate(`/tasks/${task.id}`)}
               >
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-foreground truncate">{task.title}</p>

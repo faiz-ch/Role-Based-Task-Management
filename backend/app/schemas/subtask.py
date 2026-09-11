@@ -15,6 +15,7 @@ class SubtaskCreate(BaseModel):
     priority: TaskPriority = TaskPriority.MEDIUM
     due_date: datetime | None = None
     assigned_to: int | None = None
+    assignee_ids: List[int] = []
 
 
 class SubtaskUpdate(BaseModel):
