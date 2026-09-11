@@ -42,7 +42,6 @@ class SubtaskOut(BaseModel):
     due_date: datetime | None
     created_at: datetime
     created_by: int
-    assigned_to: int | None
     task_id: int
     assignee_ids: List[int] = []
     attachments: list[AttachmentOut] = []
