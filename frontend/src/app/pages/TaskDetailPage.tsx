@@ -4,7 +4,7 @@ import { ArrowLeft, AlertTriangle, Plus, Image, FileText, X, Trash2, Users, Edit
 import { Task, UserType, Department, Project, Subtask } from "../types";
 import { getTask, updateTaskStatus, updateTaskTeam, updateTask, deleteTask } from "../api/tasks";
 import { getSubtasks, createSubtask, updateSubtask, updateSubtaskStatus, updateSubtaskAssignees, deleteSubtask } from "../api/subtasks";
-import { getUsers } from "../api/users";
+
 import { getDepartments } from "../api/departments";
 import { getProject, getProjectCandidates } from "../api/projects";
 import { uploadAttachment, getAttachments, getAttachmentDownloadUrl, fetchAttachmentBlobUrl, fetchAttachmentPreviewBlobUrl, deleteAttachment, Attachment } from "../api/attachments";
@@ -45,7 +45,6 @@ export function TaskDetailPage() {
   const [task, setTask] = useState<Task | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [subtasks, setSubtasks] = useState<Subtask[]>([]);
-  const [users, setUsers] = useState<UserType[]>([]);
   const [candidates, setCandidates] = useState<UserType[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -71,6 +70,7 @@ export function TaskDetailPage() {
   const [comments, setComments] = useState<Comment[]>([]);
   const [subtaskReports, setSubtaskReports] = useState<Record<number, Report[]>>({});
   const [subtaskAttachments, setSubtaskAttachments] = useState<Record<number, Attachment[]>>({});
+  const [subtaskAttachmentsList, setSubtaskAttachmentsList] = useState<{ subtaskId: number; subtaskTitle: string; attachments: Attachment[] }[]>([]);
   const [editTaskForm, setEditTaskForm] = useState({
     title: "",
     description: "",
@@ -120,8 +120,7 @@ export function TaskDetailPage() {
         setCandidates(candidates);
 
         // Fetch the rest in parallel
-        const [usersResult, departmentsResult, subtasksResult, attachmentsResult, reportsResult, commentsResult] = await Promise.allSettled([
-          getUsers(),
+        const [departmentsResult, subtasksResult, attachmentsResult, reportsResult, commentsResult] = await Promise.allSettled([
           getDepartments(),
           getSubtasks(Number(taskId)),
           getAttachments(Number(taskId)),
@@ -129,7 +128,6 @@ export function TaskDetailPage() {
           getTaskComments(Number(taskId)),
         ]);
 
-        setUsers(usersResult.status === "fulfilled" ? usersResult.value : []);
         setDepartments(departmentsResult.status === "fulfilled" ? departmentsResult.value : []);
         setSubtasks(subtasksResult.status === "fulfilled" ? subtasksResult.value : []);
         setAttachments(attachmentsResult.status === "fulfilled" ? attachmentsResult.value : []);
@@ -153,9 +151,10 @@ export function TaskDetailPage() {
   useEffect(() => {
     async function loadSubtaskData() {
       if (subtasks.length === 0) return;
-      
+
       const reportsData: Record<number, Report[]> = {};
       const attachmentsData: Record<number, Attachment[]> = {};
+      const attachmentsList: { subtaskId: number; subtaskTitle: string; attachments: Attachment[] }[] = [];
 
       await Promise.all(
         subtasks.map(async (subtask) => {
@@ -165,7 +164,16 @@ export function TaskDetailPage() {
               getSubtaskAttachments(subtask.id),
             ]);
             reportsData[subtask.id] = reportsResult.status === "fulfilled" ? reportsResult.value : [];
-            attachmentsData[subtask.id] = attachmentsResult.status === "fulfilled" ? attachmentsResult.value : [];
+            const subtaskAttachments = attachmentsResult.status === "fulfilled" ? attachmentsResult.value : [];
+            attachmentsData[subtask.id] = subtaskAttachments;
+
+            if (subtaskAttachments.length > 0) {
+              attachmentsList.push({
+                subtaskId: subtask.id,
+                subtaskTitle: subtask.title,
+                attachments: subtaskAttachments,
+              });
+            }
           } catch (err) {
             console.error(`Failed to load data for subtask ${subtask.id}:`, err);
             reportsData[subtask.id] = [];
@@ -176,11 +184,12 @@ export function TaskDetailPage() {
 
       setSubtaskReports(reportsData);
       setSubtaskAttachments(attachmentsData);
+      setSubtaskAttachmentsList(attachmentsList);
     }
     loadSubtaskData();
   }, [subtasks]);
 
-  const taskLead = users.find((u) => u.id === task?.leadId);
+  const taskLead = candidates.find((u) => u.id === task?.leadId);
   const teamMembers = candidates.filter((u) => task?.teamUserIds.includes(u.id));
   const projectDepts = departments.filter((d) => project?.departmentIds.includes(d.id));
 
@@ -523,7 +532,7 @@ export function TaskDetailPage() {
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
-            Files ({attachments.length})
+            Files ({attachments.length + subtaskAttachmentsList.reduce((sum, item) => sum + item.attachments.length, 0)})
           </button>
           <button
             onClick={() => setActiveTab("activity")}
@@ -656,7 +665,7 @@ export function TaskDetailPage() {
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2">
                           {subtask.assigneeIds.map((assigneeId) => {
-                            const assignee = users.find((u) => u.id === assigneeId);
+                            const assignee = candidates.find((u) => u.id === assigneeId);
                             return assignee ? (
                               <Av key={assignee.id} name={assignee.name} size="sm" />
                             ) : null;
@@ -781,50 +790,99 @@ export function TaskDetailPage() {
                 </button>
               </div>
             </div>
-            {attachments.length === 0 ? (
+            {attachments.length === 0 && subtaskAttachmentsList.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-8">No files uploaded yet</p>
             ) : (
-              <div className="grid grid-cols-2 gap-4">
-                {attachments.map((attachment) => (
-                  <div
-                    key={attachment.id}
-                    className="flex items-center justify-between p-4 border border-border rounded-lg hover:bg-muted transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      {attachment.filename.toLowerCase().endsWith(('.png', '.jpg', '.jpeg', '.gif', '.webp')) ? (
-                        <Image className="w-8 h-8 text-muted-foreground" />
-                      ) : (
-                        <FileText className="w-8 h-8 text-muted-foreground" />
-                      )}
-                      <div>
-                        <p className="text-sm font-medium text-foreground">{attachment.filename}</p>
-                        <p className="text-xs text-muted-foreground">{formatFileSize(attachment.file_size)}</p>
+              <>
+                {attachments.length > 0 && (
+                  <div className="grid grid-cols-2 gap-4 mb-6">
+                    {attachments.map((attachment) => (
+                      <div
+                        key={attachment.id}
+                        className="flex items-center justify-between p-4 border border-border rounded-lg hover:bg-muted transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          {[".png", ".jpg", ".jpeg", ".gif", ".webp"].some((ext) => attachment.filename.toLowerCase().endsWith(ext)) ? (
+                            <Image className="w-8 h-8 text-muted-foreground" />
+                          ) : (
+                            <FileText className="w-8 h-8 text-muted-foreground" />
+                          )}
+                          <div>
+                            <p className="text-sm font-medium text-foreground">{attachment.filename}</p>
+                            <p className="text-xs text-muted-foreground">{formatFileSize(attachment.sizeBytes)}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={async () => {
+                              try {
+                                const url = await getAttachmentDownloadUrl(attachment.id);
+                                window.open(url, '_blank');
+                              } catch (err) {
+                                setError("Failed to download file");
+                              }
+                            }}
+                            className="p-2 text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            <Download className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteAttachment(attachment.id)}
+                            className="p-2 text-red-600 hover:text-red-700 transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
+                    ))}
+                  </div>
+                )}
+
+                {subtaskAttachmentsList.map((subtaskGroup) => (
+                  <div key={subtaskGroup.subtaskId} className="mb-6">
+                    <div className="flex items-center gap-2 mb-3">
+                      <h3 className="text-sm font-semibold text-foreground">Subtask: {subtaskGroup.subtaskTitle}</h3>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={async () => {
-                          try {
-                            const url = await getAttachmentDownloadUrl(attachment.id);
-                            window.open(url, '_blank');
-                          } catch (err) {
-                            setError("Failed to download file");
-                          }
-                        }}
-                        className="p-2 text-muted-foreground hover:text-foreground transition-colors"
-                      >
-                        <Download className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteAttachment(attachment.id)}
-                        className="p-2 text-red-600 hover:text-red-700 transition-colors"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                    <div className="grid grid-cols-2 gap-4">
+                      {subtaskGroup.attachments.map((attachment) => (
+                        <div
+                          key={attachment.id}
+                          className="flex items-center justify-between p-4 border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer"
+                          onClick={() => navigate(`/subtasks/${subtaskGroup.subtaskId}`)}
+                        >
+                          <div className="flex items-center gap-3">
+                            {[".png", ".jpg", ".jpeg", ".gif", ".webp"].some((ext) => attachment.filename.toLowerCase().endsWith(ext)) ? (
+                              <Image className="w-8 h-8 text-muted-foreground" />
+                            ) : (
+                              <FileText className="w-8 h-8 text-muted-foreground" />
+                            )}
+                            <div>
+                              <p className="text-sm font-medium text-foreground">{attachment.filename}</p>
+                              <p className="text-xs text-muted-foreground">{formatFileSize(attachment.sizeBytes)}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                try {
+                                  const url = await getAttachmentDownloadUrl(attachment.id);
+                                  window.open(url, '_blank');
+                                } catch (err) {
+                                  setError("Failed to download file");
+                                }
+                              }}
+                              className="p-2 text-muted-foreground hover:text-foreground transition-colors"
+                            >
+                              <Download className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 ))}
-              </div>
+              </>
             )}
           </div>
         )}
@@ -837,7 +895,7 @@ export function TaskDetailPage() {
             ) : (
               <div className="space-y-4">
                 {comments.map((comment) => {
-                  const author = users.find((u) => u.id === comment.authorId);
+                  const author = candidates.find((u) => u.id === comment.authorId);
                   return (
                     <div key={comment.id} className="flex gap-3 pb-4 border-b border-border last:border-0">
                       <Av name={author?.name || "Unknown"} />

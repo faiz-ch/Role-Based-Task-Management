@@ -38,7 +38,7 @@ export async function getAttachments(taskId: number): Promise<Attachment[]> {
 }
 
 export function getAttachmentDownloadUrl(attachmentId: number): string {
-  return `${API_BASE_URL}/tasks/attachments/${attachmentId}/download`;
+  return `${API_BASE_URL}/attachments/${attachmentId}/download`;
 }
 
 export async function fetchAttachmentBlobUrl(attachmentId: number): Promise<string> {
@@ -51,11 +51,11 @@ export async function fetchAttachmentBlobUrl(attachmentId: number): Promise<stri
 }
 
 export async function deleteAttachment(attachmentId: number): Promise<void> {
-  await apiFetch(`/tasks/attachments/${attachmentId}`, { method: "DELETE" });
+  await apiFetch(`/attachments/${attachmentId}`, { method: "DELETE" });
 }
 
 export function getAttachmentPreviewUrl(attachmentId: number): string {
-  return `${API_BASE_URL}/tasks/attachments/${attachmentId}/preview`;
+  return `${API_BASE_URL}/attachments/${attachmentId}/preview`;
 }
 
 export async function fetchAttachmentPreviewBlobUrl(attachmentId: number): Promise<string> {

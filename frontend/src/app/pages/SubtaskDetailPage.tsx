@@ -5,7 +5,7 @@ import { Subtask, UserType, Task, Project, Department } from "../types";
 import { getSubtask, updateSubtaskStatus, deleteSubtask } from "../api/subtasks";
 import { getTask } from "../api/tasks";
 import { getProject } from "../api/projects";
-import { getUsers } from "../api/users";
+import { getProjectCandidates } from "../api/projects";
 import { getDepartments } from "../api/departments";
 import { getSubtaskReports, createSubtaskReport, Report } from "../api/reports";
 import { getSubtaskComments, Comment } from "../api/comments";
@@ -243,14 +243,12 @@ export function SubtaskDetailPage() {
       try {
         setLoading(true);
         setError(null);
-        const [subtaskResult, usersResult, departmentsResult] = await Promise.allSettled([
+        const [subtaskResult, departmentsResult] = await Promise.allSettled([
           getSubtask(Number(subtaskId)),
-          getUsers(),
           getDepartments(),
         ]);
 
         setSubtask(subtaskResult.status === "fulfilled" ? subtaskResult.value : null);
-        setUsers(usersResult.status === "fulfilled" ? usersResult.value : []);
         setDepartments(departmentsResult.status === "fulfilled" ? departmentsResult.value : []);
 
         if (subtaskResult.status === "fulfilled" && subtaskResult.value) {
@@ -261,6 +259,15 @@ export function SubtaskDetailPage() {
             try {
               const projectData = await getProject(taskData.projectId);
               setProject(projectData);
+
+              // Load project candidates for name resolution
+              try {
+                const candidatesData = await getProjectCandidates(taskData.projectId);
+                setUsers(candidatesData);
+              } catch (err) {
+                console.error("Failed to load project candidates:", err);
+                setUsers([]);
+              }
             } catch (err) {
               console.error("Failed to load project:", err);
             }
