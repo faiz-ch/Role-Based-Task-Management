@@ -1,12 +1,10 @@
 from datetime import datetime
-from typing import List, TYPE_CHECKING
+from typing import List
 
 from pydantic import BaseModel
 
 from app.models.task import TaskStatus, TaskPriority
-
-if TYPE_CHECKING:
-    from app.schemas.attachment import AttachmentOut
+from app.schemas.attachment import AttachmentOut
 
 
 class SubtaskCreate(BaseModel):
@@ -47,7 +45,7 @@ class SubtaskOut(BaseModel):
     assigned_to: int | None
     task_id: int
     assignee_ids: List[int] = []
-    attachments: list["AttachmentOut"] = []
+    attachments: list[AttachmentOut] = []
 
     class Config:
         from_attributes = True
