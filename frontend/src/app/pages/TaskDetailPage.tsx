@@ -123,7 +123,7 @@ export function TaskDetailPage() {
         const [usersResult, departmentsResult, subtasksResult, attachmentsResult, reportsResult, commentsResult] = await Promise.allSettled([
           getUsers(),
           getDepartments(),
-          getSubtasks(),
+          getSubtasks(Number(taskId)),
           getAttachments(Number(taskId)),
           getTaskReports(Number(taskId)),
           getTaskComments(Number(taskId)),
