@@ -64,62 +64,6 @@ def _can_view_attachment(current_user: User, attachment: Attachment) -> bool:
         return False
 
 
-# Task attachment endpoints
-@router.post("/tasks/{task_id}/attachments", response_model=AttachmentOut, status_code=201)
-async def upload_task_attachment(
-    task_id: int,
-    file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Saves the uploaded file to disk under uploads/tasks/{task_id}/, and creates a
-    matching Attachment row pointing to it. Gated by the same task-visibility
-    scope as everything else — if you can't see a task, you can't attach
-    files to it either.
-    """
-    task = await _get_task_or_404_with_loads(db, task_id)
-
-    if not can_view_task(current_user, task):
-        raise HTTPException(status_code=404, detail="Task not found")
-
-    task_dir = os.path.join(UPLOAD_DIR, "tasks", str(task_id))
-    os.makedirs(task_dir, exist_ok=True)
-
-    stored_name = f"{uuid.uuid4().hex}_{file.filename}"
-    stored_path = os.path.join(task_dir, stored_name)
-
-    content = await file.read()
-    with open(stored_path, "wb") as f:
-        f.write(content)
-
-    attachment = Attachment(
-        task_id=task_id,
-        filename=file.filename,
-        stored_path=stored_path,
-        content_type=file.content_type or "application/octet-stream",
-        size_bytes=len(content),
-        uploaded_by=current_user.id,
-    )
-    db.add(attachment)
-    await db.commit()
-    await db.refresh(attachment)
-    return attachment
-
-
-@router.get("/tasks/{task_id}/attachments", response_model=list[AttachmentOut])
-async def list_task_attachments(
-    task_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    task = await _get_task_or_404_with_loads(db, task_id)
-    if not can_view_task(current_user, task):
-        raise HTTPException(status_code=404, detail="Task not found")
-    result = await db.execute(select(Attachment).where(Attachment.task_id == task_id))
-    return result.scalars().all()
-
-
 # Project attachment endpoints
 @router.post("/projects/{project_id}/attachments", response_model=AttachmentOut, status_code=201)
 async def upload_project_attachment(

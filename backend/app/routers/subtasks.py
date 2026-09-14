@@ -617,6 +617,7 @@ async def upload_subtask_attachment(
         "size_bytes": attachment.size_bytes,
         "content_type": attachment.content_type,
         "uploaded_at": attachment.uploaded_at,
+        "uploaded_by": attachment.uploaded_by,
     }
 
 

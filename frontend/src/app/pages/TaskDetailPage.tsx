@@ -216,6 +216,69 @@ export function TaskDetailPage() {
     return currentUser?.id === task?.assigneeId;
   }
 
+  function canSubmitTaskForReview(): boolean {
+    return (
+      isTaskLead() &&
+      (task?.status === "To Do" || task?.status === "Reschedule") &&
+      subtasks.every(s => s.status === "Done") &&
+      reports.length > 0 &&
+      attachments.length > 0
+    );
+  }
+
+  function getTaskSubmitDisableReason(): string {
+    if (!isTaskLead()) return "";
+    if (task?.status !== "To Do" && task?.status !== "Reschedule") return "";
+    if (!subtasks.every(s => s.status === "Done")) {
+      return "Cannot submit for review — all subtasks must be Done before submitting.";
+    }
+    if (reports.length === 0 && attachments.length === 0) {
+      return "Cannot submit for review — both a report and an attachment are required before submitting.";
+    }
+    if (reports.length === 0) {
+      return "Cannot submit for review — a report is required before submitting.";
+    }
+    if (attachments.length === 0) {
+      return "Cannot submit for review — an attachment is required before submitting.";
+    }
+    return "";
+  }
+
+  function canApproveTask(): boolean {
+    if (!task || !project) return false;
+    return (
+      canManage ||
+      currentUser?.id === project.leadId
+    );
+  }
+
+  async function handleSubmitTaskForReview() {
+    if (!task) return;
+    try {
+      setError(null);
+      const updated = await updateTaskStatus(task.id, "Review");
+      setTask(updated);
+    } catch (err: any) {
+      setError(err?.message || "Failed to submit for review");
+    }
+  }
+
+  async function handleApproveTask() {
+    if (!task) return;
+    if (!approveComment.trim()) {
+      setError("A comment is required when approving a task.");
+      return;
+    }
+    try {
+      setError(null);
+      const updated = await updateTaskStatus(task.id, "Done", undefined, approveComment.trim());
+      setTask(updated);
+      setApproveComment("");
+    } catch (err: any) {
+      setError(err?.message || "Failed to approve task");
+    }
+  }
+
   function getTaskProgress(): number {
     if (subtasks.length === 0) return 0;
     const completed = subtasks.filter(s => s.status === "Done").length;
@@ -288,12 +351,15 @@ export function TaskDetailPage() {
   }
 
   async function handleReschedule() {
-    if (!task || !rescheduleDate || !rescheduleComment.trim()) return;
+    if (!task || !rescheduleComment.trim()) {
+      setError("A comment is required when rescheduling a task.");
+      return;
+    }
     try {
       setRescheduleLoading(true);
       setError(null);
-      await updateTaskStatus(task.id, { status: "Reschedule", comment: rescheduleComment.trim() });
-      const updated = await getTask(task.id);
+      const isoDate = rescheduleDate ? new Date(rescheduleDate).toISOString() : undefined;
+      const updated = await updateTaskStatus(task.id, "Reschedule", isoDate, rescheduleComment.trim());
       setTask(updated);
       setShowReschedule(false);
       setRescheduleDate("");
@@ -433,6 +499,24 @@ export function TaskDetailPage() {
             )}
           </div>
           <div className="flex items-center gap-2">
+            {isTaskLead() && (task.status === "To Do" || task.status === "Reschedule") ? (
+              canSubmitTaskForReview() ? (
+                <button
+                  onClick={handleSubmitTaskForReview}
+                  className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+                >
+                  Submit for review
+                </button>
+              ) : (
+                <button
+                  disabled
+                  className="px-4 py-2 bg-gray-300 text-gray-500 text-sm font-semibold rounded-lg cursor-not-allowed"
+                  title={getTaskSubmitDisableReason()}
+                >
+                  Submit for review
+                </button>
+              )
+            ) : null}
             <button
               onClick={() => {
                 setEditTaskForm({
@@ -489,6 +573,81 @@ export function TaskDetailPage() {
             </div>
           </div>
         </div>
+
+        {/* Approve/Reschedule actions */}
+        {canApproveTask() && task.status === "Review" && (
+          <div className="mt-4 pt-4 border-t border-border space-y-3">
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setShowApproveComment(true);
+                  setShowReschedule(false);
+                }}
+                className="flex-1 px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition-colors cursor-pointer"
+              >
+                Approve
+              </button>
+              <button
+                onClick={() => {
+                  setShowReschedule(!showReschedule);
+                  setShowApproveComment(false);
+                }}
+                className="flex-1 px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors cursor-pointer"
+              >
+                Reschedule
+              </button>
+            </div>
+            {showApproveComment && (
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">
+                  Comment (required for approval)
+                </label>
+                <textarea
+                  value={approveComment}
+                  onChange={(e) => setApproveComment(e.target.value)}
+                  placeholder="Add a comment explaining your approval decision..."
+                  className="w-full p-2 border border-border rounded-lg text-sm resize-none"
+                  rows={2}
+                />
+                <button
+                  onClick={handleApproveTask}
+                  disabled={!approveComment.trim()}
+                  className="mt-2 w-full px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Confirm approval
+                </button>
+              </div>
+            )}
+            {showReschedule && (
+              <div className="pt-3 border-t border-border">
+                <DatePicker
+                  label="New Due Date"
+                  value={rescheduleDate}
+                  onChange={(value) => setRescheduleDate(value)}
+                  min={new Date().toISOString().slice(0, 16)}
+                  max={task?.dueDate ? task.dueDate.slice(0, 16) : undefined}
+                />
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 mt-3 block">
+                  Comment (required for reschedule)
+                </label>
+                <textarea
+                  value={rescheduleComment}
+                  onChange={(e) => setRescheduleComment(e.target.value)}
+                  placeholder="Add a comment explaining why you're rescheduling..."
+                  className="w-full p-2 border border-border rounded-lg text-sm resize-none"
+                  rows={2}
+                />
+                <button
+                  onClick={handleReschedule}
+                  disabled={!rescheduleComment.trim()}
+                  className="mt-2 w-full px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Confirm reschedule
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Tabs */}
@@ -550,7 +709,7 @@ export function TaskDetailPage() {
       {/* Tab Content */}
       <div className="p-6">
         {activeTab === "overview" && (
-          <div className="grid grid-cols-2 gap-6">
+          <div className="space-y-6">
             {/* Description */}
             <div className="bg-white rounded-xl border border-border p-6">
               <h2 className="text-lg font-semibold text-foreground mb-4">Description</h2>
@@ -559,73 +718,147 @@ export function TaskDetailPage() {
               </p>
             </div>
 
-            {/* Attachments */}
-            <div className="bg-white rounded-xl border border-border p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-foreground">Attachments</h2>
-                <div className="flex items-center gap-2">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    onChange={handleFileUpload}
-                    className="hidden"
-                  />
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={uploading}
-                    className="flex items-center gap-2 px-3 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Plus className="w-4 h-4" />
-                    {uploading ? "Uploading..." : "Upload"}
-                  </button>
-                </div>
-              </div>
-              {attachments.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-8">No attachments yet</p>
-              ) : (
-                <div className="space-y-2">
-                  {attachments.map((attachment) => (
-                    <div
-                      key={attachment.id}
-                      className="flex items-center justify-between p-3 border border-border rounded-lg hover:bg-muted transition-colors"
+            {/* Attachments & Reports row */}
+            <div className="grid grid-cols-2 gap-6">
+              {/* Attachments */}
+              <div className="bg-white rounded-xl border border-border p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-semibold text-foreground">Attachments</h2>
+                  <div className="flex items-center gap-2">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                    />
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploading}
+                      className="flex items-center gap-2 px-3 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <div className="flex items-center gap-3">
-                        {attachment.filename.toLowerCase().endsWith(('.png', '.jpg', '.jpeg', '.gif', '.webp')) ? (
-                          <Image className="w-8 h-8 text-muted-foreground" />
-                        ) : (
-                          <FileText className="w-8 h-8 text-muted-foreground" />
-                        )}
-                        <div>
-                          <p className="text-sm font-medium text-foreground">{attachment.filename}</p>
-                          <p className="text-xs text-muted-foreground">{formatFileSize(attachment.file_size)}</p>
+                      <Plus className="w-4 h-4" />
+                      {uploading ? "Uploading..." : "Upload"}
+                    </button>
+                  </div>
+                </div>
+                {attachments.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-8">No attachments yet</p>
+                ) : (
+                  <div className="space-y-2">
+                    {attachments.map((attachment) => (
+                      <div
+                        key={attachment.id}
+                        className="flex items-center justify-between p-3 border border-border rounded-lg hover:bg-muted transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          {[".png", ".jpg", ".jpeg", ".gif", ".webp"].some((ext) => attachment.filename.toLowerCase().endsWith(ext)) ? (
+                            <Image className="w-8 h-8 text-muted-foreground" />
+                          ) : (
+                            <FileText className="w-8 h-8 text-muted-foreground" />
+                          )}
+                          <div>
+                            <p className="text-sm font-medium text-foreground">{attachment.filename}</p>
+                            <p className="text-xs text-muted-foreground">{formatFileSize(attachment.sizeBytes)}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={async () => {
+                              try {
+                                const url = await getAttachmentDownloadUrl(attachment.id);
+                                window.open(url, '_blank');
+                              } catch (err) {
+                                setError("Failed to download attachment");
+                              }
+                            }}
+                            className="p-2 text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            <Download className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteAttachment(attachment.id)}
+                            className="p-2 text-red-600 hover:text-red-700 transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={async () => {
-                            try {
-                              const url = await getAttachmentDownloadUrl(attachment.id);
-                              window.open(url, '_blank');
-                            } catch (err) {
-                              setError("Failed to download attachment");
-                            }
-                          }}
-                          className="p-2 text-muted-foreground hover:text-foreground transition-colors"
-                        >
-                          <Download className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteAttachment(attachment.id)}
-                          className="p-2 text-red-600 hover:text-red-700 transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Reports */}
+              <div className="bg-white rounded-xl border border-border p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-semibold text-foreground">Reports</h2>
+                  {isTaskLead() && (
+                    <button
+                      onClick={() => setShowNewReport(true)}
+                      className="flex items-center gap-2 px-3 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Add Report
+                    </button>
+                  )}
                 </div>
-              )}
+                {reports.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-8">No reports yet</p>
+                ) : (
+                  <div className="space-y-4">
+                    {reports.map((report) => {
+                      const author = candidates.find((u) => u.id === report.createdBy);
+                      return (
+                        <div key={report.id} className="p-4 border border-border rounded-lg">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <Av name={author?.name || "Unknown"} size="sm" />
+                              <span className="text-sm font-medium text-foreground">{author?.name || "Unknown"}</span>
+                            </div>
+                            <span className="text-xs text-muted-foreground">{fmtDate(report.createdAt)}</span>
+                          </div>
+                          <p className="text-sm text-muted-foreground whitespace-pre-wrap">{report.content}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
+
+            {/* Decisions */}
+            {comments.filter((c) => c.action === "approved" || c.action === "rescheduled").length > 0 && (
+              <div className="bg-white rounded-xl border border-border p-6">
+                <h2 className="text-lg font-semibold text-foreground mb-4">Decisions</h2>
+                <div className="space-y-4">
+                  {comments
+                    .filter((c) => c.action === "approved" || c.action === "rescheduled")
+                    .map((comment) => {
+                      const author = candidates.find((u) => u.id === comment.authorId);
+                      return (
+                        <div key={comment.id} className="flex gap-3 pb-4 border-b border-border last:border-0 last:pb-0">
+                          <Av name={author?.name || "Unknown"} />
+                          <div className="flex-1">
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="flex items-center gap-2">
+                                <p className="text-sm font-medium text-foreground">{author?.name || "Unknown"}</p>
+                                {comment.action === "approved" && (
+                                  <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-medium rounded">Approved</span>
+                                )}
+                                {comment.action === "rescheduled" && (
+                                  <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-medium rounded">Rescheduled</span>
+                                )}
+                              </div>
+                              <p className="text-xs text-muted-foreground">{fmtDate(comment.createdAt)}</p>
+                            </div>
+                            <p className="text-sm text-muted-foreground whitespace-pre-wrap">{comment.content}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -901,7 +1134,15 @@ export function TaskDetailPage() {
                       <Av name={author?.name || "Unknown"} />
                       <div className="flex-1">
                         <div className="flex items-center justify-between mb-1">
-                          <p className="text-sm font-medium text-foreground">{author?.name || "Unknown"}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium text-foreground">{author?.name || "Unknown"}</p>
+                            {comment.action === "approved" && (
+                              <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-medium rounded">Approved</span>
+                            )}
+                            {comment.action === "rescheduled" && (
+                              <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-medium rounded">Rescheduled</span>
+                            )}
+                          </div>
                           <p className="text-xs text-muted-foreground">{fmtDate(comment.createdAt)}</p>
                         </div>
                         <p className="text-sm text-muted-foreground whitespace-pre-wrap">{comment.content}</p>
@@ -995,6 +1236,39 @@ export function TaskDetailPage() {
               className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Create Subtask
+            </button>
+          </div>
+        </Dlg>
+      )}
+
+      {showNewReport && (
+        <Dlg title="New Report" onClose={() => setShowNewReport(false)}>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Content</label>
+              <textarea
+                value={reportContent}
+                onChange={(e) => setReportContent(e.target.value)}
+                placeholder="Enter report content..."
+                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground focus:outline-none focus:border-blue-400 min-h-[120px] resize-y"
+                rows={5}
+                autoFocus
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-border">
+            <button
+              onClick={() => setShowNewReport(false)}
+              className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-foreground"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleCreateReport}
+              disabled={!reportContent.trim()}
+              className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Submit Report
             </button>
           </div>
         </Dlg>

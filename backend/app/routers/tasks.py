@@ -1,11 +1,13 @@
 import os
+import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File
 from app.services import notification_dispatch
 from app.services.activity_log import log_activity
 from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.deps import require_permission, get_current_user, has_permission, get_scoped_department_ids, can_view_task, can_manage_task, can_edit_delete_task, can_create_task_in_project, is_project_lead, is_task_lead
 from app.database import get_db
@@ -31,6 +33,7 @@ from app.schemas.activity_log import ActivityLogOut
 from app.schemas.comment import CommentCreate, CommentOut
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
+UPLOAD_DIR = "uploads"
 
 def _is_task_in_scope(task: Task, current_user: User) -> bool:
     """
@@ -53,8 +56,6 @@ async def list_tasks(
     - Task Leads see their own tasks
     - Team members see tasks they're on
     """
-    from sqlalchemy.orm import selectinload
-
     # Build base query with eager loading for cascade checks
     query = select(Task).options(
         selectinload(Task.project).selectinload(Project.departments),
@@ -81,7 +82,6 @@ async def get_task(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from sqlalchemy.orm import selectinload
     task = await _get_task_or_404_with_loads(db, task_id)
     if not can_view_task(current_user, task):
         raise HTTPException(status_code=404, detail="Task not found")
@@ -138,7 +138,6 @@ async def create_task(
 ):
     # Handle project_id - if provided, check project lead permissions
     if payload.project_id is not None:
-        from sqlalchemy.orm import selectinload
         project_result = await db.execute(
             select(Project).options(selectinload(Project.departments)).where(Project.id == payload.project_id)
         )
@@ -235,7 +234,7 @@ async def update_task(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from sqlalchemy.orm import selectinload
+
     task = await _get_task_or_404_with_loads(db, task_id)
 
     if not can_edit_delete_task(current_user, task):
@@ -287,7 +286,7 @@ async def update_task_status(
     - Submit (To Do/Reschedule -> Review): allowed only for task.assigned_to
     - Approve (Review -> Done or Review -> Reschedule): allowed for project lead OR project:manage (with department scope)
     """
-    from sqlalchemy.orm import selectinload
+
     task = await _get_task_or_404_with_loads(db, task_id)
 
     # Check if user is the assignee
@@ -425,7 +424,7 @@ async def assign_task(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from sqlalchemy.orm import selectinload
+
     task = await _get_task_or_404_with_loads(db, task_id)
 
     if not can_manage_task(current_user, task):
@@ -457,7 +456,7 @@ async def delete_task(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from sqlalchemy.orm import selectinload
+
     task = await _get_task_or_404_with_loads(db, task_id)
 
     if not can_edit_delete_task(current_user, task):
@@ -495,7 +494,7 @@ async def update_task_team(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from sqlalchemy.orm import selectinload
+
     # Load task with project.team_members for validation
     result = await db.execute(
         select(Task).options(
@@ -604,7 +603,6 @@ async def _get_task_or_404(db: AsyncSession, task_id: int) -> Task:
 
 async def _get_task_or_404_with_loads(db: AsyncSession, task_id: int) -> Task:
     """Load task with relationships needed for cascade authorization checks."""
-    from sqlalchemy.orm import selectinload
     result = await db.execute(
         select(Task).options(
             selectinload(Task.project).selectinload(Project.departments),
@@ -647,7 +645,7 @@ async def create_task_report(
     current_user: User = Depends(get_current_user),
 ):
     """Create a report for a task. Only the task lead can create reports."""
-    from sqlalchemy.orm import selectinload
+
     task = await _get_task_or_404_with_loads(db, task_id)
 
     if not is_task_lead(current_user, task):
@@ -677,7 +675,7 @@ async def list_task_reports(
     current_user: User = Depends(get_current_user),
 ):
     """List all reports for a task. Anyone who can view the task can view its reports."""
-    from sqlalchemy.orm import selectinload
+
     task = await _get_task_or_404_with_loads(db, task_id)
 
     if not can_view_task(current_user, task):
@@ -706,3 +704,60 @@ def _report_to_out(report: Report) -> ReportOut:
         created_by=report.created_by,
         created_at=report.created_at,
     )
+
+
+@router.post("/{task_id}/attachments", response_model=AttachmentOut, status_code=201)
+async def upload_task_attachment(
+    task_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Saves the uploaded file to disk under uploads/tasks/{task_id}/, and creates a
+    matching Attachment row pointing to it. Gated by the same task-visibility
+    scope as everything else — if you can't see a task, you can't attach
+    files to it either.
+    """
+    task = await _get_task_or_404_with_loads(db, task_id)
+
+    if not can_view_task(current_user, task):
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task_dir = os.path.join(UPLOAD_DIR, "tasks", str(task_id))
+    os.makedirs(task_dir, exist_ok=True)
+
+    stored_name = f"{uuid.uuid4().hex}_{file.filename}"
+    stored_path = os.path.join(task_dir, stored_name)
+
+    content = await file.read()
+    with open(stored_path, "wb") as f:
+        f.write(content)
+
+    attachment = Attachment(
+        task_id=task_id,
+        filename=file.filename,
+        stored_path=stored_path,
+        content_type=file.content_type or "application/octet-stream",
+        size_bytes=len(content),
+        uploaded_by=current_user.id,
+    )
+    db.add(attachment)
+    await db.commit()
+    await db.refresh(attachment)
+    return attachment
+
+
+@router.get("/{task_id}/attachments", response_model=list[AttachmentOut])
+async def list_task_attachments(
+    task_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    task = await _get_task_or_404_with_loads(db, task_id)
+    if not can_view_task(current_user, task):
+        raise HTTPException(status_code=404, detail="Task not found")
+    result = await db.execute(
+        select(Attachment).where(Attachment.task_id == task_id, Attachment.subtask_id.is_(None))
+    )
+    return result.scalars().all()
