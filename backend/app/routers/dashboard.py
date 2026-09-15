@@ -369,4 +369,4 @@ async def get_overdue_projects(
     projects, _ = await get_manager_projects(db, current_user)
     now = datetime.now(timezone.utc)
     overdue_projects = compute_overdue_projects(projects, now)
-    return overdue_projects[:200]
+    return overdue_projects[:200]

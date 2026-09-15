@@ -345,7 +345,7 @@ export function DashboardPage() {
         )}
 
         {/* Tasks Overdue */}
-        {summary.tasks.total > 0 && (
+        {showTasksCard && (
           <div className="bg-white rounded-xl border border-red-200 p-5 shadow-sm">
             <div className="flex items-center justify-between mb-4 pb-2 border-b border-border/60">
               <div className="flex items-center gap-2">
