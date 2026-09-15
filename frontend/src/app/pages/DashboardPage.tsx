@@ -117,6 +117,12 @@ export function DashboardPage() {
 
   const isManager = summary.user_type === "manager";
 
+  // Hide the Tasks card/panel only for regular employees with zero tasks
+  // (e.g. someone who's only ever a subtask assignee). Managers/admins
+  // always see it, even at zero, since it's an oversight view, not a
+  // personal assignment list.
+  const showTasksCard = isManager || summary.tasks.total > 0;
+
   return (
     <div className="p-6 max-w-7xl space-y-6">
       <div className="flex items-center justify-between">
@@ -146,7 +152,7 @@ export function DashboardPage() {
       {/* Stat Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {/* Tasks Card */}
-        {summary.tasks.total > 0 && (
+        {showTasksCard && (
           <div className="bg-white rounded-xl border border-border p-5 shadow-sm">
             <div className="flex items-center gap-3 mb-4">
               <div className="p-2 bg-blue-50 rounded-lg">
@@ -225,7 +231,7 @@ export function DashboardPage() {
       {/* Status Breakdown */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Tasks Status Breakdown */}
-        {summary.tasks.total > 0 && (
+        {showTasksCard && (
           <div className="bg-white rounded-xl border border-border p-5 shadow-sm">
             <h3 className="text-sm font-semibold text-foreground mb-4">Tasks by Status</h3>
             <div className="grid grid-cols-[auto_auto_auto_1fr] gap-x-4 gap-y-2 items-center text-xs">
@@ -257,7 +263,7 @@ export function DashboardPage() {
         )}
 
         {/* Subtasks Status Breakdown */}
-        <div className={`bg-white rounded-xl border border-border p-5 shadow-sm ${summary.tasks.total === 0 ? "lg:col-span-2" : ""}`}>
+        <div className={`bg-white rounded-xl border border-border p-5 shadow-sm ${!showTasksCard ? "lg:col-span-2" : ""}`}>
           <h3 className="text-sm font-semibold text-foreground mb-4">Subtasks by Status</h3>
           <div className="grid grid-cols-[auto_auto_auto_1fr] gap-x-4 gap-y-2 items-center text-xs">
             <span className="text-muted-foreground font-medium">Status</span>
