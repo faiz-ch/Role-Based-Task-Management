@@ -155,7 +155,7 @@ export function SettingsTab({
     }));
   }
 
-  const canClose = project.status === "Active" || project.status === "Pending Approval";
+  const canClose = project.status === "Done";
   const canReopen = project.status === "Archived";
 
   return (

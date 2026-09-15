@@ -367,9 +367,8 @@ export function OverviewTab({
           </div>
         )}
         
-        {/* Approve and Reject buttons for Admin category users */}
-        {project?.status === "Pending Approval" &&
-         currentUser?.role?.category?.name === "Admin" && (
+        {/* Approve and Reject buttons */}
+        {project?.status === "Pending Approval" && canManage && (
           <div className="mt-4 pt-4 border-t border-border flex gap-2">
             <button
               onClick={handleApprove}

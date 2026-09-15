@@ -18,6 +18,7 @@ import { ProjectDetailPage } from "./pages/ProjectDetailPage";
 import { SubtaskDetailPage } from "./pages/SubtaskDetailPage";
 import { DepartmentDetailPage } from "./pages/DepartmentDetailPage";
 import { UserDetailPage } from "./pages/UserDetailPage";
+import { OverdueViewAllPage } from "./pages/OverdueViewAllPage";
 
 // Auth guard component to redirect unauthenticated users
 function AuthGuard({ children }: { children: React.ReactNode }) {
@@ -109,6 +110,10 @@ function AppContent() {
                     path="/dashboard"
                     element={<DashboardPage />}
                   />
+                  <Route path="/dashboard/overdue/tasks" element={<OverdueViewAllPage type="tasks" />} />
+                  <Route path="/dashboard/overdue/subtasks" element={<OverdueViewAllPage type="subtasks" />} />
+                  <Route path="/dashboard/overdue/projects" element={<OverdueViewAllPage type="projects" />} />
+                  <Route path="/dashboard/overdue/:type" element={<OverdueViewAllPage />} />
                   <Route path="/tasks" element={<TasksPage />} />
                   <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
                   <Route path="/subtasks/:subtaskId" element={<SubtaskDetailPage />} />
