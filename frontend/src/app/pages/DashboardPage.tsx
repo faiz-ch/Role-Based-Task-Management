@@ -151,6 +151,32 @@ export function DashboardPage() {
 
       {/* Stat Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {/* Projects Card (Manager Only) */}
+        {isManager && summary.projects && (
+          <div className="bg-white rounded-xl border border-border p-5 shadow-sm">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-emerald-50 rounded-lg">
+                <FolderKanban size={20} className="text-emerald-600" />
+              </div>
+              <div>
+                <p className="text-xs font-medium text-muted-foreground">Total Projects</p>
+                <p className="text-2xl font-bold text-foreground">{summary.projects.total}</p>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {Object.entries(summary.projects.by_status).map(([status, count]) => (
+                <div key={status} className="flex items-center justify-between text-xs">
+                  <span className="flex items-center gap-1.5 text-muted-foreground">
+                    <StatusDot status={status} colorMap={PROJECT_STATUS_DOT_COLORS} />
+                    {status}
+                  </span>
+                  <span className="font-medium text-foreground">{count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Tasks Card */}
         {showTasksCard && (
           <div className="bg-white rounded-xl border border-border p-5 shadow-sm">
@@ -200,32 +226,6 @@ export function DashboardPage() {
             ))}
           </div>
         </div>
-
-        {/* Projects Card (Manager Only) */}
-        {isManager && summary.projects && (
-          <div className="bg-white rounded-xl border border-border p-5 shadow-sm">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-2 bg-emerald-50 rounded-lg">
-                <FolderKanban size={20} className="text-emerald-600" />
-              </div>
-              <div>
-                <p className="text-xs font-medium text-muted-foreground">Total Projects</p>
-                <p className="text-2xl font-bold text-foreground">{summary.projects.total}</p>
-              </div>
-            </div>
-            <div className="space-y-2">
-              {Object.entries(summary.projects.by_status).map(([status, count]) => (
-                <div key={status} className="flex items-center justify-between text-xs">
-                  <span className="flex items-center gap-1.5 text-muted-foreground">
-                    <StatusDot status={status} colorMap={PROJECT_STATUS_DOT_COLORS} />
-                    {status}
-                  </span>
-                  <span className="font-medium text-foreground">{count}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Status Breakdown */}
