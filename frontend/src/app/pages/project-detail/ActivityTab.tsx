@@ -28,7 +28,7 @@ function fmtDateOnly(d: string) {
 
 function getActivityIcon(action: string) {
   const actionLower = action.toLowerCase();
-  
+
   if (actionLower.includes("create") || actionLower.includes("created")) {
     return "bg-green-500";
   }
@@ -47,7 +47,13 @@ function getActivityIcon(action: string) {
   if (actionLower.includes("reject") || actionLower.includes("rejected")) {
     return "bg-red-500";
   }
-  
+  if (actionLower.includes("meeting_scheduled")) {
+    return "bg-blue-500";
+  }
+  if (actionLower.includes("meeting_cancelled")) {
+    return "bg-red-500";
+  }
+
   return "bg-gray-500";
 }
 

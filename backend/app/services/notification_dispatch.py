@@ -17,6 +17,7 @@ from app.models.user import User
 from app.models.role import Role
 from app.models.category import Category
 from app.models.project import Project, ProjectTeam
+from app.models.zoom_meeting import ZoomMeeting, ZoomMeetingInvitee
 from app.services.email import send_email
 from app.services import email_templates
 
@@ -267,3 +268,47 @@ async def _load_project(db, project_id: int) -> Project | None:
         .where(Project.id == project_id)
     )
     return result.scalar_one_or_none()
+
+
+# Meeting notifications
+
+async def notify_meeting_scheduled(meeting_id: int) -> None:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(ZoomMeeting)
+            .options(
+                selectinload(ZoomMeeting.invitees).selectinload(ZoomMeetingInvitee.user),
+                selectinload(ZoomMeeting.creator),
+            )
+            .where(ZoomMeeting.id == meeting_id)
+        )
+        meeting = result.scalar_one_or_none()
+        if meeting is None:
+            return
+
+        subject, body = email_templates.meeting_scheduled_email(meeting)
+        # Email all invitees except the creator
+        for invitee in meeting.invitees:
+            if invitee.user and invitee.user.id != meeting.created_by:
+                await send_email(invitee.user.email, subject, body)
+
+
+async def notify_meeting_cancelled(meeting_id: int) -> None:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(ZoomMeeting)
+            .options(
+                selectinload(ZoomMeeting.invitees).selectinload(ZoomMeetingInvitee.user),
+                selectinload(ZoomMeeting.creator),
+            )
+            .where(ZoomMeeting.id == meeting_id)
+        )
+        meeting = result.scalar_one_or_none()
+        if meeting is None:
+            return
+
+        subject, body = email_templates.meeting_cancelled_email(meeting)
+        # Email all invitees except the creator
+        for invitee in meeting.invitees:
+            if invitee.user and invitee.user.id != meeting.created_by:
+                await send_email(invitee.user.email, subject, body)

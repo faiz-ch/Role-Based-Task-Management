@@ -14,7 +14,7 @@ import app.models  # noqa: F401 — registers all models with Base.metadata
 from app.config import settings
 from app.database import engine, Base, get_db
 from app.seed import seed_permissions
-from app.routers import auth, users, roles, tasks, dashboard, departments, categories, projects, subtasks, milestones, attachments
+from app.routers import auth, users, roles, tasks, dashboard, departments, categories, projects, subtasks, milestones, attachments, zoom_meetings, zoom_webhook
 
 
 @asynccontextmanager
@@ -58,6 +58,8 @@ app.include_router(attachments.router)
 app.include_router(dashboard.router)
 app.include_router(departments.router)
 app.include_router(categories.router)
+app.include_router(zoom_meetings.router)
+app.include_router(zoom_webhook.router)
 
 
 @app.get("/health")

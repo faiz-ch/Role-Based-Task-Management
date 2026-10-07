@@ -148,3 +148,77 @@ export interface UserPerformance {
   tasks: PerformanceCategory;
   subtasks: PerformanceCategory;
 }
+
+// Meeting types
+export interface Meeting {
+  id: number;
+  projectId: number;
+  title: string;
+  agenda: string | null;
+  scheduledStart: string;
+  durationMinutes: number;
+  timezone: string;
+  status: string;
+  recordingEnabled: boolean;
+  joinUrl: string | null;
+  actualStart: string | null;
+  actualEnd: string | null;
+  actualDurationMinutes: number | null;
+  createdAt: string;
+  cancelledAt: string | null;
+  inviteeCount: number;
+  attendedCount: number;
+}
+
+export interface MeetingDetail {
+  id: number;
+  projectId: number;
+  title: string;
+  agenda: string | null;
+  scheduledStart: string;
+  durationMinutes: number;
+  timezone: string;
+  status: string;
+  recordingEnabled: boolean;
+  joinUrl: string | null;
+  actualStart: string | null;
+  actualEnd: string | null;
+  actualDurationMinutes: number | null;
+  createdAt: string;
+  cancelledAt: string | null;
+  invitees: InviteeAttendance[];
+  participants: Participant[];
+  recordings: Recording[];
+}
+
+export interface InviteeAttendance {
+  userId: number;
+  name: string;
+  email: string;
+  attended: boolean;
+  firstJoined: string | null;
+  lastLeft: string | null;
+  totalDurationSeconds: number;
+}
+
+export interface Participant {
+  id: number;
+  userId: number | null;
+  name: string | null;
+  email: string | null;
+  joinTime: string | null;
+  leaveTime: string | null;
+  durationSeconds: number | null;
+}
+
+export interface Recording {
+  id: number;
+  zoomFileId: string;
+  fileType: string | null;
+  recordingType: string | null;
+  fileSizeBytes: number | null;
+  playUrl: string | null;
+  recordingStart: string | null;
+  recordingEnd: string | null;
+  createdAt: string;
+}

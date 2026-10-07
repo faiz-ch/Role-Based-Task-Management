@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     EMAIL_PASSWORD: str = ""
     EMAIL_REPLY_TO: str = ""
     FRONTEND_URL: str = "http://localhost:5173"
+    ZOOM_ACCOUNT_ID: str = ""
+    ZOOM_CLIENT_ID: str = ""
+    ZOOM_CLIENT_SECRET: str = ""
+    ZOOM_WEBHOOK_SECRET_TOKEN: str = ""
+    ZOOM_FALLBACK_HOST_EMAIL: str = ""
 
     class Config:
         env_file = ".env"

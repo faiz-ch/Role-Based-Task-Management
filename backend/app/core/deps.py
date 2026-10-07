@@ -288,3 +288,29 @@ def can_manage_subtask(user: User, subtask: SubTask) -> bool:
         return True
     # Check if user is in subtask assignees
     return any(sa.user_id == user.id for sa in subtask.assignees)
+
+
+def can_schedule_meeting(user: User, project: Project) -> bool:
+    """Project lead OR project:manage (with department scope) can schedule meetings."""
+    return can_create_task_in_project(user, project)
+
+
+def can_view_project(user: User, project: Project) -> bool:
+    """
+    Returns True if the user can view the project.
+    Same rule as get_project in routers/projects.py:
+    - project:view or project:manage with department scope, OR
+    - is project lead, OR
+    - is team member
+    """
+    has_view_perm = has_permission(user, "project:view") or has_permission(user, "project:manage")
+    in_scope = False
+    if has_view_perm:
+        scoped_dept_ids = get_scoped_department_ids(user)
+        if scoped_dept_ids is None or any(d.id in scoped_dept_ids for d in project.departments):
+            in_scope = True
+
+    is_lead = is_project_lead(user, project)
+    is_team_member = any(tm.user_id == user.id for tm in project.team_members)
+
+    return in_scope or is_lead or is_team_member

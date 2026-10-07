@@ -1,22 +1,25 @@
 import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router";
-import { ArrowLeft, AlertTriangle } from "lucide-react";
+import { ArrowLeft, AlertTriangle, Video } from "lucide-react";
 import { Project, UserType, Department, Task, Subtask, Milestone, Attachment } from "../types";
 import { getProject, updateProjectTeam, getProjectCandidates, updateProject, deleteProject, sendProjectForApproval, approveProject, rejectProject, closeProject, reopenProject, getProjectMilestones, createMilestone, updateMilestone, deleteMilestone, getProjectAttachments, uploadProjectAttachment, deleteAttachment, getAttachmentDownloadUrl, getProjectActivity } from "../api/projects";
 import { getTasks, createTask, updateTaskTeam } from "../api/tasks";
 import { getDepartments } from "../api/departments";
 import { getProjectReports, createProjectReport, Report } from "../api/reports";
+import { createMeeting } from "../api/meetings";
 import { useAuth } from "../context/AuthContext";
 import { StatusBadge } from "../components/StatusBadge";
 import { PriBadge } from "../components/PriBadge";
 import { OverviewTab } from "./project-detail/OverviewTab";
 import { TasksTab } from "./project-detail/TasksTab";
 import { MilestonesTab } from "./project-detail/MilestonesTab";
+import { MeetingsTab } from "./project-detail/MeetingsTab";
 import { TeamTab } from "./project-detail/TeamTab";
 import { TimelineTab } from "./project-detail/TimelineTab";
 import { FilesTab } from "./project-detail/FilesTab";
 import { ActivityTab } from "./project-detail/ActivityTab";
 import { SettingsTab } from "./project-detail/SettingsTab";
+import { ScheduleMeetingDialog } from "./project-detail/ScheduleMeetingDialog";
 import { getEffectiveDepartmentIds } from "../utils/roleAccess";
 
 const PROJECT_STATUS_STYLE: Record<string, { badge: string; dot: string }> = {
@@ -82,12 +85,15 @@ export function ProjectDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("overview");
+  const [showScheduleDialog, setShowScheduleDialog] = useState(false);
 
   const effectiveDepartmentIds = getEffectiveDepartmentIds(currentUser?.role, departments);
   const canManage = permissions.includes("project:manage") && (
     currentUser?.role?.allDepartments ||
     (project?.departmentIds && project.departmentIds.some(deptId => effectiveDepartmentIds.includes(deptId)))
   );
+  const isLead = currentUser?.id === project?.leadId;
+  const canScheduleMeeting = canManage || isLead;
 
   useEffect(() => {
     async function loadData() {
@@ -335,6 +341,19 @@ export function ProjectDetailPage() {
     return getAttachmentDownloadUrl(attachmentId);
   }
 
+  async function handleCreateMeeting(meetingData: any) {
+    if (!project) return;
+    try {
+      setError(null);
+      await createMeeting(project.id, meetingData);
+      // Switch to Meetings tab and trigger refresh
+      setActiveTab("meetings");
+    } catch (err: any) {
+      setError(err?.message || "Failed to create meeting");
+      throw err;
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -365,6 +384,7 @@ export function ProjectDetailPage() {
     { id: "overview", label: "Overview" },
     { id: "tasks", label: "Tasks" },
     { id: "milestones", label: "Milestones" },
+    { id: "meetings", label: "Meetings" },
     { id: "team", label: "Team" },
     { id: "timeline", label: "Timeline" },
     { id: "files", label: "Files" },
@@ -392,6 +412,15 @@ export function ProjectDetailPage() {
             <ProjectStatusBadge status={project.status} />
             <PriBadge priority={project.priority} />
           </div>
+          {canScheduleMeeting && project.status !== "Done" && project.status !== "Archived" && (
+            <button
+              onClick={() => setShowScheduleDialog(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+            >
+              <Video size={12} />
+              Schedule meeting
+            </button>
+          )}
         </div>
         {project.description && (
           <p className="text-sm text-muted-foreground">{project.description}</p>
@@ -441,12 +470,19 @@ export function ProjectDetailPage() {
       )}
 
       {activeTab === "milestones" && (
-        <MilestonesTab 
-          project={project} 
+        <MilestonesTab
+          project={project}
           milestones={milestones}
           onCreateMilestone={handleCreateMilestone}
           onUpdateMilestone={handleUpdateMilestone}
           onDeleteMilestone={handleDeleteMilestone}
+        />
+      )}
+
+      {activeTab === "meetings" && (
+        <MeetingsTab
+          projectId={project.id}
+          canScheduleMeeting={canScheduleMeeting}
         />
       )}
 
@@ -478,14 +514,25 @@ export function ProjectDetailPage() {
       )}
 
       {activeTab === "settings" && permissions.includes("project:manage") && (
-        <SettingsTab 
-          project={project} 
+        <SettingsTab
+          project={project}
           departments={departments}
           tasks={projectTasks}
           onEditProject={handleEditProject}
           onDeleteProject={handleDeleteProject}
           onCloseProject={handleCloseProject}
           onReopenProject={handleReopenProject}
+        />
+      )}
+
+      {showScheduleDialog && (
+        <ScheduleMeetingDialog
+          project={project}
+          teamMembers={teamMembers}
+          currentUser={currentUser}
+          onClose={() => setShowScheduleDialog(false)}
+          onCreateMeeting={handleCreateMeeting}
+          setError={setError}
         />
       )}
     </div>

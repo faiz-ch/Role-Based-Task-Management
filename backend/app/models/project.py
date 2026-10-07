@@ -96,3 +96,6 @@ class Project(Base):
 
     # One-to-many relationship with attachments
     attachments = relationship("Attachment", back_populates="project")
+
+    # One-to-many relationship with zoom meetings
+    zoom_meetings = relationship("ZoomMeeting", back_populates="project", cascade="all, delete-orphan")

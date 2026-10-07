@@ -8,6 +8,7 @@ from app.models.task import Task
 from app.models.subtask import SubTask
 from app.models.project import Project
 from app.models.user import User
+from app.models.zoom_meeting import ZoomMeeting
 
 
 def _task_link(task: Task) -> str:
@@ -229,4 +230,48 @@ def user_deactivated_email(user: User) -> tuple[str, str]:
         </div>
     </div>
     """
+    return subject, body
+
+
+# Meeting email templates
+
+def _meeting_link(meeting: ZoomMeeting) -> str:
+    return f"{settings.FRONTEND_URL}/projects/{meeting.project_id}"
+
+
+def meeting_scheduled_email(meeting: ZoomMeeting) -> tuple[str, str]:
+    start_time = meeting.scheduled_start.strftime("%b %d, %Y at %I:%M %p") if meeting.scheduled_start else "TBD"
+    detail_lines = [
+        f"Date/Time: {start_time} ({meeting.timezone})",
+        f"Duration: {meeting.duration_minutes} minutes",
+    ]
+    if meeting.agenda:
+        detail_lines.append(f"Agenda: {meeting.agenda}")
+
+    subject = f"Meeting scheduled: {meeting.title}"
+    body = _wrap(
+        "Meeting Scheduled",
+        "You have been invited to a project meeting.",
+        meeting.title,
+        _meeting_link(meeting),
+        detail_lines,
+    )
+    # Add Zoom join link
+    if meeting.join_url:
+        body = body.replace(
+            '</a>',
+            f'</a><br><br><a href="{meeting.join_url}" style="display: inline-block; background: #10b981; color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-size: 14px; margin-left: 8px;">Join Zoom Meeting</a>',
+        )
+    return subject, body
+
+
+def meeting_cancelled_email(meeting: ZoomMeeting) -> tuple[str, str]:
+    start_time = meeting.scheduled_start.strftime("%b %d, %Y at %I:%M %p") if meeting.scheduled_start else "TBD"
+    subject = f"Meeting cancelled: {meeting.title}"
+    body = _wrap(
+        "Meeting Cancelled",
+        f"This meeting scheduled for {start_time} has been cancelled.",
+        meeting.title,
+        _meeting_link(meeting),
+    )
     return subject, body
