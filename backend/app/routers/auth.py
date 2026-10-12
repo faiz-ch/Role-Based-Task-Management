@@ -41,8 +41,8 @@ async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db))
     result = await db.execute(
         select(User).options(
             selectinload(User.role).selectinload(Role.permissions),
-            selectinload(User.role).selectinload(Role.departments),
             selectinload(User.role).selectinload(Role.assignable_roles),
+            selectinload(User.managed_departments),
         ).where(User.id == user.id)
     )
     return result.scalar_one()

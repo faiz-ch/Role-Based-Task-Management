@@ -27,8 +27,6 @@ class RoleBrief(BaseModel):
     color: str
     is_active: bool
     permissions: list[PermissionOut] = []
-    all_departments: bool = False
-    departments: list[DepartmentBrief] = []
     all_roles: bool = False
     assignable_roles: list[RoleBriefMinimal] = []
 
@@ -57,6 +55,8 @@ class UserOut(BaseModel):
     is_active: bool
     role: RoleBrief | None = None
     department: DepartmentBrief | None = None
+    manage_all_departments: bool = False
+    managed_departments: list[DepartmentBrief] = []
     created_at: datetime
     manager: UserBrief | None = None
     has_avatar: bool = False
@@ -72,6 +72,8 @@ class UserUpdate(BaseModel):
     is_active: bool | None = None
     department_id: int | None = None
     manager_id: int | None = None
+    manage_all_departments: bool = False
+    managed_department_ids: list[int] = []
 
     @field_validator("password")
     @classmethod
@@ -96,6 +98,8 @@ class UserCreate(BaseModel):
     role_id: int | None = None
     department_id: int | None = None
     is_active: bool = True
+    manage_all_departments: bool = False
+    managed_department_ids: list[int] = []
     send_welcome_email: bool = True
 
     @field_validator("password")

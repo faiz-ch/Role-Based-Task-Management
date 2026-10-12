@@ -63,7 +63,6 @@ async def bootstrap_admin(email: str):
             admin_role = Role(
                 name="Admin",
                 category_id=admin_category.id,
-                all_departments=True,
                 all_roles=True,
                 permissions=list(all_permissions)
             )
@@ -72,14 +71,13 @@ async def bootstrap_admin(email: str):
         else:
             if admin_role.category_id != admin_category.id:
                 admin_role.category_id = admin_category.id
-            if not admin_role.all_departments:
-                admin_role.all_departments = True
             if not admin_role.all_roles:
                 admin_role.all_roles = True
             # Always update direct permissions
             admin_role.permissions = list(all_permissions)
 
         user.role_id = admin_role.id
+        user.manage_all_departments = True
         await db.commit()
         print(f"'{email}' is now an Admin.")
 

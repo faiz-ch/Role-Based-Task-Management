@@ -4,14 +4,14 @@ import { Edit2, Trash2, MoreVertical, AlertTriangle, User, Briefcase, BarChart3,
 import { UserType, Role, Department, UserPerformance } from "../types";
 import { getUser, getUserPerformance, getUserActivity, updateUser, deleteUser, assignRole, uploadAvatar, deleteAvatar, getAvatarUrl } from "../api/users";
 import { getDepartments } from "../api/departments";
-import { getRoles } from "../api/roles";
+import { getRoles, getAssignableRoles } from "../api/roles";
 import { getUsers } from "../api/users";
 import { Dlg } from "../components/Dlg";
 import { FldSelect } from "../components/FldSelect";
 import { FldInput } from "../components/FldInput";
 import { Av } from "../components/Av";
 import { useAuth } from "../context/AuthContext";
-import { getEffectiveAssignableRoles } from "../utils/roleAccess";
+
 
 function getInitials(name: string) {
   if (!name) return "";
@@ -77,9 +77,12 @@ export function UserDetailPage() {
     managerId: "" as string,
     active: true,
     password: "",
+    manageAllDepartments: false,
+    managedDepartmentIds: [] as number[],
   });
   const [editAvatarFile, setEditAvatarFile] = useState<File | null>(null);
   const [avatarUploadError, setAvatarUploadError] = useState<string | null>(null);
+  const [assignableRoles, setAssignableRoles] = useState<Role[]>([]);
 
   useEffect(() => {
     async function loadData() {
@@ -87,13 +90,14 @@ export function UserDetailPage() {
       try {
         setLoading(true);
         setError(null);
-        const [userData, perfData, activityData, deptsData, rolesData, usersData] = await Promise.all([
+        const [userData, perfData, activityData, deptsData, rolesData, usersData, assignableRolesData] = await Promise.all([
           getUser(Number(userId)),
           getUserPerformance(Number(userId)),
           getUserActivity(Number(userId)),
           getDepartments(),
           getRoles(),
           getUsers(),
+          getAssignableRoles(),
         ]);
         setUser(userData);
         setPerformance(perfData);
@@ -101,6 +105,7 @@ export function UserDetailPage() {
         setDepartments(deptsData);
         setRoles(rolesData);
         setAllUsers(usersData);
+        setAssignableRoles(assignableRolesData);
         setEditForm({
           name: userData.name,
           email: userData.email,
@@ -108,6 +113,8 @@ export function UserDetailPage() {
           roleId: userData.role?.id?.toString() || "",
           managerId: userData.manager?.id?.toString() || "",
           active: userData.active,
+          manageAllDepartments: userData.manageAllDepartments,
+          managedDepartmentIds: userData.managedDepartments.map(d => d.id),
         });
       } catch (err: any) {
         setError(err?.message || "Failed to load user details.");
@@ -117,9 +124,6 @@ export function UserDetailPage() {
     }
     loadData();
   }, [userId]);
-
-  // Filter roles based on assignable roles (same logic as UsersPage)
-  const assignableRoles = getEffectiveAssignableRoles(currentUser?.role, roles);
 
   // Filter out current user from manager options
   const managerOptions = allUsers.filter((u) => u.id !== Number(userId));
@@ -140,6 +144,12 @@ export function UserDetailPage() {
       if (editForm.active !== user.active) updateData.active = editForm.active;
       if (editForm.password && editForm.password.length > 0) {
         updateData.password = editForm.password;
+      }
+      if (editForm.manageAllDepartments !== user.manageAllDepartments) {
+        updateData.manage_all_departments = editForm.manageAllDepartments;
+      }
+      if (editForm.managedDepartmentIds.join(',') !== user.managedDepartments.map(d => d.id).join(',')) {
+        updateData.managed_department_ids = editForm.managedDepartmentIds;
       }
 
       const roleChanged = editForm.roleId !== (user.role?.id?.toString() || "");
@@ -657,6 +667,41 @@ export function UserDetailPage() {
                 ...assignableRoles.map((r) => ({ value: r.id.toString(), label: r.name })),
               ]}
             />
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-2">Departments This User Manages</label>
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editForm.manageAllDepartments}
+                    onChange={(e) => setEditForm({ ...editForm, manageAllDepartments: e.target.checked, managedDepartmentIds: e.target.checked ? [] : editForm.managedDepartmentIds })}
+                    className="w-4 h-4 accent-blue-600"
+                  />
+                  <span className="text-sm text-foreground">All Departments</span>
+                </label>
+                {!editForm.manageAllDepartments && (
+                  <div className="border border-border rounded-lg p-3 grid grid-cols-2 gap-2 max-h-48 overflow-y-auto">
+                    {departments.map((dept) => (
+                      <label key={dept.id} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={editForm.managedDepartmentIds.includes(dept.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setEditForm({ ...editForm, managedDepartmentIds: [...editForm.managedDepartmentIds, dept.id] });
+                            } else {
+                              setEditForm({ ...editForm, managedDepartmentIds: editForm.managedDepartmentIds.filter(id => id !== dept.id) });
+                            }
+                          }}
+                          className="w-4 h-4 accent-blue-600"
+                        />
+                        <span className="text-sm text-foreground">{dept.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
             <FldSelect
               label="Manager"
               value={editForm.managerId}

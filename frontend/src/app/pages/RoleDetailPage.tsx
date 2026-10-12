@@ -75,13 +75,13 @@ export function RoleDetailPage() {
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [localPermissionIds, setLocalPermissionIds] = useState<number[]>([]);
   const [selectedModule, setSelectedModule] = useState<string>("");
-  const [localDepartmentIds, setLocalDepartmentIds] = useState<number[]>([]);
   const [localAssignableRoleIds, setLocalAssignableRoleIds] = useState<number[]>([]);
 
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editColor, setEditColor] = useState("blue");
+  const [editDepartmentTagId, setEditDepartmentTagId] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
 
   // Filter out the current role from the list for assignable roles
@@ -125,14 +125,11 @@ export function RoleDetailPage() {
         const perm = allPermissions.find((ap) => ap.name === p);
         return perm?.id || 0;
       }).filter((id) => id !== 0));
-      setLocalDepartmentIds(
-        role.allDepartments ? allDepartments.map((d) => d.id) : role.departments.map((d) => d.id)
-      );
       setLocalAssignableRoleIds(
         role.allRoles ? otherRoles.map((r) => r.id) : role.assignableRoles.map((r) => r.id)
       );
     }
-  }, [activeTab, role, allPermissions, allDepartments, otherRoles]);
+  }, [activeTab, role, allPermissions, otherRoles]);
 
   // Group permissions by module (part before colon)
   const permissionModules = useMemo(() => {
@@ -170,14 +167,6 @@ export function RoleDetailPage() {
     if (sortedOriginalPermissions.length !== sortedLocalPermissions.length) return true;
     if (sortedOriginalPermissions.some((id, i) => id !== sortedLocalPermissions[i])) return true;
 
-    // Check departments
-    const computedAllDepartments = localDepartmentIds.length === allDepartments.length;
-    if (role.allDepartments !== computedAllDepartments) return true;
-    const originalDepartmentIds = role.departments.map((d) => d.id).sort((a, b) => a - b);
-    const sortedLocalDepartments = [...localDepartmentIds].sort((a, b) => a - b);
-    if (originalDepartmentIds.length !== sortedLocalDepartments.length) return true;
-    if (originalDepartmentIds.some((id, i) => id !== sortedLocalDepartments[i])) return true;
-
     // Check assignable roles
     const computedAllRoles = localAssignableRoleIds.length === otherRoles.length;
     if (role.allRoles !== computedAllRoles) return true;
@@ -187,18 +176,15 @@ export function RoleDetailPage() {
     if (originalAssignableIds.some((id, i) => id !== sortedLocalAssignable[i])) return true;
 
     return false;
-  }, [role, allPermissions, localPermissionIds, localDepartmentIds, allDepartments, localAssignableRoleIds, allRoles]);
+  }, [role, allPermissions, localPermissionIds, localAssignableRoleIds, allRoles]);
 
   async function handleSavePermissions() {
     if (!role) return;
     try {
       setError(null);
-      const computedAllDepartments = localDepartmentIds.length === allDepartments.length;
       const computedAllRoles = localAssignableRoleIds.length === otherRoles.length;
       await updateRole(role.id, {
         permissionIds: localPermissionIds,
-        allDepartments: computedAllDepartments,
-        departmentIds: computedAllDepartments ? [] : localDepartmentIds,
         allRoles: computedAllRoles,
         assignableRoleIds: computedAllRoles ? [] : localAssignableRoleIds,
       });
@@ -216,6 +202,7 @@ export function RoleDetailPage() {
     setEditName(role.name);
     setEditDescription(role.description || "");
     setEditColor(role.color);
+    setEditDepartmentTagId(role.departmentTag?.id?.toString() || "");
     setEditError(null);
     setShowEditDialog(true);
   }
@@ -233,6 +220,7 @@ export function RoleDetailPage() {
         name: editName.trim(),
         description: editDescription.trim() || undefined,
         color: editColor,
+        departmentTagId: editDepartmentTagId ? Number(editDepartmentTagId) : null,
       });
       const updatedRole = await getRole(role.id);
       setRole(updatedRole);
@@ -261,15 +249,6 @@ export function RoleDetailPage() {
         const moduleIds = currentModulePermissions.map((p) => p.id);
         return [...new Set([...prev, ...moduleIds])];
       });
-    }
-  }
-
-  function toggleAllDepartments() {
-    const allSelected = allDepartments.every((d) => localDepartmentIds.includes(d.id));
-    if (allSelected) {
-      setLocalDepartmentIds([]);
-    } else {
-      setLocalDepartmentIds(allDepartments.map((d) => d.id));
     }
   }
 
@@ -503,44 +482,6 @@ export function RoleDetailPage() {
               </div>
             </div>
 
-            {/* Department Access Section - only show if permissions are selected */}
-            {localPermissionIds.length > 0 && (
-              <div className="pt-3 border-t border-border">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold text-foreground">Department Access</h3>
-                  <button
-                    onClick={toggleAllDepartments}
-                    className="text-xs text-blue-600 hover:text-blue-700 cursor-pointer"
-                  >
-                    {allDepartments.length > 0 && allDepartments.every((d) => localDepartmentIds.includes(d.id)) ? "Deselect All" : "Select All"}
-                  </button>
-                </div>
-                {allDepartments.length > 0 ? (
-                  <div className="border border-border rounded-lg p-3 grid grid-cols-2 lg:grid-cols-3 gap-2 max-h-96 overflow-y-auto">
-                    {allDepartments.map((dept) => (
-                      <label key={dept.id} className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={localDepartmentIds.includes(dept.id)}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setLocalDepartmentIds((prev) => [...prev, dept.id]);
-                            } else {
-                              setLocalDepartmentIds((prev) => prev.filter((id) => id !== dept.id));
-                            }
-                          }}
-                          className="w-4 h-4 accent-blue-600"
-                        />
-                        <span className="text-sm text-foreground">{dept.name}</span>
-                      </label>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">No departments exist yet</p>
-                )}
-              </div>
-            )}
-
             {/* Assignable Roles Section - only show if user:manage permission is selected */}
             {localPermissionIds.length > 0 && allPermissions.find(p => p.name === "user:manage") && localPermissionIds.includes(allPermissions.find(p => p.name === "user:manage")!.id) && (
               <div className="pt-3 border-t border-border">
@@ -703,6 +644,26 @@ export function RoleDetailPage() {
                   />
                 ))}
               </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1">
+                Department Tag
+              </label>
+              <select
+                value={editDepartmentTagId}
+                onChange={(e) => setEditDepartmentTagId(e.target.value)}
+                className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">No department (general role, usable anywhere)</option>
+                {allDepartments.map((dept) => (
+                  <option key={dept.id} value={dept.id.toString()}>
+                    {dept.name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground mt-1">
+                Which department is this role for? Leave blank for a general role usable anywhere.
+              </p>
             </div>
             {editError && (
               <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">

@@ -9,13 +9,6 @@ from sqlalchemy.orm import relationship
 
 from app.database import Base
 
-role_department = Table(
-    "role_department",
-    Base.metadata,
-    Column("role_id", Integer, ForeignKey("roles.id"), primary_key=True),
-    Column("department_id", ForeignKey("departments.id"), primary_key=True),
-)
-
 role_permission = Table(
     "role_permission",
     Base.metadata,
@@ -41,14 +34,14 @@ class Role(Base):
     is_active = Column(Boolean, nullable=False, default=True, server_default=false())
     is_system = Column(Boolean, nullable=False, default=False, server_default=false())
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
-    all_departments = Column(Boolean, nullable=False, default=False, server_default=false())
+    department_tag_id = Column(Integer, ForeignKey("departments.id"), nullable=True)
     all_roles = Column(Boolean, nullable=False, default=False, server_default=false())
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     category = relationship("Category", back_populates="roles")
-    departments = relationship("Department", secondary=role_department)
+    department_tag = relationship("Department", foreign_keys=[department_tag_id])
     permissions = relationship("Permission", secondary=role_permission)
     assignable_roles = relationship(
         "Role", secondary=role_assignable_role,

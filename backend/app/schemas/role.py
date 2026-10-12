@@ -40,8 +40,7 @@ class RoleCreate(BaseModel):
     is_system: bool = False
     category_id: int | None = None  # optional preset, copies its permissions once
     permission_ids: list[int] = []  # explicit permissions; if empty and category_id given, copy from category
-    all_departments: bool = False
-    department_ids: list[int] = []
+    department_tag_id: int | None = None
     all_roles: bool = False
     assignable_role_ids: list[int] = []
 
@@ -52,8 +51,7 @@ class RoleUpdate(BaseModel):
     is_active: bool | None = None
     is_system: bool | None = None
     permission_ids: list[int] | None = None
-    all_departments: bool | None = None
-    department_ids: list[int] | None = None
+    department_tag_id: int | None = None
     all_roles: bool | None = None
     assignable_role_ids: list[int] | None = None
 
@@ -69,8 +67,7 @@ class RoleOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     permissions: list[PermissionOut] = []
-    all_departments: bool = False
-    departments: list[DepartmentOut] = []
+    department_tag: DepartmentOut | None = None
     all_roles: bool = False
     assignable_roles: list[RoleBrief] = []
     user_count: int

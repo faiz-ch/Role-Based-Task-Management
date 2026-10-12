@@ -34,8 +34,7 @@ export interface Role {
   createdAt: string;
   updatedAt: string;
   permissions: string[];
-  allDepartments: boolean;
-  departments: { id: number; name: string }[];
+  departmentTag: { id: number; name: string } | null;
   allRoles: boolean;
   assignableRoles: { id: number; name: string }[];
   userCount: number;
@@ -48,6 +47,8 @@ export interface UserType {
   active: boolean; // maps to backend's `is_active`
   role: Role | null;
   department: Department | null;
+  manageAllDepartments: boolean;
+  managedDepartments: Department[];
   createdAt: string;
   manager: { id: number; name: string; email: string } | null;
   hasAvatar: boolean;

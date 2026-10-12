@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.core.deps import require_permission, get_current_user, has_permission, get_scoped_department_ids
 from app.core.security import hash_password
 from app.database import get_db
-from app.models.user import User
+from app.models.user import User, user_managed_department
 from app.models.role import Role
 from app.models.department import Department
 from app.models.task import Task
@@ -41,8 +41,8 @@ async def list_users(
         raise HTTPException(status_code=403, detail="You do not have permission to view users")
     
     query = select(User).options(selectinload(User.role).selectinload(Role.permissions),
-        selectinload(User.role).selectinload(Role.departments),
         selectinload(User.role).selectinload(Role.assignable_roles),
+        selectinload(User.managed_departments),
         selectinload(User.department))
     
     scoped_dept_ids = get_scoped_department_ids(current_user)
@@ -106,6 +106,13 @@ async def create_user(
                     detail="You are not allowed to assign this role"
                 )
 
+        # Domain-relevance check: the target role must either have no department
+        # tag (generic, assignable anywhere) or its tag must match a department
+        # the current user actually manages.
+        if role.department_tag_id is not None:
+            if not current_user.manage_all_departments and role.department_tag_id not in {d.id for d in current_user.managed_departments}:
+                raise HTTPException(status_code=403, detail="This role is not assignable outside its department")
+
     if final_department_id is not None:
         dept_result = await db.execute(select(Department).where(Department.id == final_department_id))
         if dept_result.scalar_one_or_none() is None:
@@ -118,9 +125,23 @@ async def create_user(
         role_id=payload.role_id,
         department_id=final_department_id,
         is_active=payload.is_active,
+        manage_all_departments=payload.manage_all_departments,
     )
     db.add(user)
     await db.commit()
+
+    # Handle managed_departments
+    if payload.managed_department_ids:
+        for dept_id in payload.managed_department_ids:
+            dept_result = await db.execute(select(Department).where(Department.id == dept_id))
+            if dept_result.scalar_one_or_none() is None:
+                raise HTTPException(status_code=404, detail=f"Department with id {dept_id} not found")
+        # Add managed department associations
+        for dept_id in payload.managed_department_ids:
+            await db.execute(
+                user_managed_department.insert().values(user_id=user.id, department_id=dept_id)
+            )
+        await db.commit()
     
     await log_activity(db, current_user.id, "user_created", "user", user.id, detail=f"Account created by {current_user.name}")
 
@@ -131,7 +152,7 @@ async def create_user(
     result = await db.execute(
         select(User)
         .options(selectinload(User.role).selectinload(Role.permissions),
-        selectinload(User.role).selectinload(Role.departments),
+        selectinload(User.managed_departments),
         selectinload(User.role).selectinload(Role.assignable_roles),
         selectinload(User.department))
         .where(User.id == user.id)
@@ -165,7 +186,7 @@ async def get_user(
     result = await db.execute(
         select(User)
         .options(selectinload(User.role).selectinload(Role.permissions),
-        selectinload(User.role).selectinload(Role.departments),
+        selectinload(User.managed_departments),
         selectinload(User.role).selectinload(Role.assignable_roles),
         selectinload(User.department))
         .where(User.id == user_id)
@@ -333,6 +354,26 @@ async def update_user(
         user.manager_id = payload.manager_id
         changed_fields.append("manager_id")
 
+    # Handle manage_all_departments
+    if payload.manage_all_departments != user.manage_all_departments:
+        user.manage_all_departments = payload.manage_all_departments
+        changed_fields.append("manage_all_departments")
+
+    # Handle managed_department_ids
+    if payload.managed_department_ids is not None:
+        # Clear existing managed department associations
+        await db.execute(user_managed_department.delete().where(user_managed_department.c.user_id == user_id))
+
+        # Add new managed department associations
+        for dept_id in payload.managed_department_ids:
+            dept_result = await db.execute(select(Department).where(Department.id == dept_id))
+            if dept_result.scalar_one_or_none() is None:
+                raise HTTPException(status_code=404, detail=f"Department with id {dept_id} not found")
+            await db.execute(
+                user_managed_department.insert().values(user_id=user.id, department_id=dept_id)
+            )
+        changed_fields.append("managed_departments")
+
     await db.commit()
 
     # Log activity with detail summarizing changes
@@ -344,7 +385,7 @@ async def update_user(
     result = await db.execute(
         select(User)
         .options(selectinload(User.role).selectinload(Role.permissions),
-        selectinload(User.role).selectinload(Role.departments),
+        selectinload(User.managed_departments),
         selectinload(User.role).selectinload(Role.assignable_roles),
         selectinload(User.department))
         .where(User.id == user.id)
@@ -398,6 +439,13 @@ async def assign_role(
                     detail="You are not allowed to assign this role"
                 )
 
+        # Domain-relevance check: the target role must either have no department
+        # tag (generic, assignable anywhere) or its tag must match a department
+        # the current user actually manages.
+        if role.department_tag_id is not None:
+            if not current_user.manage_all_departments and role.department_tag_id not in {d.id for d in current_user.managed_departments}:
+                raise HTTPException(status_code=403, detail="This role is not assignable outside its department")
+
         user.role_id = role.id
 
     await db.commit()
@@ -406,7 +454,7 @@ async def assign_role(
     result = await db.execute(
         select(User)
         .options(selectinload(User.role).selectinload(Role.permissions),
-        selectinload(User.role).selectinload(Role.departments),
+        selectinload(User.managed_departments),
         selectinload(User.role).selectinload(Role.assignable_roles),
         selectinload(User.department))
         .where(User.id == user.id)
@@ -637,7 +685,7 @@ async def assign_department(
     result = await db.execute(
         select(User)
         .options(selectinload(User.role).selectinload(Role.permissions),
-        selectinload(User.role).selectinload(Role.departments),
+        selectinload(User.managed_departments),
         selectinload(User.role).selectinload(Role.assignable_roles),
         selectinload(User.department))
         .where(User.id == user.id)
@@ -714,7 +762,7 @@ async def upload_avatar(
     result = await db.execute(
         select(User)
         .options(selectinload(User.role).selectinload(Role.permissions),
-        selectinload(User.role).selectinload(Role.departments),
+        selectinload(User.managed_departments),
         selectinload(User.role).selectinload(Role.assignable_roles),
         selectinload(User.department))
         .where(User.id == user.id)
@@ -744,7 +792,7 @@ async def delete_avatar(
     result = await db.execute(
         select(User)
         .options(selectinload(User.role).selectinload(Role.permissions),
-        selectinload(User.role).selectinload(Role.departments),
+        selectinload(User.managed_departments),
         selectinload(User.role).selectinload(Role.assignable_roles),
         selectinload(User.department))
         .where(User.id == user.id)

@@ -8,7 +8,7 @@ from app.database import get_db
 from app.models.department import Department
 from app.models.user import User
 from app.models.project import Project, project_department
-from app.models.role import role_department
+from app.models.user import user_managed_department
 from app.models.activity_log import ActivityLog
 from app.schemas.department import (
     DepartmentCreate,
@@ -307,7 +307,7 @@ async def delete_department(
                 )
 
     # Clear role_department associations for this department
-    await db.execute(role_department.delete().where(role_department.c.department_id == department_id))
+    await db.execute(user_managed_department.delete().where(user_managed_department.c.department_id == department_id))
 
     # Log activity before deletion
     await log_activity(

@@ -74,7 +74,7 @@ function AppContent() {
     }
   }, [currentUser, permissions, navigate]);
 
-  const noRole = !currentUser?.role;
+  const noRole = !currentUser?.role && !currentUser?.department;
 
   return (
     <Routes>

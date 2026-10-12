@@ -4,10 +4,17 @@ than many-to-many). role_id can be null temporarily (e.g. a brand new
 user before an admin assigns them a role). Similarly, department_id
 is optional for organizational grouping.
 """
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, func
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, func, Table, false
 from sqlalchemy.orm import relationship
 
 from app.database import Base
+
+user_managed_department = Table(
+    "user_managed_department",
+    Base.metadata,
+    Column("user_id", Integer, ForeignKey("users.id"), primary_key=True),
+    Column("department_id", ForeignKey("departments.id"), primary_key=True),
+)
 
 
 class User(Base):
@@ -25,6 +32,9 @@ class User(Base):
 
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=True)
     department = relationship("Department", back_populates="users", foreign_keys=[department_id])
+
+    manage_all_departments = Column(Boolean, nullable=False, default=False, server_default=false())
+    managed_departments = relationship("Department", secondary=user_managed_department)
 
     manager_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     manager = relationship("User", remote_side=[id], foreign_keys=[manager_id])

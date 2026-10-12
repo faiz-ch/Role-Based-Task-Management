@@ -5,7 +5,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.deps import require_permission, get_current_user
 from app.database import get_db
-from app.models.role import Role, Permission, role_permission, role_assignable_role, role_department
+from app.models.role import Role, Permission, role_permission, role_assignable_role
 from app.models.category import Category
 from app.models.user import User
 from app.models.activity_log import ActivityLog
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/roles", tags=["roles"])
 
 async def _role_to_out(db: AsyncSession, role: Role) -> RoleOut:
     """Convert Role model to RoleOut schema with counts and loaded relationships."""
-    await db.refresh(role, ["permissions", "departments", "assignable_roles", "creator"])
+    await db.refresh(role, ["permissions", "assignable_roles", "creator", "department_tag"])
     user_count_result = await db.execute(select(User).where(User.role_id == role.id))
     user_count = len(user_count_result.scalars().all())
     return RoleOut(
@@ -38,8 +38,7 @@ async def _role_to_out(db: AsyncSession, role: Role) -> RoleOut:
         created_at=role.created_at,
         updated_at=role.updated_at,
         permissions=list(role.permissions),
-        all_departments=role.all_departments,
-        departments=list(role.departments),
+        department_tag=role.department_tag,
         all_roles=role.all_roles,
         assignable_roles=list(role.assignable_roles),
         user_count=user_count,
@@ -55,7 +54,7 @@ async def list_roles(
     result = await db.execute(
         select(Role).options(
             selectinload(Role.permissions),
-            selectinload(Role.departments),
+
             selectinload(Role.assignable_roles),
             selectinload(Role.creator),
         )
@@ -65,6 +64,45 @@ async def list_roles(
     for role in roles:
         out_list.append(await _role_to_out(db, role))
     return out_list
+
+@router.get("/assignable", response_model=list[RoleOut])
+async def list_assignable_roles(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Returns roles the current user can assign (hierarchy + domain relevance)."""
+    # Start with all roles
+    result = await db.execute(
+        select(Role).options(
+            selectinload(Role.permissions),
+            selectinload(Role.assignable_roles),
+            selectinload(Role.creator),
+            selectinload(Role.department_tag),
+        )
+    )
+    all_roles = result.scalars().all()
+
+    # Filter by hierarchy: must be in assignable_roles (or user has all_roles)
+    if current_user.role and current_user.role.all_roles:
+        hierarchy_filtered = all_roles
+    elif current_user.role:
+        assignable_role_ids = {r.id for r in current_user.role.assignable_roles}
+        hierarchy_filtered = [r for r in all_roles if r.id in assignable_role_ids]
+    else:
+        # No role = can't assign any roles
+        return []
+
+    # Filter by domain relevance: role must have no department_tag OR
+    # its department_tag must be in current_user's managed_departments
+    if current_user.manage_all_departments:
+        return [await _role_to_out(db, r) for r in hierarchy_filtered]
+    else:
+        managed_dept_ids = {d.id for d in current_user.managed_departments}
+        domain_filtered = [
+            r for r in hierarchy_filtered
+            if r.department_tag_id is None or r.department_tag_id in managed_dept_ids
+        ]
+        return [await _role_to_out(db, r) for r in domain_filtered]
 
 
 @router.get("/{role_id}", response_model=RoleOut)
@@ -77,7 +115,7 @@ async def get_role(
     result = await db.execute(
         select(Role).options(
             selectinload(Role.permissions),
-            selectinload(Role.departments),
+
             selectinload(Role.assignable_roles),
             selectinload(Role.creator),
         ).where(Role.id == role_id)
@@ -127,7 +165,7 @@ async def create_role(
         is_active=payload.is_active,
         is_system=payload.is_system,
         category_id=payload.category_id,
-        all_departments=payload.all_departments,
+        department_tag_id=payload.department_tag_id,
         all_roles=payload.all_roles,
         created_by=current_user.id,
     )
@@ -149,11 +187,6 @@ async def create_role(
     if resolved_permission_ids:
         for perm_id in resolved_permission_ids:
             await db.execute(role_permission.insert().values(role_id=role.id, permission_id=perm_id))
-
-    # Insert department associations (skip if all_departments is true)
-    if not role.all_departments and payload.department_ids:
-        for dept_id in payload.department_ids:
-            await db.execute(role_department.insert().values(role_id=role.id, department_id=dept_id))
 
     # Insert assignable role associations (skip if all_roles is true)
     if not role.all_roles and payload.assignable_role_ids:
@@ -184,7 +217,7 @@ async def update_role(
     result = await db.execute(
         select(Role).options(
             selectinload(Role.permissions),
-            selectinload(Role.departments),
+
             selectinload(Role.assignable_roles),
             selectinload(Role.creator),
         ).where(Role.id == role_id)
@@ -222,21 +255,10 @@ async def update_role(
             await db.execute(role_permission.insert().values(role_id=role_id, permission_id=perm_id))
         changed_fields.append("permissions")
 
-    # Handle departments/all_departments update
-    if payload.department_ids is not None or payload.all_departments is not None:
-        if payload.all_departments is not None:
-            role.all_departments = payload.all_departments
-            changed_fields.append("all_departments")
-
-        # Clear existing department associations
-        await db.execute(role_department.delete().where(role_department.c.role_id == role_id))
-
-        # Add new department associations if not all_departments
-        if not role.all_departments and payload.department_ids:
-            for dept_id in payload.department_ids:
-                await db.execute(role_department.insert().values(role_id=role_id, department_id=dept_id))
-        elif payload.department_ids is not None:
-            changed_fields.append("departments")
+    # Handle department_tag_id update
+    if payload.department_tag_id is not None:
+        role.department_tag_id = payload.department_tag_id
+        changed_fields.append("department_tag_id")
 
     # Handle assignable roles/all_roles update
     if payload.assignable_role_ids is not None or payload.all_roles is not None:
@@ -311,9 +333,6 @@ async def delete_role(
     # Clear role_permission rows for this role
     await db.execute(role_permission.delete().where(role_permission.c.role_id == role_id))
 
-    # Clear role_department rows for this role
-    await db.execute(role_department.delete().where(role_department.c.role_id == role_id))
-
     # Clear role_assignable_role rows in BOTH directions — this role as the
     # assigner, and this role as the assignable target of some other role
     await db.execute(
@@ -335,3 +354,5 @@ async def list_all_permissions(
     """Returns the fixed system permission list — used to build the checkbox UI."""
     result = await db.execute(select(Permission))
     return result.scalars().all()
+
+

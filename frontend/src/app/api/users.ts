@@ -15,8 +15,7 @@ function mapRole(r: any): Role {
     createdAt: r.created_at || "",
     updatedAt: r.updated_at || "",
     permissions: Array.isArray(r.permissions) ? r.permissions.map((p: any) => p.name) : [],
-    allDepartments: r.all_departments || false,
-    departments: Array.isArray(r.departments) ? r.departments.map((d: any) => ({ id: d.id, name: d.name })) : [],
+    departmentTag: r.department_tag ? { id: r.department_tag.id, name: r.department_tag.name } : null,
     allRoles: r.all_roles || false,
     assignableRoles: Array.isArray(r.assignable_roles) ? r.assignable_roles.map((ar: any) => ({ id: ar.id, name: ar.name })) : [],
     userCount: r.user_count || 0,
@@ -31,6 +30,19 @@ function mapUser(u: any): UserType {
     active: u.is_active,
     role: u.role ? mapRole(u.role) : null,
     department: u.department ? { id: u.department.id, name: u.department.name } : null,
+    manageAllDepartments: u.manage_all_departments || false,
+    managedDepartments: Array.isArray(u.managed_departments) ? u.managed_departments.map((d: any) => ({
+      id: d.id,
+      name: d.name,
+      description: d.description || null,
+      headId: d.head_id || null,
+      head: d.head ? { id: d.head.id, name: d.head.name, email: d.head.email } : null,
+      color: d.color || "blue",
+      isActive: d.is_active ?? true,
+      memberCount: d.member_count || 0,
+      projectCount: d.project_count || 0,
+      createdAt: d.created_at || "",
+    })) : [],
     createdAt: u.created_at,
     manager: u.manager ? { id: u.manager.id, name: u.manager.name, email: u.manager.email } : null,
     hasAvatar: u.has_avatar || false,
@@ -86,7 +98,7 @@ export async function getUserActivity(id: number): Promise<{
   })) : [];
 }
 
-export async function updateUser(id: number, data: { name?: string; email?: string; password?: string; active?: boolean; department_id?: number; manager_id?: number | null }): Promise<UserType> {
+export async function updateUser(id: number, data: { name?: string; email?: string; password?: string; active?: boolean; department_id?: number; manager_id?: number | null; manage_all_departments?: boolean; managed_department_ids?: number[] }): Promise<UserType> {
   const payload: any = {};
   if (data.name !== undefined) payload.name = data.name;
   if (data.email !== undefined) payload.email = data.email;
@@ -94,6 +106,8 @@ export async function updateUser(id: number, data: { name?: string; email?: stri
   if (data.active !== undefined) payload.is_active = data.active;
   if (data.department_id !== undefined) payload.department_id = data.department_id;
   if (data.manager_id !== undefined) payload.manager_id = data.manager_id;
+  if (data.manage_all_departments !== undefined) payload.manage_all_departments = data.manage_all_departments;
+  if (data.managed_department_ids !== undefined) payload.managed_department_ids = data.managed_department_ids;
 
   const res = await apiFetch(`/users/${id}`, {
     method: "PATCH",
@@ -110,13 +124,15 @@ export async function assignRole(userId: number, roleId: number | null): Promise
   return mapUser(res);
 }
 
-export async function createUser(data: { 
-  name: string; 
-  email: string; 
-  password: string; 
-  role_id?: number; 
+export async function createUser(data: {
+  name: string;
+  email: string;
+  password: string;
+  role_id?: number;
   department_id?: number;
   isActive?: boolean;
+  manage_all_departments?: boolean;
+  managed_department_ids?: number[];
   sendWelcomeEmail?: boolean;
 }): Promise<UserType> {
   const payload: any = {};
@@ -126,6 +142,8 @@ export async function createUser(data: {
   if (data.role_id !== undefined) payload.role_id = data.role_id;
   if (data.department_id !== undefined) payload.department_id = data.department_id;
   if (data.isActive !== undefined) payload.is_active = data.isActive;
+  if (data.manage_all_departments !== undefined) payload.manage_all_departments = data.manage_all_departments;
+  if (data.managed_department_ids !== undefined) payload.managed_department_ids = data.managed_department_ids;
   if (data.sendWelcomeEmail !== undefined) payload.send_welcome_email = data.sendWelcomeEmail;
 
   const res = await apiFetch("/users", {

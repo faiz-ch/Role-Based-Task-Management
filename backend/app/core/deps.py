@@ -23,6 +23,7 @@ from app.models.role import Role
 from app.models.project import Project
 from app.models.task import Task
 from app.models.subtask import SubTask
+from app.models.department import Department
 
 # tokenUrl is just used by the /docs page to know where to send a login
 # request from its "Authorize" button — it doesn't affect real API calls.
@@ -53,8 +54,8 @@ async def get_current_user(
         select(User)
         .options(
             selectinload(User.role).selectinload(Role.permissions),
-            selectinload(User.role).selectinload(Role.departments),
             selectinload(User.role).selectinload(Role.assignable_roles),
+            selectinload(User.managed_departments),
             selectinload(User.department),
         )
         .where(User.id == int(user_id))
@@ -98,15 +99,13 @@ def has_permission(user: User, permission_name: str) -> bool:
 
 def get_scoped_department_ids(user: User) -> set[int] | None:
     """
-    Returns None if the role has global (all_departments=True) scope —
+    Returns None if the user has global (manage_all_departments=True) scope —
     caller should skip department filtering entirely in that case.
     Returns a (possibly empty) set of department ids otherwise.
     """
-    if user.role is None:
-        return set()
-    if user.role.all_departments:
+    if user.manage_all_departments:
         return None
-    return {d.id for d in user.role.departments}
+    return {d.id for d in user.managed_departments}
 
 
 def is_project_lead(user: User, project: Project) -> bool:

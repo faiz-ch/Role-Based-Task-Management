@@ -264,7 +264,7 @@ async def get_project_candidates(
             selectinload(User.role)
             .selectinload(Role.category)
             .selectinload(Category.permissions),
-            selectinload(User.role).selectinload(Role.departments),
+            selectinload(User.managed_departments),
             selectinload(User.role).selectinload(Role.permissions),
             selectinload(User.role).selectinload(Role.assignable_roles),
         ).where(User.department_id.in_(project_dept_ids))
@@ -662,7 +662,7 @@ async def update_project_team(
             selectinload(User.role)
             .selectinload(Role.category)
             .selectinload(Category.permissions),
-            selectinload(User.role).selectinload(Role.departments),
+            selectinload(User.managed_departments),
             selectinload(User.role).selectinload(Role.permissions),
             selectinload(User.role).selectinload(Role.assignable_roles),
         ).where(User.department_id.in_(project_dept_ids))
@@ -847,7 +847,7 @@ async def _validate_and_set_project_team(
             selectinload(User.role)
             .selectinload(Role.category)
             .selectinload(Category.permissions),
-            selectinload(User.role).selectinload(Role.departments),
+            selectinload(User.managed_departments),
             selectinload(User.role).selectinload(Role.permissions),
             selectinload(User.role).selectinload(Role.assignable_roles),
         ).where(User.department_id.in_(project_dept_ids))

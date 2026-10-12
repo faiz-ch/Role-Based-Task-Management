@@ -14,8 +14,7 @@ function mapRole(r: any): Role {
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     permissions: Array.isArray(r.permissions) ? r.permissions.map((p: any) => p.name) : [],
-    allDepartments: r.all_departments || false,
-    departments: Array.isArray(r.departments) ? r.departments.map((d: any) => ({ id: d.id, name: d.name })) : [],
+    departmentTag: r.department_tag ? { id: r.department_tag.id, name: r.department_tag.name } : null,
     allRoles: r.all_roles || false,
     assignableRoles: Array.isArray(r.assignable_roles) ? r.assignable_roles.map((ar: any) => ({ id: ar.id, name: ar.name })) : [],
     userCount: r.user_count,
@@ -40,8 +39,7 @@ export async function createRole(input: {
   isSystem?: boolean;
   categoryId?: number | null;
   permissionIds?: number[];
-  allDepartments?: boolean;
-  departmentIds?: number[];
+  departmentTagId?: number | null;
   allRoles?: boolean;
   assignableRoleIds?: number[];
 }): Promise<Role> {
@@ -52,8 +50,7 @@ export async function createRole(input: {
   if (input.isSystem !== undefined) payload.is_system = input.isSystem;
   if (input.categoryId !== undefined) payload.category_id = input.categoryId;
   if (input.permissionIds !== undefined) payload.permission_ids = input.permissionIds;
-  if (input.allDepartments !== undefined) payload.all_departments = input.allDepartments;
-  if (input.departmentIds !== undefined) payload.department_ids = input.departmentIds;
+  if (input.departmentTagId !== undefined) payload.department_tag_id = input.departmentTagId;
   if (input.allRoles !== undefined) payload.all_roles = input.allRoles;
   if (input.assignableRoleIds !== undefined) payload.assignable_role_ids = input.assignableRoleIds;
   const data = await apiFetch("/roles", {
@@ -70,8 +67,7 @@ export async function updateRole(id: number, input: Partial<{
   isActive: boolean;
   isSystem: boolean;
   permissionIds: number[];
-  allDepartments: boolean;
-  departmentIds: number[];
+  departmentTagId: number | null;
   allRoles: boolean;
   assignableRoleIds: number[];
 }>): Promise<Role> {
@@ -82,8 +78,7 @@ export async function updateRole(id: number, input: Partial<{
   if (input.isActive !== undefined) payload.is_active = input.isActive;
   if (input.isSystem !== undefined) payload.is_system = input.isSystem;
   if (input.permissionIds !== undefined) payload.permission_ids = input.permissionIds;
-  if (input.allDepartments !== undefined) payload.all_departments = input.allDepartments;
-  if (input.departmentIds !== undefined) payload.department_ids = input.departmentIds;
+  if (input.departmentTagId !== undefined) payload.department_tag_id = input.departmentTagId;
   if (input.allRoles !== undefined) payload.all_roles = input.allRoles;
   if (input.assignableRoleIds !== undefined) payload.assignable_role_ids = input.assignableRoleIds;
   const data = await apiFetch(`/roles/${id}`, {
@@ -115,4 +110,9 @@ export async function getRoleActivity(id: number): Promise<{
 export async function getAllPermissions(): Promise<PermDef[]> {
   const data = await apiFetch("/roles/permissions/all");
   return Array.isArray(data) ? data : [];
+}
+
+export async function getAssignableRoles(): Promise<Role[]> {
+  const data = await apiFetch("/roles/assignable");
+  return Array.isArray(data) ? data.map(mapRole) : [];
 }
