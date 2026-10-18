@@ -23,13 +23,18 @@ function mapTask(t: any): Task {
     teamApprovedBy: t.team_approved_by,
     teamApprovedAt: t.team_approved_at,
     teamUserIds: t.team_user_ids || [],
+    subtaskTotal: t.subtask_total || 0,
+    subtaskDone: t.subtask_done || 0,
   };
 }
 
-export async function getTasks(options?: { assignedTo?: number }): Promise<Task[]> {
+export async function getTasks(options?: { assignedTo?: number; projectId?: number }): Promise<Task[]> {
   const params = new URLSearchParams();
   if (options?.assignedTo !== undefined) {
     params.append("assigned_to", options.assignedTo.toString());
+  }
+  if (options?.projectId !== undefined) {
+    params.append("project_id", options.projectId.toString()); // only this project's tasks
   }
   const url = params.toString() ? `/tasks?${params.toString()}` : "/tasks";
   const data = await apiFetch(url);

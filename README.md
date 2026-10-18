@@ -1,108 +1,95 @@
-# Task Manager — Backend (Auth + RBAC + Tasks)
+# Fix round 3: Issues 2, 3a and 3b
 
-Fully async FastAPI backend with JWT auth (access + refresh tokens),
-custom role-based permissions, and task management. Tested end-to-end
-before being handed to you — register/login/RBAC/tasks/dashboard all confirmed working.
+There are **26 files**: 24 replacements and 2 new files. Copy each one to the same path in your project.
+This round builds on round 2, so apply it on top of round 2.
 
-## What's in here
+## How to apply
+1. Commit or back up your project first.
+2. Copy the `backend` and `frontend` folders from this package into your project folder and choose **Replace**.
+3. In Windsurf Source Control you should see **24 modified files + 2 new files** (`api/queries.ts`, `api/queryClient.ts`).
+4. Install the new library. In a terminal inside the `frontend` folder:
+   ```
+   npm install
+   ```
+   This installs **@tanstack/react-query 5.59.0**, which is already listed in `package.json`. Docker does this automatically when building.
+5. Restart: `docker compose up --build`. **No database reset is needed.**
 
-```
-backend/
-├── app/
-│   ├── main.py              # entry point, wires up all routers, creates tables + seeds permissions on startup
-│   ├── config.py             # env-based settings (DB url, JWT secret, token expiry)
-│   ├── database.py            # async SQLAlchemy engine/session
-│   ├── seed.py                 # seeds the 6 fixed permissions
-│   ├── bootstrap_admin.py       # one-time script: makes a registered user an Admin
-│   ├── models/                   # SQLAlchemy tables: User, Role, Permission, Task
-│   ├── schemas/                    # Pydantic request/response shapes
-│   ├── core/
-│   │   ├── security.py               # password hashing + JWT create/verify
-│   │   └── deps.py                    # get_current_user, require_permission
-│   └── routers/
-│       ├── auth.py     # register, login, refresh
-│       ├── users.py    # list/get/update users, assign roles
-│       ├── roles.py    # create roles, set permissions on a role
-│       ├── tasks.py    # create/edit/assign/status update/delete tasks
-│       └── dashboard.py # summary stats
-├── requirements.txt
-└── .env.example
-```
+---
 
-## Setup (Windows, native Postgres)
+## What each file does
 
-You should already have Postgres running with the `taskmanager` user/db
-from our earlier setup. If not, see the earlier instructions I gave you.
+### New files (the shared data store)
+| File | Purpose |
+|---|---|
+| `frontend/src/app/api/queryClient.ts` | Creates the **one shared store** for the whole app. Data counts as fresh for 30 s, stays in memory for 10 min, is re-checked when you return to the tab, and failed requests are retried once (but not "no permission" or "not found" errors). |
+| `frontend/src/app/api/queries.ts` | `useCachedQuery()`: how every page now reads data. It returns the data plus a `setData` that works exactly like the old `setProjects(...)`, so existing page code kept working. Also holds the labels (`qk`) and freshness times: 5 min for departments, roles and permissions; 2 min for users; 30 s plus a 60 s re-check for projects, tasks and the dashboard. |
 
-### 1. Backend setup
-```bash
-cd backend
-copy .env.example .env
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-```
+### Wiring
+| File | What changed |
+|---|---|
+| `frontend/src/main.tsx` | Wraps the app in the shared store. |
+| `frontend/src/app/api/client.ts` | **Refresh after every save (Issue 3b).** After any successful POST, PUT, PATCH or DELETE, the data on screen is refreshed. Several quick saves (for example "create task" then "set team") are combined into **one** refresh. Departments, roles, permissions and categories refresh only when the save affects them. |
+| `frontend/src/app/context/AuthContext.tsx` | The store is **emptied at login and logout**, so the next person never sees the previous user's data. |
+| `frontend/package.json`, `package-lock.json` | Adds `@tanstack/react-query` 5.59.0, pinned to that exact version. |
 
-### 2. Run the server
-```bash
-uvicorn app.main:app --reload --port 8000
-```
-On first run, this automatically:
-- Creates all 5 tables (users, roles, permissions, role_permission, tasks)
-- Seeds the 6 fixed permissions (task:create, task:edit, task:assign, role:manage, user:manage, dashboard:view)
+### Backend: send only what is needed
+| File | What changed |
+|---|---|
+| `backend/app/routers/tasks.py` | `GET /tasks?project_id=N` returns only that project's tasks. |
+| `backend/app/schemas/project.py` | Each project now carries `task_count` and `done_task_count`. |
+| `backend/app/routers/projects.py` | Counts the tasks of **all** projects in **one** grouped query (`_task_counts`). |
+| `frontend/src/app/api/tasks.ts`, `api/projects.ts`, `types.ts` | Support the new filter and the two count fields. |
 
-Check http://localhost:8000/docs — the interactive API playground.
+### Pages (Issue 2): each now reads from the shared store instead of downloading everything when it opens
+| Page | Notes |
+|---|---|
+| `ProjectsPage.tsx` | No longer downloads all tasks; progress comes from the server's counts. Users are downloaded only if you can create projects. |
+| `ProjectDetailPage.tsx` | Downloads only **this project's** tasks. Activity, team, reports, milestones and files refresh after any save. |
+| `TasksPage.tsx`, `TaskDetailPage.tsx`, `SubtaskDetailPage.tsx` | Same pattern. |
+| `UsersPage.tsx`, `UserDetailPage.tsx` | Same pattern. The Edit form now fills from the **latest** data each time you open it. |
+| `RolesPage.tsx`, `RoleDetailPage.tsx` | Same pattern. |
+| `DepartmentsPage.tsx`, `DepartmentDetailPage.tsx` | Same pattern. The department page uses the server's task counts and no longer downloads all tasks. |
+| `DashboardPage.tsx`, `OverdueViewAllPage.tsx` | Re-checked every 60 s while open (Issue 3a). |
 
-### 3. Create your first Admin user
-Since NO user has any permission on a fresh system, we bootstrap the
-very first Admin directly:
+---
 
-```bash
-# Step 1: register normally via the API (use /docs, or curl)
-curl -X POST http://localhost:8000/auth/register -H "Content-Type: application/json" -d "{\"name\":\"Your Name\",\"email\":\"you@example.com\",\"password\":\"yourpassword\"}"
+## Test results (fresh database, real browser)
 
-# Step 2: promote that user to Admin (creates an Admin role with ALL permissions)
-python -m app.bootstrap_admin you@example.com
-```
+### Issue 2: server requests per navigation
+| Action | Before | After |
+|---|---|---|
+| Open Projects (first time) | 4 (incl. **all tasks**) | 3 (no tasks) |
+| Open Tasks | 5 | **1** (projects and departments reused) |
+| Projects again | 4 | **0** |
+| Open Project 1 | 8 (incl. **all tasks**) | 7 (only its own tasks) |
+| Back to Projects | 4 | **0** |
+| Open Project 1 again | 8 | **0** |
+| Departments / Dashboard (already cached) | 2 / 1 | **0 / 0** |
+| Users again | 4 | **0** |
 
-Now log in via `/auth/login` — the returned access token will have Admin rights.
-Use it as `Authorization: Bearer <access_token>` on any protected route,
-or click "Authorize" on the `/docs` page.
+### Issue 3b: your own saves
+- Create a task with a team: the task list and Activity refresh automatically, and the task shows its team and lead (Dr Ahmed) with no F5.
+- That save costs **7** refresh requests (it was 16 before the "combine quick saves" improvement).
+- Rename a project in Settings: the Projects list shows the new name with no F5.
 
-## Key concepts to understand (don't just skim — ask me if unclear)
+### Issue 3a: other people's changes
+- A colleague renamed a project while the Projects page was open. It appeared after **59 s**, with no navigation.
+- Returning to the tab after 30 s or more refreshes **immediately**. Returning sooner sends **no** request.
 
-- **Why async?** (`database.py`) — with sync code, one slow DB query blocks
-  the whole server thread. With async, the server can serve other users'
-  requests while waiting on the database. This matters once real users hit
-  the app at the same time — exactly what you asked for.
+### Safety
+- Logging out and in as another user: the store is emptied, and the department head sees only his own department's users.
+- No uncaught page errors and no server errors.
 
-- **Access token vs refresh token** (`core/security.py`) — access token is
-  short-lived (15 min) and sent on every request. Refresh token is long-lived
-  (7 days) and ONLY used to get a new access token without logging in again.
+### Regression (nothing broken)
+- 51/51 backend scenario checks (roles, departments, assignable roles)
+- 19/19 refresh and progress-bar browser checks (rounds 1–2)
+- 27/29 earlier screen checks. The 2 remaining are the same test-timing issue on the Role detail Permissions tab as in round 2: the boxes tick correctly a moment after the data loads (confirmed 3 times).
+- `vite build` succeeds. TypeScript: same 13 older errors, no new ones.
 
-- **`require_permission()`** (`core/deps.py`) — this is the actual enforcement
-  of your RBAC idea. Every protected route declares which permission it
-  needs, and this dependency checks the current user's role against it
-  BEFORE the route's own code runs.
+## Note
+- On the Projects and Department pages, a project's progress now counts **all** tasks in the project, which is the true project progress. Before, it counted only the tasks the viewer could see.
 
-- **Why `/tasks` (GET) has no permission check but `/tasks` (POST) does** —
-  intentional design choice: anyone logged in can view tasks, but only
-  users whose role has `task:create` can make new ones. Same pattern for
-  `task:edit`, `task:assign`.
-
-- **Why the status-update route is special** (`routers/tasks.py`) — a person
-  a task is ASSIGNED to can move it through its stages even without
-  `task:edit` permission — otherwise employees couldn't update their own
-  task's progress unless an admin explicitly gave them edit rights.
-
-## Tested and confirmed working
-
-- Register → Login → get access + refresh tokens
-- A user with no role gets 403 on permission-gated routes, but can still view tasks
-- Admin (all permissions) can create roles, create tasks, assign tasks, view dashboard
-- Refresh token flow issues new token pair correctly
-- Unauthenticated requests get a clean 401
-
-## Next: Frontend
-Now that backend is solid and tested, we can plan the React frontend to
-consume these exact APIs.
+## Remaining
+- **Issue 7:** paging, 25 per page (next step)
+- **Issue 8:** secure login cookie (before go-live)
+- **Revoke the Gmail app password** in `backend/.env.example`

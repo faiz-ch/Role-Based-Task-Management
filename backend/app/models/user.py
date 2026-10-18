@@ -16,6 +16,16 @@ user_managed_department = Table(
     Column("department_id", ForeignKey("departments.id"), primary_key=True),
 )
 
+# Per-user EXTRA roles this user may assign, on top of their role's base
+# assignable list. Lets one Department Head assign e.g. "Lab Technician"
+# without every Department Head getting that ability.
+user_extra_assignable_role = Table(
+    "user_extra_assignable_role",
+    Base.metadata,
+    Column("user_id", Integer, ForeignKey("users.id"), primary_key=True),
+    Column("role_id", Integer, ForeignKey("roles.id"), primary_key=True),
+)
+
 
 class User(Base):
     __tablename__ = "users"
@@ -35,6 +45,7 @@ class User(Base):
 
     manage_all_departments = Column(Boolean, nullable=False, default=False, server_default=false())
     managed_departments = relationship("Department", secondary=user_managed_department)
+    extra_assignable_roles = relationship("Role", secondary=user_extra_assignable_role)
 
     manager_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     manager = relationship("User", remote_side=[id], foreign_keys=[manager_id])

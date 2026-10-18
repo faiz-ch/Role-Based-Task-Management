@@ -1,5 +1,5 @@
-import React, { useEffect } from "react";
-import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router";
+import React from "react";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { Page } from "./types";
 import { Shell } from "./components/Shell";
@@ -20,41 +20,48 @@ import { DepartmentDetailPage } from "./pages/DepartmentDetailPage";
 import { UserDetailPage } from "./pages/UserDetailPage";
 import { OverdueViewAllPage } from "./pages/OverdueViewAllPage";
 
-// Auth guard component to redirect unauthenticated users
+function FullPageSpinner() {
+  return (
+    <div className="flex items-center justify-center h-screen">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500" />
+    </div>
+  );
+}
+
+// Protects pages that need a logged-in user.
+// Waits until the session check after a refresh (F5) has finished before deciding.
 function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { currentUser, permissions } = useAuth();
-  const navigate = useNavigate();
+  const { currentUser, initialized } = useAuth();
   const location = useLocation();
 
-  useEffect(() => {
-    if (!currentUser) {
-      navigate("/login", { replace: true });
-    } else if ((location.pathname === "/login" || location.pathname === "/register") && currentUser) {
-      // Redirect authenticated users away from login/register
-      navigate("/dashboard", { replace: true });
-    }
-  }, [currentUser, permissions, navigate, location.pathname]);
-
-  if (!currentUser) {
-    return null;
+  // 1. Still restoring the session -> wait, do not redirect yet
+  if (!initialized) {
+    return <FullPageSpinner />;
   }
 
+  // 2. Check finished and nobody is logged in -> Login, remembering the requested page
+  if (!currentUser) {
+    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
+  }
+
+  // 3. Logged in -> show the requested page
   return <>{children}</>;
 }
 
-// Public routes (login/register) - redirect if already authenticated
+// Login / Register pages. If already logged in, go back to the page the user
+// originally asked for (or the dashboard if there is none).
 function PublicRoute({ children }: { children: React.ReactNode }) {
-  const { currentUser, permissions } = useAuth();
-  const navigate = useNavigate();
+  const { currentUser, initialized } = useAuth();
+  const location = useLocation();
 
-  useEffect(() => {
-    if (currentUser) {
-      navigate("/dashboard", { replace: true });
-    }
-  }, [currentUser, permissions, navigate]);
+  if (!initialized) {
+    return <FullPageSpinner />;
+  }
 
   if (currentUser) {
-    return null;
+    const from = (location.state as { from?: string } | null)?.from;
+    const target = from && from !== "/login" && from !== "/register" ? from : "/dashboard";
+    return <Navigate to={target} replace />;
   }
 
   return <>{children}</>;
@@ -62,17 +69,6 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
 
 function AppContent() {
   const { currentUser, permissions } = useAuth();
-  const navigate = useNavigate();
-
-  // Permission-based redirect after login
-  useEffect(() => {
-    if (currentUser && permissions.length > 0) {
-      // Only redirect if we're on a public route
-      if (window.location.pathname === "/login" || window.location.pathname === "/register") {
-        navigate("/dashboard", { replace: true });
-      }
-    }
-  }, [currentUser, permissions, navigate]);
 
   const noRole = !currentUser?.role && !currentUser?.department;
 

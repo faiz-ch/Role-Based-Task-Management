@@ -57,6 +57,7 @@ class UserOut(BaseModel):
     department: DepartmentBrief | None = None
     manage_all_departments: bool = False
     managed_departments: list[DepartmentBrief] = []
+    extra_assignable_roles: list[RoleBriefMinimal] = []
     created_at: datetime
     manager: UserBrief | None = None
     has_avatar: bool = False
@@ -66,14 +67,22 @@ class UserOut(BaseModel):
 
 
 class UserUpdate(BaseModel):
+    """
+    Partial update: only fields the client actually SENDS are applied
+    (checked with model_fields_set in the router). This matters — with
+    non-None defaults, editing just a user's name used to silently wipe
+    their department scope.
+    department_id / manager_id may be sent as null to clear them.
+    """
     name: str | None = None
     email: EmailStr | None = None
     password: str | None = None
     is_active: bool | None = None
     department_id: int | None = None
     manager_id: int | None = None
-    manage_all_departments: bool = False
-    managed_department_ids: list[int] = []
+    manage_all_departments: bool | None = None
+    managed_department_ids: list[int] | None = None
+    extra_assignable_role_ids: list[int] | None = None
 
     @field_validator("password")
     @classmethod
@@ -100,6 +109,7 @@ class UserCreate(BaseModel):
     is_active: bool = True
     manage_all_departments: bool = False
     managed_department_ids: list[int] = []
+    extra_assignable_role_ids: list[int] = []
     send_welcome_email: bool = True
 
     @field_validator("password")

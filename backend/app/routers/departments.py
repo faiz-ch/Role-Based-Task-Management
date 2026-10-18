@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -9,6 +9,7 @@ from app.models.department import Department
 from app.models.user import User
 from app.models.project import Project, project_department
 from app.models.user import user_managed_department
+from app.models.role import Role
 from app.models.activity_log import ActivityLog
 from app.schemas.department import (
     DepartmentCreate,
@@ -22,26 +23,8 @@ from app.services.activity_log import log_activity
 router = APIRouter(prefix="/departments", tags=["departments"])
 
 
-async def _department_to_out(db: AsyncSession, department: Department) -> DepartmentOut:
-    """Convert Department model to DepartmentOut schema with counts and loaded relationships."""
-    # Load head and projects relationships with proper eager loading
-    result = await db.execute(
-        select(Department)
-        .options(selectinload(Department.head), selectinload(Department.projects))
-        .where(Department.id == department.id)
-    )
-    department = result.scalar_one()
-
-    # Count members (users where User.department_id == department.id)
-    member_count_result = await db.execute(
-        select(User).where(User.department_id == department.id)
-    )
-    member_count = len(member_count_result.scalars().all())
-
-    # Count projects via the secondary relationship
-    project_count = len(department.projects)
-
-    # Build head output if exists
+def _build_department_out(department: Department, member_count: int, project_count: int) -> DepartmentOut:
+    """Build DepartmentOut from an already-loaded department. Makes NO database calls."""
     head_out = None
     if department.head:
         head_out = {
@@ -49,7 +32,6 @@ async def _department_to_out(db: AsyncSession, department: Department) -> Depart
             "name": department.head.name,
             "email": department.head.email,
         }
-
     return DepartmentOut(
         id=department.id,
         name=department.name,
@@ -64,12 +46,42 @@ async def _department_to_out(db: AsyncSession, department: Department) -> Depart
     )
 
 
+async def _department_counts(db: AsyncSession, dept_ids: list[int]) -> tuple[dict[int, int], dict[int, int]]:
+    """
+    Member and project counts for MANY departments, counted inside the
+    database with two grouped queries (instead of loading every row).
+    """
+    if not dept_ids:
+        return {}, {}
+    members = dict((await db.execute(
+        select(User.department_id, func.count(User.id))
+        .where(User.department_id.in_(dept_ids))
+        .group_by(User.department_id)
+    )).all())
+    projects = dict((await db.execute(
+        select(project_department.c.department_id, func.count(project_department.c.project_id))
+        .where(project_department.c.department_id.in_(dept_ids))
+        .group_by(project_department.c.department_id)
+    )).all())
+    return members, projects
+
+
+async def _department_to_out(db: AsyncSession, department: Department) -> DepartmentOut:
+    """DepartmentOut for ONE department (used after get / create / update)."""
+    result = await db.execute(
+        select(Department).options(selectinload(Department.head)).where(Department.id == department.id)
+    )
+    department = result.scalar_one()
+    members, projects = await _department_counts(db, [department.id])
+    return _build_department_out(department, members.get(department.id, 0), projects.get(department.id, 0))
+
+
 @router.get("", response_model=list[DepartmentOut])
 async def list_departments(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List departments, scoped to the caller's own department(s) unless they hold all_departments."""
+    """List departments, scoped to the departments the caller manages unless they have manage_all_departments."""
     result = await db.execute(
         select(Department).options(selectinload(Department.head))
     )
@@ -83,11 +95,12 @@ async def list_departments(
     else:
         filtered_departments = [d for d in departments if d.id in scoped_dept_ids]
 
-    # Build DepartmentOut for each with counts
-    out_list = []
-    for dept in filtered_departments:
-        out_list.append(await _department_to_out(db, dept))
-    return out_list
+    # Counts for all departments in two grouped queries
+    members, projects = await _department_counts(db, [d.id for d in filtered_departments])
+    return [
+        _build_department_out(d, members.get(d.id, 0), projects.get(d.id, 0))
+        for d in filtered_departments
+    ]
 
 
 @router.get("/{department_id}", response_model=DepartmentOut)
@@ -306,8 +319,10 @@ async def delete_department(
                     )
                 )
 
-    # Clear role_department associations for this department
+    # Clear user-managed-department associations for this department
     await db.execute(user_managed_department.delete().where(user_managed_department.c.department_id == department_id))
+    # Roles tagged to this department become general (untagged) roles
+    await db.execute(update(Role).where(Role.department_tag_id == department_id).values(department_tag_id=None))
 
     # Log activity before deletion
     await log_activity(

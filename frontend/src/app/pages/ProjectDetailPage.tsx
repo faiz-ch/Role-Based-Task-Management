@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useParams, useNavigate } from "react-router";
 import { ArrowLeft, AlertTriangle, Video } from "lucide-react";
 import { Project, UserType, Department, Task, Subtask, Milestone, Attachment } from "../types";
 import { getProject, updateProjectTeam, getProjectCandidates, updateProject, deleteProject, sendProjectForApproval, approveProject, rejectProject, closeProject, reopenProject, getProjectMilestones, createMilestone, updateMilestone, deleteMilestone, getProjectAttachments, uploadProjectAttachment, deleteAttachment, getAttachmentDownloadUrl, getProjectActivity } from "../api/projects";
 import { getTasks, createTask, updateTaskTeam } from "../api/tasks";
 import { getDepartments } from "../api/departments";
+import { useCachedQuery, qk, FRESH, EMPTY } from "../api/queries";
 import { getProjectReports, createProjectReport, Report } from "../api/reports";
 import { createMeeting } from "../api/meetings";
 import { useAuth } from "../context/AuthContext";
@@ -20,7 +21,7 @@ import { FilesTab } from "./project-detail/FilesTab";
 import { ActivityTab } from "./project-detail/ActivityTab";
 import { SettingsTab } from "./project-detail/SettingsTab";
 import { ScheduleMeetingDialog } from "./project-detail/ScheduleMeetingDialog";
-import { getEffectiveDepartmentIds } from "../utils/roleAccess";
+import { inDepartmentScope } from "../utils/roleAccess";
 
 const PROJECT_STATUS_STYLE: Record<string, { badge: string; dot: string }> = {
   Planning: {
@@ -73,67 +74,47 @@ export function ProjectDetailPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const { currentUser, permissions } = useAuth();
-  const [project, setProject] = useState<Project | null>(null);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [subtasks, setSubtasks] = useState<Subtask[]>([]);
-  const [candidates, setCandidates] = useState<UserType[]>([]);
-  const [departments, setDepartments] = useState<Department[]>([]);
-  const [reports, setReports] = useState<Report[]>([]);
-  const [milestones, setMilestones] = useState<Milestone[]>([]);
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [activity, setActivity] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const pid = Number(projectId);
+  const hasId = !!projectId && !Number.isNaN(pid);
+
+  // Everything comes from the shared store. Each part refreshes itself after
+  // any save (see api/client.ts), so Activity, team and counts stay current.
+  const projectQ = useCachedQuery<Project | null>(qk.project(pid), () => getProject(pid), null, { enabled: hasId, staleTime: FRESH.LIVE });
+  const tasksQ = useCachedQuery<Task[]>(qk.tasks({ projectId: pid }), () => getTasks({ projectId: pid }), EMPTY, { enabled: hasId, staleTime: FRESH.LIVE });
+  const departmentsQ = useCachedQuery<Department[]>(qk.departments, getDepartments, EMPTY, { staleTime: FRESH.RARE });
+  const candidatesQ = useCachedQuery<UserType[]>([...qk.project(pid), "candidates"], () => getProjectCandidates(pid), EMPTY, { enabled: hasId });
+  const reportsQ = useCachedQuery<Report[]>([...qk.project(pid), "reports"], () => getProjectReports(pid), EMPTY, { enabled: hasId });
+  const milestonesQ = useCachedQuery<Milestone[]>([...qk.project(pid), "milestones"], () => getProjectMilestones(pid), EMPTY, { enabled: hasId });
+  const attachmentsQ = useCachedQuery<Attachment[]>([...qk.project(pid), "attachments"], () => getProjectAttachments(pid), EMPTY, { enabled: hasId });
+  const activityQ = useCachedQuery<any[]>([...qk.project(pid), "activity"], () => getProjectActivity(pid), EMPTY, { enabled: hasId, staleTime: FRESH.LIVE });
+
+  const project = projectQ.data;
+  const setProject = projectQ.setData;
+  const tasks = tasksQ.data;
+  const setTasks = tasksQ.setData;
+  const [subtasks] = useState<Subtask[]>([]);
+  const candidates = candidatesQ.data;
+  const departments = departmentsQ.data;
+  const reports = reportsQ.data;
+  const setReports = reportsQ.setData;
+  const milestones = milestonesQ.data;
+  const setMilestones = milestonesQ.setData;
+  const attachments = attachmentsQ.data;
+  const setAttachments = attachmentsQ.setData;
+  const activity = activityQ.data;
+  const loading = projectQ.isLoading;
+  const [actionError, setError] = useState<string | null>(null);
+  const error = !hasId
+    ? "Project ID is required"
+    : actionError || (projectQ.error ? projectQ.error.message || "Failed to load project." : null);
   const [activeTab, setActiveTab] = useState("overview");
   const [showScheduleDialog, setShowScheduleDialog] = useState(false);
 
-  const effectiveDepartmentIds = getEffectiveDepartmentIds(currentUser?.role, departments);
-  const canManage = permissions.includes("project:manage") && (
-    currentUser?.role?.allDepartments ||
-    (project?.departmentIds && project.departmentIds.some(deptId => effectiveDepartmentIds.includes(deptId)))
-  );
+  // Department scope lives on the user (manageAllDepartments / managedDepartments)
+  const canManage = permissions.includes("project:manage") && inDepartmentScope(currentUser, project?.departmentIds);
   const isLead = currentUser?.id === project?.leadId;
   const canScheduleMeeting = canManage || isLead;
 
-  useEffect(() => {
-    async function loadData() {
-      if (!projectId) {
-        setError("Project ID is required");
-        setLoading(false);
-        return;
-      }
-      try {
-        setLoading(true);
-        setError(null);
-        const [projectResult, tasksResult, departmentsResult, candidatesResult, reportsResult, milestonesResult, attachmentsResult, activityResult] = await Promise.allSettled([
-          getProject(Number(projectId)),
-          getTasks(),
-          getDepartments(),
-          getProjectCandidates(Number(projectId)),
-          getProjectReports(Number(projectId)),
-          getProjectMilestones(Number(projectId)),
-          getProjectAttachments(Number(projectId)),
-          getProjectActivity(Number(projectId)),
-        ]);
-
-        setProject(projectResult.status === "fulfilled" ? projectResult.value : null);
-        setTasks(tasksResult.status === "fulfilled" ? tasksResult.value : []);
-        setDepartments(departmentsResult.status === "fulfilled" ? departmentsResult.value : []);
-        setCandidates(candidatesResult.status === "fulfilled" ? candidatesResult.value : []);
-        setReports(reportsResult.status === "fulfilled" ? reportsResult.value : []);
-        setMilestones(milestonesResult.status === "fulfilled" ? milestonesResult.value : []);
-        setAttachments(attachmentsResult.status === "fulfilled" ? attachmentsResult.value : []);
-        setActivity(activityResult.status === "fulfilled" ? activityResult.value : []);
-
-        if (projectResult.status === "rejected") {
-          setError((projectResult.reason as any)?.message || "Failed to load project.");
-        }
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, [projectId]);
 
   const projectTasks = tasks.filter((t) => t.projectId === Number(projectId));
   const projectDepts = departments.filter((d) => project?.departmentIds.includes(d.id));

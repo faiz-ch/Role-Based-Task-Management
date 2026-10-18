@@ -46,10 +46,12 @@ def _is_task_in_scope(task: Task, current_user: User) -> bool:
 async def list_tasks(
     status: TaskStatus | None = None,
     assigned_to: int | None = None,
+    project_id: int | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
+    Optional filters: status, assigned_to, project_id (only that project's tasks).
     List tasks based on cascade authorization:
     - Managers with project:view scoped to departments see tasks in those departments
     - Project Leads see tasks in their projects
@@ -68,12 +70,16 @@ async def list_tasks(
     if assigned_to is not None:
         query = query.where(Task.assigned_to == assigned_to)
 
+    if project_id is not None:
+        query = query.where(Task.project_id == project_id)
+
     result = await db.execute(query)
     tasks = result.scalars().all()
 
     # Filter by cascade logic
     visible_tasks = [task for task in tasks if can_view_task(current_user, task)]
-    return [_task_to_out(task) for task in visible_tasks]
+    counts = await _subtask_counts(db, [t.id for t in visible_tasks])
+    return [_task_to_out(task, *counts.get(task.id, (0, 0))) for task in visible_tasks]
 
 
 @router.get("/{task_id}", response_model=TaskOut)
@@ -85,7 +91,7 @@ async def get_task(
     task = await _get_task_or_404_with_loads(db, task_id)
     if not can_view_task(current_user, task):
         raise HTTPException(status_code=404, detail="Task not found")
-    return _task_to_out(task)
+    return await _task_out_with_counts(db, task)
 
 
 @router.get("/{task_id}/activity", response_model=list[ActivityLogOut])
@@ -224,7 +230,7 @@ async def create_task(
     await db.commit()
     background_tasks.add_task(notification_dispatch.notify_task_assigned, task.id)
     task_with_loads = await _get_task_or_404_with_loads(db, task.id)
-    return _task_to_out(task_with_loads)
+    return await _task_out_with_counts(db, task_with_loads)
 
 
 @router.patch("/{task_id}", response_model=TaskOut)
@@ -270,7 +276,7 @@ async def update_task(
     await db.commit()
     await db.refresh(task)
     task_with_loads = await _get_task_or_404_with_loads(db, task.id)
-    return _task_to_out(task_with_loads)
+    return await _task_out_with_counts(db, task_with_loads)
 
 
 @router.patch("/{task_id}/status", response_model=TaskOut)
@@ -414,7 +420,7 @@ async def update_task_status(
     elif payload.status == TaskStatus.DONE:
         background_tasks.add_task(notification_dispatch.notify_task_done, task.id)
     task_with_loads = await _get_task_or_404_with_loads(db, task.id)
-    return _task_to_out(task_with_loads)
+    return await _task_out_with_counts(db, task_with_loads)
 
 @router.patch("/{task_id}/assign", response_model=TaskOut)
 async def assign_task(
@@ -447,7 +453,7 @@ async def assign_task(
     await db.refresh(task)
     background_tasks.add_task(notification_dispatch.notify_task_assigned, task.id)
     task_with_loads = await _get_task_or_404_with_loads(db, task.id)
-    return _task_to_out(task_with_loads)
+    return await _task_out_with_counts(db, task_with_loads)
 
 
 @router.delete("/{task_id}", status_code=204)
@@ -590,7 +596,7 @@ async def update_task_team(
     await db.refresh(task)
 
     task_with_loads = await _get_task_or_404_with_loads(db, task.id)
-    return _task_to_out(task_with_loads)
+    return await _task_out_with_counts(db, task_with_loads)
 
 
 async def _get_task_or_404(db: AsyncSession, task_id: int) -> Task:
@@ -617,7 +623,32 @@ async def _get_task_or_404_with_loads(db: AsyncSession, task_id: int) -> Task:
     return task
 
 
-def _task_to_out(task: Task) -> TaskOut:
+async def _subtask_counts(db: AsyncSession, task_ids: list[int]) -> dict[int, tuple[int, int]]:
+    """
+    Subtask totals for many tasks in ONE grouped query.
+    Returns {task_id: (total_subtasks, done_subtasks)}.
+    """
+    if not task_ids:
+        return {}
+    rows = await db.execute(
+        select(
+            SubTask.task_id,
+            func.count(SubTask.id),
+            func.count(SubTask.id).filter(SubTask.status == TaskStatus.DONE),
+        )
+        .where(SubTask.task_id.in_(task_ids))
+        .group_by(SubTask.task_id)
+    )
+    return {task_id: (total, done) for task_id, total, done in rows.all()}
+
+
+async def _task_out_with_counts(db: AsyncSession, task: Task) -> TaskOut:
+    """TaskOut for a single task, including its subtask progress."""
+    counts = await _subtask_counts(db, [task.id])
+    return _task_to_out(task, *counts.get(task.id, (0, 0)))
+
+
+def _task_to_out(task: Task, subtask_total: int = 0, subtask_done: int = 0) -> TaskOut:
     """Convert Task model to TaskOut schema."""
     return TaskOut(
         id=task.id,
@@ -635,6 +666,8 @@ def _task_to_out(task: Task) -> TaskOut:
         team_approved_at=task.team_approved_at,
         team_user_ids=[tm.user_id for tm in task.team_members],
         attachments=[],
+        subtask_total=subtask_total,
+        subtask_done=subtask_done,
     )
 
 @router.post("/{task_id}/reports", response_model=ReportOut, status_code=201)

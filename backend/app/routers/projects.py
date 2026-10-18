@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -15,6 +15,7 @@ from app.core.deps import (
     is_project_lead,
     can_manage_project,
     get_assignable_user_pool,
+    user_load_options,
 )
 from app.database import get_db
 from app.models.project import Project, ProjectStatus, ProjectTeam, project_department
@@ -167,7 +168,32 @@ async def list_projects(
             or any(tm.user_id == current_user.id for tm in p.team_members)
         ]
 
-    return [_project_to_out(p) for p in visible_projects]
+    counts = await _task_counts(db, [p.id for p in visible_projects])
+    return [_with_counts(_project_to_out(p), counts) for p in visible_projects]
+
+
+async def _task_counts(db: AsyncSession, project_ids: list[int]) -> dict[int, tuple[int, int]]:
+    """
+    Task totals for MANY projects in ONE grouped query.
+    Returns {project_id: (total_tasks, done_tasks)}.
+    """
+    if not project_ids:
+        return {}
+    rows = await db.execute(
+        select(
+            Task.project_id,
+            func.count(Task.id),
+            func.count(Task.id).filter(Task.status == TaskStatus.DONE),
+        )
+        .where(Task.project_id.in_(project_ids))
+        .group_by(Task.project_id)
+    )
+    return {pid: (total, done) for pid, total, done in rows.all()}
+
+
+def _with_counts(out: ProjectOut, counts: dict[int, tuple[int, int]]) -> ProjectOut:
+    out.task_count, out.done_task_count = counts.get(out.id, (0, 0))
+    return out
 
 
 @router.get("/{project_id}", response_model=ProjectOut)
@@ -192,7 +218,8 @@ async def get_project(
     if not (in_scope or is_lead or is_team_member):
         raise HTTPException(status_code=403, detail="You do not have permission to view this project")
 
-    return _project_to_out(project)
+    counts = await _task_counts(db, [project.id])
+    return _with_counts(_project_to_out(project), counts)
 
 
 @router.get("/{project_id}/activity", response_model=list[ActivityLogOut])
@@ -260,14 +287,7 @@ async def get_project_candidates(
     project_dept_ids = {d.id for d in project.departments}
     from app.models.category import Category
     candidates_result = await db.execute(
-        select(User).options(
-            selectinload(User.role)
-            .selectinload(Role.category)
-            .selectinload(Category.permissions),
-            selectinload(User.managed_departments),
-            selectinload(User.role).selectinload(Role.permissions),
-            selectinload(User.role).selectinload(Role.assignable_roles),
-        ).where(User.department_id.in_(project_dept_ids))
+        select(User).options(*user_load_options()).where(User.department_id.in_(project_dept_ids))
     )
     candidates = candidates_result.scalars().all()
 

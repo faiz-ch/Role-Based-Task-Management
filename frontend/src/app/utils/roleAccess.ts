@@ -1,21 +1,28 @@
-import type { Role, Department } from "../types";
+import type { UserType, Department } from "../types";
 
 /**
- * Returns the effective department IDs for a role.
- * If the role has allDepartments === true, returns all department IDs.
- * Otherwise, returns the role's assigned department IDs.
+ * Department scope now lives on the USER, not the role:
+ *   user.manageAllDepartments === true  -> every department
+ *   otherwise                           -> user.managedDepartments
+ *
+ * `allDepartments` is the department list the page already loaded
+ * (GET /departments is itself scoped by the backend).
  */
-export function getEffectiveDepartmentIds(role: Role | null | undefined, allDepartments: Department[]): number[] {
-  if (!role) return [];
-  return role?.allDepartments ? allDepartments.map((d) => d.id) : (role?.departments ?? []).map((d) => d.id);
+export function managesAllDepartments(user: UserType | null | undefined): boolean {
+  return !!user?.manageAllDepartments;
 }
 
-/**
- * Returns the effective assignable roles for a role.
- * If the role has allRoles === true, returns all roles except the current role.
- * Otherwise, returns the role's assigned assignable roles.
- */
-export function getEffectiveAssignableRoles(role: Role | null | undefined, allRoles: Role[]): Role[] {
-  if (!role) return [];
-  return role?.allRoles ? allRoles.filter((r) => r.id !== role.id) : (role?.assignableRoles ?? []);
+export function getEffectiveDepartmentIds(user: UserType | null | undefined, allDepartments: Department[]): number[] {
+  if (!user) return [];
+  return user.manageAllDepartments
+    ? allDepartments.map((d) => d.id)
+    : user.managedDepartments.map((d) => d.id);
+}
+
+/** True if the user's department scope covers at least one of the given departments. */
+export function inDepartmentScope(user: UserType | null | undefined, departmentIds: number[] | undefined): boolean {
+  if (!user) return false;
+  if (user.manageAllDepartments) return true;
+  const mine = new Set(user.managedDepartments.map((d) => d.id));
+  return (departmentIds ?? []).some((id) => mine.has(id));
 }

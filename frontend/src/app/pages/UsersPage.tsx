@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { Edit2, AlertTriangle, Plus, Trash2, Search, Eye, EyeOff, RefreshCw, Upload } from "lucide-react";
 import { UserType, Role, Department } from "../types";
 import { getUsers, createUser, deleteUser, uploadAvatar } from "../api/users";
-import { getRoles } from "../api/roles";
+import { getRoles, getAssignableRoles } from "../api/roles";
+import { useCachedQuery, qk, FRESH, EMPTY } from "../api/queries";
 import { getDepartments } from "../api/departments";
 import { Av } from "../components/Av";
 import { Dlg } from "../components/Dlg";
@@ -10,7 +11,8 @@ import { FldInput } from "../components/FldInput";
 import { FldSelect } from "../components/FldSelect";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router";
-import { getEffectiveAssignableRoles } from "../utils/roleAccess";
+import { DepartmentScopePicker } from "../components/DepartmentScopePicker";
+import { RoleChecklist } from "../components/RoleChecklist";
 
 function fmtDate(d: string) {
   if (!d) return "—";
@@ -34,11 +36,20 @@ function generatePassword(length: number = 12): string {
 export function UsersPage() {
   const { permissions, currentUser } = useAuth();
   const navigate = useNavigate();
-  const [users, setUsers] = useState<UserType[]>([]);
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [departments, setDepartments] = useState<Department[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Shared store: instant when already loaded, refreshed after every save
+  const usersQ = useCachedQuery<UserType[]>(qk.users, getUsers, EMPTY, { staleTime: FRESH.NORMAL });
+  const rolesQ = useCachedQuery<Role[]>(qk.roles, getRoles, EMPTY, { staleTime: FRESH.RARE });
+  const departmentsQ = useCachedQuery<Department[]>(qk.departments, getDepartments, EMPTY, { staleTime: FRESH.RARE });
+  // Roles the current user may hand out (GET /roles/assignable — base list + personal extras, dept-tag filtered)
+  const assignableQ = useCachedQuery<Role[]>(qk.assignableRoles, getAssignableRoles, EMPTY, { staleTime: FRESH.RARE });
+  const users = usersQ.data;
+  const setUsers = usersQ.setData;
+  const roles = rolesQ.data;
+  const assignableRoles = assignableQ.data;
+  const departments = departmentsQ.data;
+  const loading = usersQ.isLoading;
+  const [actionError, setError] = useState<string | null>(null);
+  const error = actionError || (usersQ.error ? usersQ.error.message || "Failed to load users data." : null);
   
   const canManage = permissions.includes("user:manage");
 
@@ -65,6 +76,9 @@ export function UsersPage() {
   const [createRole, setCreateRole] = useState<string>("");
   const [createActive, setCreateActive] = useState(true);
   const [createSendWelcome, setCreateSendWelcome] = useState(true);
+  const [createManageAll, setCreateManageAll] = useState(false);
+  const [createManagedIds, setCreateManagedIds] = useState<number[]>([]);
+  const [createExtraRoleIds, setCreateExtraRoleIds] = useState<number[]>([]);
   const [createError, setCreateError] = useState<string | null>(null);
   const [createAvatarFile, setCreateAvatarFile] = useState<File | null>(null);
   const [avatarUploadError, setAvatarUploadError] = useState<string | null>(null);
@@ -72,30 +86,22 @@ export function UsersPage() {
   // Delete confirmation state
   const [deleteConfirmUser, setDeleteConfirmUser] = useState<UserType | null>(null);
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        setLoading(true);
-        setError(null);
-        const [fetchedUsers, fetchedRoles, fetchedDepartments] = await Promise.all([
-          getUsers(),
-          getRoles(),
-          getDepartments(),
-        ]);
-        setUsers(fetchedUsers);
-        setRoles(fetchedRoles);
-        setDepartments(fetchedDepartments);
-      } catch (err: any) {
-        setError(err?.message || "Failed to load users data.");
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, []);
 
-  // Filter roles based on assignable roles
-  const assignableRoles = getEffectiveAssignableRoles(currentUser?.role, roles);
+  // Only someone who manages ALL departments may grant "All Departments"
+  const canGrantAllDepartments = !!currentUser?.manageAllDepartments;
+
+  // Extra assignable roles are only meaningful if the chosen role can manage users
+  // and does not already assign every role.
+  const selectedCreateRole = assignableRoles.find((r) => r.id === Number(createRole)) || null;
+  const showCreateExtras = !!selectedCreateRole
+    && selectedCreateRole.permissions.includes("user:manage")
+    && !selectedCreateRole.allRoles;
+  // Lock 1: candidates = roles I can assign, minus the chosen role and its base list
+  const createExtraCandidates = selectedCreateRole
+    ? assignableRoles.filter(
+        (r) => r.id !== selectedCreateRole.id && !selectedCreateRole.assignableRoles.some((b) => b.id === r.id)
+      )
+    : [];
 
   // Filter users based on search and filters
   const filteredUsers = users.filter((user) => {
@@ -154,6 +160,11 @@ export function UsersPage() {
         role_id: roleId,
         department_id: deptId,
         isActive: createActive,
+        manage_all_departments: createManageAll,
+        managed_department_ids: createManageAll ? [] : createManagedIds,
+        extra_assignable_role_ids: showCreateExtras
+          ? createExtraRoleIds.filter((id) => createExtraCandidates.some((r) => r.id === id))
+          : [],
         sendWelcomeEmail: createSendWelcome,
       });
       
@@ -187,6 +198,9 @@ export function UsersPage() {
     setCreateRole("");
     setCreateActive(true);
     setCreateSendWelcome(true);
+    setCreateManageAll(false);
+    setCreateManagedIds([]);
+    setCreateExtraRoleIds([]);
     setCreateError(null);
     setCreateAvatarFile(null);
     setAvatarUploadError(null);
@@ -498,7 +512,6 @@ export function UsersPage() {
       {/* Create User Dialog */}
       {showCreateDialog && (
         <Dlg
-          isOpen={showCreateDialog}
           onClose={() => {
             setShowCreateDialog(false);
             resetCreateForm();
@@ -586,6 +599,30 @@ export function UsersPage() {
               onChange={(e) => setCreateRole(e.target.value)}
               required
             />
+
+            {/* Department scope lives on the user */}
+            <DepartmentScopePicker
+              departments={departments}
+              manageAll={createManageAll}
+              selectedIds={createManagedIds}
+              onChange={({ manageAll, ids }) => {
+                setCreateManageAll(manageAll);
+                setCreateManagedIds(ids);
+              }}
+              canGrantAll={canGrantAllDepartments}
+            />
+
+            {/* Personal extra assignable roles (on top of the role's base list) */}
+            {showCreateExtras && (
+              <RoleChecklist
+                title="Extra roles this user can assign"
+                help={`On top of the ${selectedCreateRole!.name} role's base list. Only roles you can assign yourself are shown.`}
+                roles={createExtraCandidates}
+                selectedIds={createExtraRoleIds}
+                onChange={setCreateExtraRoleIds}
+                emptyText="No additional roles available to grant"
+              />
+            )}
 
             {/* Avatar Upload */}
             <div>
@@ -693,7 +730,6 @@ export function UsersPage() {
       {/* Delete Confirmation Dialog */}
       {deleteConfirmUser && (
         <Dlg
-          isOpen={!!deleteConfirmUser}
           onClose={() => setDeleteConfirmUser(null)}
           title="Delete User"
           size="sm"

@@ -2,12 +2,15 @@ import React, { createContext, useContext, useState, useEffect } from "react";
 import { UserType } from "../types";
 import { login as apiLogin, register as apiRegister } from "../api/auth";
 import { getMe, getMePermissions } from "../api/users";
-import { registerLogoutCallback, clearTokens, initializeTokensFromStorage, getStoredRefreshToken, setTokens, API_BASE_URL } from "../api/client";
+import { queryClient } from "../api/queryClient";
+import { registerLogoutCallback, clearTokens, initializeTokensFromStorage, getStoredRefreshToken, getAccessToken, setTokens, API_BASE_URL } from "../api/client";
 
 interface AuthContextType {
   currentUser: UserType | null;
   permissions: string[];
   loading: boolean;
+  /** false while the app is still restoring the session after a page refresh (F5) */
+  initialized: boolean;
   error: string | null;
   login: (email: string, password: string) => Promise<void>;
   register: (name: string, email: string, password: string) => Promise<void>;
@@ -16,6 +19,23 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+/**
+ * Reads the expiry time ("exp") written inside a JWT access token and returns
+ * true if the token is still valid for at least 30 more seconds.
+ * Used on page refresh so we only ask the server for a new token when needed.
+ */
+function isTokenStillValid(token: string | null): boolean {
+  if (!token) return false;
+  try {
+    const middlePart = token.split(".")[1];
+    const json = atob(middlePart.replace(/-/g, "+").replace(/_/g, "/"));
+    const data = JSON.parse(json);
+    return typeof data.exp === "number" && data.exp * 1000 > Date.now() + 30_000;
+  } catch {
+    return false;
+  }
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [currentUser, setCurrentUser] = useState<UserType | null>(null);
@@ -26,6 +46,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = React.useCallback(() => {
     clearTokens();
+    queryClient.clear(); // forget all cached data, so the next user never sees it
     setCurrentUser(null);
     setPermissions([]);
     setError(null);
@@ -36,15 +57,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     registerLogoutCallback(logout);
   }, [logout]);
 
-  // Initialize tokens from storage and attempt silent refresh on mount
+  // On page load / refresh (F5): restore the session.
+  // Only asks the server for a new token if the saved one has expired.
   useEffect(() => {
     async function restoreSession() {
       try {
         initializeTokensFromStorage();
         const storedRefreshToken = getStoredRefreshToken();
-        
-        if (storedRefreshToken) {
-          // Attempt silent token refresh
+        if (!storedRefreshToken) {
+          return; // never logged in -> nothing to restore
+        }
+
+        if (!isTokenStillValid(getAccessToken())) {
           const refreshRes = await fetch(`${API_BASE_URL}/auth/refresh`, {
             method: "POST",
             headers: {
@@ -52,26 +76,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             },
             body: JSON.stringify({ refresh_token: storedRefreshToken }),
           });
-
-          if (refreshRes.ok) {
-            const tokenData = await refreshRes.json();
-            setTokens(tokenData.access_token, tokenData.refresh_token);
-            
-            // Fetch user and permissions
-            const [user, perms] = await Promise.all([getMe(), getMePermissions()]);
-            setCurrentUser(user);
-            setPermissions(perms);
-          } else {
-            // Refresh failed, clear tokens and stay logged out
+          if (!refreshRes.ok) {
+            // Refresh token expired or invalid -> stay logged out
             clearTokens();
+            return;
           }
+          const tokenData = await refreshRes.json();
+          setTokens(tokenData.access_token, tokenData.refresh_token);
         }
+
+        // Fetch user and permissions
+        const [user, perms] = await Promise.all([getMe(), getMePermissions()]);
+        setCurrentUser(user);
+        setPermissions(perms);
       } catch (err) {
         // Session restoration failed, clear tokens and stay logged out
         clearTokens();
       } finally {
         setLoading(false);
-        setInitialized(true);
+        setInitialized(true); // the page guards wait for this before deciding anything
       }
     }
 
@@ -84,6 +107,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       // 1. Call real login endpoint
       await apiLogin(email, password);
+      queryClient.clear(); // start with an empty store for this user
       
       // 2. Fetch profile and permissions
       const [user, perms] = await Promise.all([getMe(), getMePermissions()]);
@@ -126,6 +150,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         currentUser,
         permissions,
         loading,
+        initialized,
         error,
         login,
         register,

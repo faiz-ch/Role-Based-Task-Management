@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useNavigate } from "react-router";
 import {
   CheckSquare,
@@ -11,6 +11,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { getDashboardSummary, DashboardSummary } from "../api/dashboard";
+import { useCachedQuery, qk, FRESH } from "../api/queries";
 
 const STATUS_COLORS: Record<string, string> = {
   "To Do": "bg-slate-100 text-slate-700 border-slate-200",
@@ -72,26 +73,13 @@ function getDueDateColor(dueDate: string): string {
 }
 
 export function DashboardPage() {
-  const [summary, setSummary] = useState<DashboardSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Shared store: instant on return, re-checked every 60 s and on tab focus
+  const summaryQ = useCachedQuery<DashboardSummary | null>(qk.dashboard, getDashboardSummary, null, { staleTime: FRESH.LIVE, poll: true });
+  const summary = summaryQ.data;
+  const loading = summaryQ.isLoading;
+  const error = summaryQ.error ? summaryQ.error.message || "Failed to load dashboard data." : null;
   const navigate = useNavigate();
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        setLoading(true);
-        setError(null);
-        const fetchedSummary = await getDashboardSummary();
-        setSummary(fetchedSummary);
-      } catch (err: any) {
-        setError(err?.message || "Failed to load dashboard data.");
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, []);
 
   if (loading) {
     return (

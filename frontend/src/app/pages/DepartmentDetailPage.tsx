@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useParams, useNavigate, Link } from "react-router";
 import { ArrowLeft, Edit2, Trash2, MoreVertical, ChevronDown, Users, Building2, Calendar, AlertTriangle } from "lucide-react";
-import { Department, UserType, Project, Task } from "../types";
+import { Department, UserType, Project } from "../types";
 import { getDepartment, updateDepartment, deleteDepartment, getDepartmentActivity } from "../api/departments";
 import { getUsers } from "../api/users";
 import { getProjects } from "../api/projects";
-import { getTasks } from "../api/tasks";
 import { getDepartments } from "../api/departments";
+import { useCachedQuery, qk, FRESH, EMPTY } from "../api/queries";
 import { Dlg } from "../components/Dlg";
 import { FldSelect } from "../components/FldSelect";
 import { Av } from "../components/Av";
@@ -60,19 +60,26 @@ type Tab = "overview" | "members" | "projects" | "activity";
 export function DepartmentDetailPage() {
   const { departmentId } = useParams<{ departmentId: string }>();
   const navigate = useNavigate();
-  const [department, setDepartment] = useState<Department | null>(null);
-  const [users, setUsers] = useState<UserType[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [allDepartments, setAllDepartments] = useState<Department[]>([]);
-  const [activity, setActivity] = useState<{
-    actorId: number;
-    action: string;
-    detail: string | null;
-    createdAt: string;
-  }[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const did = Number(departmentId);
+  const hasId = !!departmentId && !Number.isNaN(did);
+
+  // Shared store: instant when already loaded, refreshed after every save
+  const departmentQ = useCachedQuery<Department | null>(qk.department(did), () => getDepartment(did), null, { enabled: hasId, staleTime: FRESH.RARE });
+  const usersQ = useCachedQuery<UserType[]>(qk.users, getUsers, EMPTY, { staleTime: FRESH.NORMAL });
+  const projectsQ = useCachedQuery<Project[]>(qk.projects, getProjects, EMPTY, { staleTime: FRESH.LIVE });
+  const activityQ = useCachedQuery<{ actorId: number; action: string; detail: string | null; createdAt: string }[]>(
+    [...qk.department(did), "activity"], () => getDepartmentActivity(did), EMPTY, { enabled: hasId });
+  const allDepartmentsQ = useCachedQuery<Department[]>(qk.departments, getDepartments, EMPTY, { staleTime: FRESH.RARE });
+
+  const department = departmentQ.data;
+  const setDepartment = departmentQ.setData;
+  const users = usersQ.data;
+  const projects = projectsQ.data;
+  const activity = activityQ.data;
+  const allDepartments = allDepartmentsQ.data;
+  const loading = departmentQ.isLoading;
+  const [actionError, setError] = useState<string | null>(null);
+  const error = actionError || (departmentQ.error ? departmentQ.error.message || "Failed to load department details." : null);
 
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [showEdit, setShowEdit] = useState(false);
@@ -95,41 +102,18 @@ export function DepartmentDetailPage() {
   const [membersPage, setMembersPage] = useState(1);
   const membersPerPage = 5;
 
-  useEffect(() => {
-    async function loadData() {
-      if (!departmentId) return;
-      try {
-        setLoading(true);
-        setError(null);
-        const [dept, usersData, projectsData, tasksData, activityData, deptsData] = await Promise.all([
-          getDepartment(Number(departmentId)),
-          getUsers(),
-          getProjects(),
-          getTasks(),
-          getDepartmentActivity(Number(departmentId)),
-          getDepartments(),
-        ]);
-        setDepartment(dept);
-        setUsers(usersData);
-        setProjects(projectsData);
-        setTasks(tasksData);
-        setActivity(activityData);
-        setAllDepartments(deptsData);
-        setEditForm({
-          name: dept.name,
-          description: dept.description || "",
-          headId: dept.headId,
-          color: dept.color,
-          isActive: dept.isActive,
-        });
-      } catch (err: any) {
-        setError(err?.message || "Failed to load department details.");
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, [departmentId]);
+
+  function openEdit() {
+    if (!department) return;
+    setEditForm({
+      name: department.name,
+      description: department.description || "",
+      headId: department.headId,
+      color: department.color,
+      isActive: department.isActive,
+    });
+    setShowEdit(true);
+  }
 
   const departmentUsers = users.filter((u) => u.department?.id === Number(departmentId));
   const departmentProjects = projects.filter((p) => p.departmentIds.includes(Number(departmentId)));
@@ -245,7 +229,7 @@ export function DepartmentDetailPage() {
 
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setShowEdit(true)}
+              onClick={openEdit}
               className="flex items-center gap-1.5 px-3 py-2 border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer text-sm font-medium text-foreground"
             >
               <Edit2 size={14} /> Edit Department
@@ -464,9 +448,9 @@ export function DepartmentDetailPage() {
           ) : (
             <div className="divide-y divide-border">
               {departmentProjects.map((project) => {
-                const projectTasks = tasks.filter((t) => t.projectId === project.id);
-                const totalTasks = projectTasks.length;
-                const doneTasks = projectTasks.filter((t) => t.status === "Done").length;
+                // Counts come with each project from the server (no task download needed)
+                const totalTasks = project.taskCount;
+                const doneTasks = project.doneTaskCount;
                 const progressPercent = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
 
                 return (

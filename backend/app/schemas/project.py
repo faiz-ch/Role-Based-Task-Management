@@ -57,6 +57,9 @@ class ProjectOut(BaseModel):
     reopened_reason: str | None
     reopened_by: int | None
     reopened_at: datetime | None
+    # Task progress, so the projects list does not have to download every task
+    task_count: int = 0
+    done_task_count: int = 0
 
     class Config:
         from_attributes = True

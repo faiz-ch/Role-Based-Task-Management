@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useParams, useNavigate } from "react-router";
 import { ArrowLeft, AlertTriangle, Plus, Image, FileText, X, Trash2, Paperclip, MessageCircle } from "lucide-react";
 import { Subtask, UserType, Task, Project, Department } from "../types";
@@ -7,6 +7,7 @@ import { getTask } from "../api/tasks";
 import { getProject } from "../api/projects";
 import { getProjectCandidates } from "../api/projects";
 import { getDepartments } from "../api/departments";
+import { useCachedQuery, qk, FRESH, EMPTY } from "../api/queries";
 import { getSubtaskReports, createSubtaskReport, Report } from "../api/reports";
 import { getSubtaskComments, Comment } from "../api/comments";
 import { uploadSubtaskAttachment, getSubtaskAttachments, getAttachmentDownloadUrl, fetchAttachmentBlobUrl, fetchAttachmentPreviewBlobUrl, deleteAttachment, Attachment } from "../api/attachments";
@@ -16,7 +17,7 @@ import { PriBadge } from "../components/PriBadge";
 import { Av } from "../components/Av";
 import { Dlg } from "../components/Dlg";
 import { DatePicker } from "../components/DatePicker";
-import { getEffectiveDepartmentIds } from "../utils/roleAccess";
+import { inDepartmentScope } from "../utils/roleAccess";
 
 function fmtDate(d: string) {
   if (!d) return "—";
@@ -33,16 +34,38 @@ export function SubtaskDetailPage() {
   const { subtaskId } = useParams<{ subtaskId: string }>();
   const navigate = useNavigate();
   const { currentUser, permissions } = useAuth();
-  const [subtask, setSubtask] = useState<Subtask | null>(null);
-  const [task, setTask] = useState<Task | null>(null);
-  const [project, setProject] = useState<Project | null>(null);
-  const [users, setUsers] = useState<UserType[]>([]);
-  const [departments, setDepartments] = useState<Department[]>([]);
-  const [reports, setReports] = useState<Report[]>([]);
-  const [comments, setComments] = useState<Comment[]>([]);
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const sid = Number(subtaskId);
+  const hasId = !!subtaskId && !Number.isNaN(sid);
+
+  // Shared store: instant when already loaded, refreshed after every save
+  const subtaskQ = useCachedQuery<Subtask | null>(qk.subtask(sid), () => getSubtask(sid), null, { enabled: hasId, staleTime: FRESH.LIVE });
+  const subtask = subtaskQ.data;
+  const setSubtask = subtaskQ.setData;
+  const taskId = subtask?.taskId || 0;
+  const taskQ = useCachedQuery<Task | null>(qk.task(taskId), () => getTask(taskId), null, { enabled: !!taskId, staleTime: FRESH.LIVE });
+  const task = taskQ.data;
+  const projectId = task?.projectId || 0;
+  const projectQ = useCachedQuery<Project | null>(qk.project(projectId), () => getProject(projectId), null, { enabled: !!projectId, staleTime: FRESH.LIVE });
+  // Project candidates are used to show people's names
+  const usersQ = useCachedQuery<UserType[]>([...qk.project(projectId), "candidates"], () => getProjectCandidates(projectId), EMPTY, { enabled: !!projectId });
+  const departmentsQ = useCachedQuery<Department[]>(qk.departments, getDepartments, EMPTY, { staleTime: FRESH.RARE });
+  const reportsQ = useCachedQuery<Report[]>([...qk.subtask(sid), "reports"], () => getSubtaskReports(sid), EMPTY, { enabled: !!taskId });
+  const commentsQ = useCachedQuery<Comment[]>([...qk.subtask(sid), "comments"], () => getSubtaskComments(sid), EMPTY, { enabled: !!taskId });
+  const attachmentsQ = useCachedQuery<Attachment[]>([...qk.subtask(sid), "attachments"], () => getSubtaskAttachments(sid), EMPTY, { enabled: !!taskId });
+
+  const project = projectQ.data;
+  const users = usersQ.data;
+  const departments = departmentsQ.data;
+  const reports = reportsQ.data;
+  const setReports = reportsQ.setData;
+  const comments = commentsQ.data;
+  const attachments = attachmentsQ.data;
+  const setAttachments = attachmentsQ.setData;
+  const loading = subtaskQ.isLoading;
+  const [actionError, setError] = useState<string | null>(null);
+  const error = !hasId
+    ? "Subtask ID is required"
+    : actionError || (subtaskQ.error ? subtaskQ.error.message || "Failed to load subtask." : null);
   const [showNewReport, setShowNewReport] = useState(false);
   const [reportContent, setReportContent] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -54,11 +77,8 @@ export function SubtaskDetailPage() {
   const [approveComment, setApproveComment] = useState("");
   const [rescheduleComment, setRescheduleComment] = useState("");
 
-  const effectiveDepartmentIds = getEffectiveDepartmentIds(currentUser?.role, departments);
-  const canManage = permissions.includes("project:manage") && (
-    currentUser?.role?.allDepartments ||
-    (project?.departmentIds && project.departmentIds.some(deptId => effectiveDepartmentIds.includes(deptId)))
-  );
+  // Department scope lives on the user (manageAllDepartments / managedDepartments)
+  const canManage = permissions.includes("project:manage") && inDepartmentScope(currentUser, project?.departmentIds);
 
   function canManageSubtask(): boolean {
     if (!subtask || !task || !project) return false;
@@ -233,82 +253,6 @@ export function SubtaskDetailPage() {
     document.body.removeChild(a);
   }
 
-  useEffect(() => {
-    async function loadData() {
-      if (!subtaskId) {
-        setError("Subtask ID is required");
-        setLoading(false);
-        return;
-      }
-      try {
-        setLoading(true);
-        setError(null);
-        const [subtaskResult, departmentsResult] = await Promise.allSettled([
-          getSubtask(Number(subtaskId)),
-          getDepartments(),
-        ]);
-
-        setSubtask(subtaskResult.status === "fulfilled" ? subtaskResult.value : null);
-        setDepartments(departmentsResult.status === "fulfilled" ? departmentsResult.value : []);
-
-        if (subtaskResult.status === "fulfilled" && subtaskResult.value) {
-          try {
-            const taskData = await getTask(subtaskResult.value.taskId);
-            setTask(taskData);
-
-            try {
-              const projectData = await getProject(taskData.projectId);
-              setProject(projectData);
-
-              // Load project candidates for name resolution
-              try {
-                const candidatesData = await getProjectCandidates(taskData.projectId);
-                setUsers(candidatesData);
-              } catch (err) {
-                console.error("Failed to load project candidates:", err);
-                setUsers([]);
-              }
-            } catch (err) {
-              console.error("Failed to load project:", err);
-            }
-
-            // Load reports
-            try {
-              const reportsData = await getSubtaskReports(subtaskResult.value.id);
-              setReports(reportsData);
-            } catch (err) {
-              console.error("Failed to load reports:", err);
-            }
-
-            // Load comments
-            try {
-              const commentsData = await getSubtaskComments(subtaskResult.value.id);
-              setComments(commentsData);
-            } catch (err) {
-              console.error("Failed to load comments:", err);
-            }
-
-            // Load attachments
-            try {
-              const attachmentsData = await getSubtaskAttachments(subtaskResult.value.id);
-              setAttachments(attachmentsData);
-            } catch (err) {
-              console.error("Failed to load attachments:", err);
-            }
-          } catch (err) {
-            console.error("Failed to load task:", err);
-          }
-        }
-
-        if (subtaskResult.status === "rejected") {
-          setError((subtaskResult.reason as any)?.message || "Failed to load subtask.");
-        }
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, [subtaskId]);
 
   const assignees = users.filter((u) => subtask?.assigneeIds.includes(u.id));
 

@@ -1,16 +1,19 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useParams, useNavigate, Link } from "react-router";
 import { Edit2, Trash2, MoreVertical, AlertTriangle, User, Briefcase, BarChart3, Clock, CheckCircle2, XCircle, Activity, Upload } from "lucide-react";
 import { UserType, Role, Department, UserPerformance } from "../types";
 import { getUser, getUserPerformance, getUserActivity, updateUser, deleteUser, assignRole, uploadAvatar, deleteAvatar, getAvatarUrl } from "../api/users";
 import { getDepartments } from "../api/departments";
 import { getRoles, getAssignableRoles } from "../api/roles";
+import { useCachedQuery, qk, FRESH, EMPTY } from "../api/queries";
 import { getUsers } from "../api/users";
 import { Dlg } from "../components/Dlg";
 import { FldSelect } from "../components/FldSelect";
 import { FldInput } from "../components/FldInput";
 import { Av } from "../components/Av";
 import { useAuth } from "../context/AuthContext";
+import { DepartmentScopePicker } from "../components/DepartmentScopePicker";
+import { RoleChecklist } from "../components/RoleChecklist";
 
 
 function getInitials(name: string) {
@@ -50,19 +53,30 @@ export function UserDetailPage() {
   const { userId } = useParams<{ userId: string }>();
   const navigate = useNavigate();
   const { currentUser } = useAuth();
-  const [user, setUser] = useState<UserType | null>(null);
-  const [performance, setPerformance] = useState<UserPerformance | null>(null);
-  const [activity, setActivity] = useState<{
-    actorId: number;
-    action: string;
-    detail: string | null;
-    createdAt: string;
-  }[]>([]);
-  const [departments, setDepartments] = useState<Department[]>([]);
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [allUsers, setAllUsers] = useState<UserType[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const uid = Number(userId);
+  const hasId = !!userId && !Number.isNaN(uid);
+
+  // Shared store: instant when already loaded, refreshed after every save
+  const userQ = useCachedQuery<UserType | null>(qk.user(uid), () => getUser(uid), null, { enabled: hasId, staleTime: FRESH.NORMAL });
+  const performanceQ = useCachedQuery<UserPerformance | null>([...qk.user(uid), "performance"], () => getUserPerformance(uid), null, { enabled: hasId });
+  const activityQ = useCachedQuery<{ actorId: number; action: string; detail: string | null; createdAt: string }[]>(
+    [...qk.user(uid), "activity"], () => getUserActivity(uid), EMPTY, { enabled: hasId });
+  const departmentsQ = useCachedQuery<Department[]>(qk.departments, getDepartments, EMPTY, { staleTime: FRESH.RARE });
+  const rolesQ = useCachedQuery<Role[]>(qk.roles, getRoles, EMPTY, { staleTime: FRESH.RARE });
+  const allUsersQ = useCachedQuery<UserType[]>(qk.users, getUsers, EMPTY, { staleTime: FRESH.NORMAL });
+  const assignableQ = useCachedQuery<Role[]>(qk.assignableRoles, getAssignableRoles, EMPTY, { staleTime: FRESH.RARE });
+
+  const user = userQ.data;
+  const setUser = userQ.setData;
+  const performance = performanceQ.data;
+  const activity = activityQ.data;
+  const departments = departmentsQ.data;
+  const roles = rolesQ.data;
+  const allUsers = allUsersQ.data;
+  const assignableRoles = assignableQ.data;
+  const loading = userQ.isLoading;
+  const [actionError, setError] = useState<string | null>(null);
+  const error = actionError || (userQ.error ? userQ.error.message || "Failed to load user details." : null);
 
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [showEdit, setShowEdit] = useState(false);
@@ -79,54 +93,60 @@ export function UserDetailPage() {
     password: "",
     manageAllDepartments: false,
     managedDepartmentIds: [] as number[],
+    extraRoleIds: [] as number[],
   });
   const [editAvatarFile, setEditAvatarFile] = useState<File | null>(null);
   const [avatarUploadError, setAvatarUploadError] = useState<string | null>(null);
-  const [assignableRoles, setAssignableRoles] = useState<Role[]>([]);
 
-  useEffect(() => {
-    async function loadData() {
-      if (!userId) return;
-      try {
-        setLoading(true);
-        setError(null);
-        const [userData, perfData, activityData, deptsData, rolesData, usersData, assignableRolesData] = await Promise.all([
-          getUser(Number(userId)),
-          getUserPerformance(Number(userId)),
-          getUserActivity(Number(userId)),
-          getDepartments(),
-          getRoles(),
-          getUsers(),
-          getAssignableRoles(),
-        ]);
-        setUser(userData);
-        setPerformance(perfData);
-        setActivity(activityData);
-        setDepartments(deptsData);
-        setRoles(rolesData);
-        setAllUsers(usersData);
-        setAssignableRoles(assignableRolesData);
-        setEditForm({
-          name: userData.name,
-          email: userData.email,
-          departmentId: userData.department?.id?.toString() || "",
-          roleId: userData.role?.id?.toString() || "",
-          managerId: userData.manager?.id?.toString() || "",
-          active: userData.active,
-          manageAllDepartments: userData.manageAllDepartments,
-          managedDepartmentIds: userData.managedDepartments.map(d => d.id),
-        });
-      } catch (err: any) {
-        setError(err?.message || "Failed to load user details.");
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, [userId]);
+
+  // Fill the edit form from the latest user data each time the dialog opens
+  function openEdit() {
+    if (!user) return;
+    setEditForm({
+      name: user.name,
+      email: user.email,
+      departmentId: user.department?.id?.toString() || "",
+      roleId: user.role?.id?.toString() || "",
+      managerId: user.manager?.id?.toString() || "",
+      active: user.active,
+      password: "",
+      manageAllDepartments: user.manageAllDepartments,
+      managedDepartmentIds: user.managedDepartments.map(d => d.id),
+      extraRoleIds: user.extraAssignableRoles.map(r => r.id),
+    });
+    setShowEdit(true);
+  }
 
   // Filter out current user from manager options
   const managerOptions = allUsers.filter((u) => u.id !== Number(userId));
+
+  // Only someone who manages ALL departments may grant/remove "All Departments"
+  const canGrantAllDepartments = !!currentUser?.manageAllDepartments;
+
+  // Role dropdown = roles I can assign (GET /roles/assignable). Keep the user's
+  // current role visible even if I could not assign it myself.
+  const roleOptions = [
+    ...assignableRoles.map((r) => ({ value: r.id.toString(), label: r.name })),
+    ...(user?.role && !assignableRoles.some((r) => r.id === user.role!.id)
+      ? [{ value: user.role.id.toString(), label: `${user.role.name} (current)` }]
+      : []),
+  ];
+
+  // Extra assignable roles: only if the selected role can manage users and doesn't assign every role
+  const selectedEditRole = roles.find((r) => r.id === Number(editForm.roleId)) || null;
+  const showEditExtras = !!selectedEditRole
+    && selectedEditRole.permissions.includes("user:manage")
+    && !selectedEditRole.allRoles;
+  // Lock 1: candidates = roles I can assign, minus the selected role and its base list
+  const editExtraCandidates = selectedEditRole
+    ? assignableRoles.filter(
+        (r) => r.id !== selectedEditRole.id && !selectedEditRole.assignableRoles.some((b) => b.id === r.id)
+      )
+    : [];
+  // Extras granted by someone with wider authority — shown read-only, preserved by the backend
+  const lockedExtras = (user?.extraAssignableRoles ?? []).filter(
+    (r) => !assignableRoles.some((a) => a.id === r.id)
+  );
 
   async function handleSaveEdit() {
     if (!user) return;
@@ -150,6 +170,15 @@ export function UserDetailPage() {
       }
       if (editForm.managedDepartmentIds.join(',') !== user.managedDepartments.map(d => d.id).join(',')) {
         updateData.managed_department_ids = editForm.managedDepartmentIds;
+      }
+      if (showEditExtras) {
+        const visibleExtras = editForm.extraRoleIds.filter((id) => editExtraCandidates.some((r) => r.id === id));
+        const originalVisible = user.extraAssignableRoles
+          .map((r) => r.id)
+          .filter((id) => editExtraCandidates.some((r) => r.id === id));
+        if ([...visibleExtras].sort().join(",") !== [...originalVisible].sort().join(",")) {
+          updateData.extra_assignable_role_ids = visibleExtras;
+        }
       }
 
       const roleChanged = editForm.roleId !== (user.role?.id?.toString() || "");
@@ -303,7 +332,7 @@ export function UserDetailPage() {
 
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setShowEdit(true)}
+              onClick={openEdit}
               className="flex items-center gap-1.5 px-3 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
             >
               <Edit2 size={16} /> Edit User
@@ -379,6 +408,22 @@ export function UserDetailPage() {
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Role</p>
                 <p className="text-sm text-foreground">{user.role?.name || "No role"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Manages Departments</p>
+                <p className="text-sm text-foreground">
+                  {user.manageAllDepartments
+                    ? "All Departments"
+                    : user.managedDepartments.length > 0
+                      ? user.managedDepartments.map((d) => d.name).join(", ")
+                      : "None"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Extra Assignable Roles</p>
+                <p className="text-sm text-foreground">
+                  {user.extraAssignableRoles.length > 0 ? user.extraAssignableRoles.map((r) => r.name).join(", ") : "None"}
+                </p>
               </div>
               <div className="col-span-2">
                 <p className="text-xs text-muted-foreground mb-1">Member Since</p>
@@ -664,44 +709,42 @@ export function UserDetailPage() {
               onChange={(e) => setEditForm({ ...editForm, roleId: e.target.value })}
               options={[
                 { value: "", label: "No role" },
-                ...assignableRoles.map((r) => ({ value: r.id.toString(), label: r.name })),
+                ...roleOptions,
               ]}
             />
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-2">Departments This User Manages</label>
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={editForm.manageAllDepartments}
-                    onChange={(e) => setEditForm({ ...editForm, manageAllDepartments: e.target.checked, managedDepartmentIds: e.target.checked ? [] : editForm.managedDepartmentIds })}
-                    className="w-4 h-4 accent-blue-600"
-                  />
-                  <span className="text-sm text-foreground">All Departments</span>
-                </label>
-                {!editForm.manageAllDepartments && (
-                  <div className="border border-border rounded-lg p-3 grid grid-cols-2 gap-2 max-h-48 overflow-y-auto">
-                    {departments.map((dept) => (
-                      <label key={dept.id} className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={editForm.managedDepartmentIds.includes(dept.id)}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setEditForm({ ...editForm, managedDepartmentIds: [...editForm.managedDepartmentIds, dept.id] });
-                            } else {
-                              setEditForm({ ...editForm, managedDepartmentIds: editForm.managedDepartmentIds.filter(id => id !== dept.id) });
-                            }
-                          }}
-                          className="w-4 h-4 accent-blue-600"
-                        />
-                        <span className="text-sm text-foreground">{dept.name}</span>
-                      </label>
-                    ))}
-                  </div>
+            {/* Department scope lives on the user */}
+            <DepartmentScopePicker
+              departments={departments}
+              manageAll={editForm.manageAllDepartments}
+              selectedIds={editForm.managedDepartmentIds}
+              onChange={({ manageAll, ids }) =>
+                setEditForm({ ...editForm, manageAllDepartments: manageAll, managedDepartmentIds: ids })
+              }
+              canGrantAll={canGrantAllDepartments}
+            />
+            {!canGrantAllDepartments && editForm.manageAllDepartments && (
+              <p className="text-xs text-muted-foreground -mt-2">This user manages all departments (only a global manager can change this).</p>
+            )}
+
+            {/* Personal extra assignable roles (on top of the role's base list) */}
+            {showEditExtras && (
+              <div>
+                <RoleChecklist
+                  title="Extra roles this user can assign"
+                  help={`On top of the ${selectedEditRole!.name} role's base list. Only roles you can assign yourself are shown.`}
+                  roles={editExtraCandidates}
+                  selectedIds={editForm.extraRoleIds}
+                  onChange={(ids) => setEditForm({ ...editForm, extraRoleIds: ids })}
+                  emptyText="No additional roles available to grant"
+                />
+                {lockedExtras.length > 0 && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Also granted by a higher authority (kept): {lockedExtras.map((r) => r.name).join(", ")}
+                  </p>
                 )}
               </div>
-            </div>
+            )}
+
             <FldSelect
               label="Manager"
               value={editForm.managerId}

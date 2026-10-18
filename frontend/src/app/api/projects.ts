@@ -1,32 +1,6 @@
 import { apiFetch } from "./client";
 import { Project, UserType, Milestone, Attachment } from "../types";
-
-function mapUser(u: any): UserType {
-  return {
-    id: u.id,
-    name: u.name,
-    email: u.email,
-    active: u.is_active,
-    role: u.role ? {
-      id: u.role.id,
-      name: u.role.name,
-      description: u.role.description || null,
-      color: u.role.color || "blue",
-      isActive: u.role.is_active ?? true,
-      isSystem: u.role.is_system ?? false,
-      createdBy: u.role.created_by || null,
-      creator: u.role.creator ? { id: u.role.creator.id, name: u.role.creator.name } : null,
-      createdAt: u.role.created_at || "",
-      updatedAt: u.role.updated_at || "",
-      permissions: Array.isArray(u.role.permissions) ? u.role.permissions.map((p: any) => p.name) : [],
-      allDepartments: u.role.all_departments || false,
-      departments: Array.isArray(u.role.departments) ? u.role.departments.map((d: any) => ({ id: d.id, name: d.name })) : [],
-      assignableRoles: Array.isArray(u.role.assignable_roles) ? u.role.assignable_roles.map((ar: any) => ({ id: ar.id, name: ar.name })) : [],
-      userCount: u.role.user_count || 0,
-    } : null,
-    department: u.department ? { id: u.department.id, name: u.department.name } : null,
-  };
-}
+import { mapUser } from "./users";
 
 function toDatetimeLocalValue(iso: string): string {
   const d = new Date(iso);
@@ -58,6 +32,8 @@ function mapProject(p: any): Project {
     reopenedReason: p.reopened_reason || null,
     reopenedBy: p.reopened_by || null,
     reopenedAt: p.reopened_at || null,
+    taskCount: p.task_count || 0,
+    doneTaskCount: p.done_task_count || 0,
   };
 }
 

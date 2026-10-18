@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useNavigate } from "react-router";
 import { Plus, AlertTriangle, Trash2, Search, MoreVertical, Eye } from "lucide-react";
 import { Department, UserType } from "../types";
+import { useCachedQuery, qk, FRESH, EMPTY } from "../api/queries";
 import { getDepartments, createDepartment, deleteDepartment } from "../api/departments";
 import { getUsers } from "../api/users";
 import { Dlg } from "../components/Dlg";
@@ -31,10 +32,15 @@ function getInitials(name: string) {
 
 export function DepartmentsPage() {
   const navigate = useNavigate();
-  const [departments, setDepartments] = useState<Department[]>([]);
-  const [users, setUsers] = useState<UserType[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Shared store: instant when already loaded, refreshed after every save
+  const departmentsQ = useCachedQuery<Department[]>(qk.departments, getDepartments, EMPTY, { staleTime: FRESH.RARE });
+  const usersQ = useCachedQuery<UserType[]>(qk.users, getUsers, EMPTY, { staleTime: FRESH.NORMAL });
+  const departments = departmentsQ.data;
+  const setDepartments = departmentsQ.setData;
+  const users = usersQ.data;
+  const loading = departmentsQ.isLoading;
+  const [actionError, setError] = useState<string | null>(null);
+  const error = actionError || (departmentsQ.error ? departmentsQ.error.message || "Failed to load departments." : null);
   const [searchQuery, setSearchQuery] = useState("");
 
   const [showNew, setShowNew] = useState(false);
@@ -54,25 +60,6 @@ export function DepartmentsPage() {
     moveProjectsTo: null as number | null,
   });
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        setLoading(true);
-        setError(null);
-        const [fetchedDepts, fetchedUsers] = await Promise.all([
-          getDepartments(),
-          getUsers(),
-        ]);
-        setDepartments(fetchedDepts);
-        setUsers(fetchedUsers);
-      } catch (err: any) {
-        setError(err?.message || "Failed to load departments.");
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, []);
 
   const filteredDepartments = departments.filter((dept) =>
     dept.name.toLowerCase().includes(searchQuery.toLowerCase())

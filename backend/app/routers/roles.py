@@ -1,13 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.deps import require_permission, get_current_user
+from app.core.deps import require_permission, get_current_user, can_assign_role, load_assign_context
 from app.database import get_db
 from app.models.role import Role, Permission, role_permission, role_assignable_role
 from app.models.category import Category
-from app.models.user import User
+from app.models.user import User, user_extra_assignable_role
+from app.models.department import Department
 from app.models.activity_log import ActivityLog
 from app.schemas.activity_log import ActivityLogOut
 from app.schemas.role import (
@@ -21,11 +22,28 @@ from app.services.activity_log import log_activity
 router = APIRouter(prefix="/roles", tags=["roles"])
 
 
-async def _role_to_out(db: AsyncSession, role: Role) -> RoleOut:
-    """Convert Role model to RoleOut schema with counts and loaded relationships."""
-    await db.refresh(role, ["permissions", "assignable_roles", "creator", "department_tag"])
-    user_count_result = await db.execute(select(User).where(User.role_id == role.id))
-    user_count = len(user_count_result.scalars().all())
+def _role_list_options():
+    """Load every role's related data in bulk (one query per relation, not per role)."""
+    return [
+        selectinload(Role.permissions),
+        selectinload(Role.assignable_roles),
+        selectinload(Role.creator),
+        selectinload(Role.department_tag),
+    ]
+
+
+async def _user_counts(db: AsyncSession) -> dict[int, int]:
+    """Number of users per role, counted inside the database in ONE query."""
+    rows = await db.execute(
+        select(User.role_id, func.count(User.id))
+        .where(User.role_id.isnot(None))
+        .group_by(User.role_id)
+    )
+    return dict(rows.all())
+
+
+def _build_role_out(role: Role, user_count: int) -> RoleOut:
+    """Build RoleOut from an already-loaded role. Makes NO database calls."""
     return RoleOut(
         id=role.id,
         name=role.name,
@@ -45,64 +63,55 @@ async def _role_to_out(db: AsyncSession, role: Role) -> RoleOut:
     )
 
 
+async def _role_to_out(db: AsyncSession, role: Role) -> RoleOut:
+    """RoleOut for ONE role (used after create / update / get)."""
+    await db.refresh(role, ["permissions", "assignable_roles", "creator", "department_tag"])
+    user_count = (await db.execute(
+        select(func.count(User.id)).where(User.role_id == role.id)
+    )).scalar_one()
+    return _build_role_out(role, user_count)
+
+
 @router.get("", response_model=list[RoleOut])
 async def list_roles(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
     """List all roles. Requires authentication."""
-    result = await db.execute(
-        select(Role).options(
-            selectinload(Role.permissions),
-
-            selectinload(Role.assignable_roles),
-            selectinload(Role.creator),
-        )
-    )
+    result = await db.execute(select(Role).options(*_role_list_options()).order_by(Role.name))
     roles = result.scalars().all()
-    out_list = []
-    for role in roles:
-        out_list.append(await _role_to_out(db, role))
-    return out_list
+    counts = await _user_counts(db)
+    return [_build_role_out(role, counts.get(role.id, 0)) for role in roles]
+
 
 @router.get("/assignable", response_model=list[RoleOut])
 async def list_assignable_roles(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Returns roles the current user can assign (hierarchy + domain relevance)."""
-    # Start with all roles
-    result = await db.execute(
-        select(Role).options(
-            selectinload(Role.permissions),
-            selectinload(Role.assignable_roles),
-            selectinload(Role.creator),
-            selectinload(Role.department_tag),
-        )
-    )
-    all_roles = result.scalars().all()
-
-    # Filter by hierarchy: must be in assignable_roles (or user has all_roles)
-    if current_user.role and current_user.role.all_roles:
-        hierarchy_filtered = all_roles
-    elif current_user.role:
-        assignable_role_ids = {r.id for r in current_user.role.assignable_roles}
-        hierarchy_filtered = [r for r in all_roles if r.id in assignable_role_ids]
-    else:
-        # No role = can't assign any roles
+    """
+    Roles the current user may give to others (the Role dropdown on the
+    Create/Edit User form, and the pool for 'extra assignable roles').
+    = role's base assignable list  UNION  the user's personal extras
+      (or every role if the role has all_roles), then filtered so that a
+      department-tagged role only appears if the user manages that department.
+    """
+    if current_user.role is None:
         return []
+    await load_assign_context(db, current_user)
+    result = await db.execute(select(Role).options(*_role_list_options()).order_by(Role.name))
+    roles = [r for r in result.scalars().all() if can_assign_role(current_user, r)]
+    counts = await _user_counts(db)
+    return [_build_role_out(role, counts.get(role.id, 0)) for role in roles]
 
-    # Filter by domain relevance: role must have no department_tag OR
-    # its department_tag must be in current_user's managed_departments
-    if current_user.manage_all_departments:
-        return [await _role_to_out(db, r) for r in hierarchy_filtered]
-    else:
-        managed_dept_ids = {d.id for d in current_user.managed_departments}
-        domain_filtered = [
-            r for r in hierarchy_filtered
-            if r.department_tag_id is None or r.department_tag_id in managed_dept_ids
-        ]
-        return [await _role_to_out(db, r) for r in domain_filtered]
+
+async def _validated_assignable_ids(db: AsyncSession, ids: list[int], self_id: int | None = None) -> list[int]:
+    """De-duplicate, drop the role itself, and make sure every id is a real role."""
+    clean = [i for i in dict.fromkeys(ids) if i != self_id]
+    for rid in clean:
+        if (await db.execute(select(Role.id).where(Role.id == rid))).scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail=f"Role with id {rid} not found")
+    return clean
 
 
 @router.get("/{role_id}", response_model=RoleOut)
@@ -115,9 +124,9 @@ async def get_role(
     result = await db.execute(
         select(Role).options(
             selectinload(Role.permissions),
-
             selectinload(Role.assignable_roles),
             selectinload(Role.creator),
+            selectinload(Role.department_tag),
         ).where(Role.id == role_id)
     )
     role = result.scalar_one_or_none()
@@ -158,6 +167,9 @@ async def create_role(
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=400, detail="Role name already exists")
 
+    if payload.department_tag_id is not None and await db.get(Department, payload.department_tag_id) is None:
+        raise HTTPException(status_code=404, detail="Department for tag not found")
+
     role = Role(
         name=payload.name,
         description=payload.description,
@@ -190,7 +202,7 @@ async def create_role(
 
     # Insert assignable role associations (skip if all_roles is true)
     if not role.all_roles and payload.assignable_role_ids:
-        for assignable_role_id in payload.assignable_role_ids:
+        for assignable_role_id in await _validated_assignable_ids(db, payload.assignable_role_ids, role.id):
             await db.execute(role_assignable_role.insert().values(role_id=role.id, assignable_role_id=assignable_role_id))
 
     await log_activity(
@@ -217,9 +229,9 @@ async def update_role(
     result = await db.execute(
         select(Role).options(
             selectinload(Role.permissions),
-
             selectinload(Role.assignable_roles),
             selectinload(Role.creator),
+            selectinload(Role.department_tag),
         ).where(Role.id == role_id)
     )
     role = result.scalar_one_or_none()
@@ -255,8 +267,10 @@ async def update_role(
             await db.execute(role_permission.insert().values(role_id=role_id, permission_id=perm_id))
         changed_fields.append("permissions")
 
-    # Handle department_tag_id update
-    if payload.department_tag_id is not None:
+    # Handle department_tag_id update (explicit null clears the tag → general role)
+    if "department_tag_id" in payload.model_fields_set and payload.department_tag_id != role.department_tag_id:
+        if payload.department_tag_id is not None and await db.get(Department, payload.department_tag_id) is None:
+            raise HTTPException(status_code=404, detail="Department for tag not found")
         role.department_tag_id = payload.department_tag_id
         changed_fields.append("department_tag_id")
 
@@ -271,9 +285,9 @@ async def update_role(
 
         # Add new assignable role associations if not all_roles
         if not role.all_roles and payload.assignable_role_ids:
-            for assignable_role_id in payload.assignable_role_ids:
+            for assignable_role_id in await _validated_assignable_ids(db, payload.assignable_role_ids, role_id):
                 await db.execute(role_assignable_role.insert().values(role_id=role_id, assignable_role_id=assignable_role_id))
-        elif payload.assignable_role_ids is not None:
+        if payload.assignable_role_ids is not None:
             changed_fields.append("assignable_roles")
 
     if not changed_fields:
@@ -341,6 +355,9 @@ async def delete_role(
             (role_assignable_role.c.assignable_role_id == role_id)
         )
     )
+
+    # Remove this role from every user's personal extra-assignable list
+    await db.execute(user_extra_assignable_role.delete().where(user_extra_assignable_role.c.role_id == role_id))
 
     await db.delete(role)
     await db.commit()

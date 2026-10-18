@@ -13,7 +13,8 @@ Usage:
 (Run this AFTER you've registered that user via POST /auth/register)
 
 Safe to run more than once: if the Admin role/category already exist,
-they will be updated with all permissions and all_departments=True.
+they will be updated with all permissions and all_roles=True, and the
+user is given manage_all_departments=True (department scope lives on User).
 """
 import asyncio
 import sys

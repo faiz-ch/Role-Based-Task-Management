@@ -5,8 +5,11 @@ import { Role, PermDef, Department, UserType } from "../types";
 import { getRole, getRoleActivity, getAllPermissions, updateRole, getRoles } from "../api/roles";
 import { getUsers } from "../api/users";
 import { getDepartments } from "../api/departments";
+import { useCachedQuery, qk, FRESH, EMPTY } from "../api/queries";
 import { Dlg } from "../components/Dlg";
 import { FldInput } from "../components/FldInput";
+import { PermissionModulePicker, hasModule } from "../components/PermissionModulePicker";
+import { RoleChecklist } from "../components/RoleChecklist";
 
 const COLOR_SWATCHES = [
   { name: "purple", value: "#a855f7", bg: "bg-purple-100", text: "text-purple-600" },
@@ -57,25 +60,34 @@ type Tab = "overview" | "permissions" | "users" | "activity";
 export function RoleDetailPage() {
   const { roleId } = useParams<{ roleId: string }>();
   const navigate = useNavigate();
-  const [role, setRole] = useState<Role | null>(null);
-  const [activity, setActivity] = useState<{
-    actorId: number;
-    action: string;
-    detail: string | null;
-    createdAt: string;
-  }[]>([]);
-  const [allPermissions, setAllPermissions] = useState<PermDef[]>([]);
-  const [allDepartments, setAllDepartments] = useState<Department[]>([]);
-  const [allRoles, setAllRoles] = useState<Role[]>([]);
-  const [allUsers, setAllUsers] = useState<UserType[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const rid = Number(roleId);
+  const hasId = !!roleId && !Number.isNaN(rid);
+
+  // Shared store: instant when already loaded, refreshed after every save
+  const roleQ = useCachedQuery<Role | null>(qk.role(rid), () => getRole(rid), null, { enabled: hasId, staleTime: FRESH.RARE });
+  const activityQ = useCachedQuery<{ actorId: number; action: string; detail: string | null; createdAt: string }[]>(
+    [...qk.role(rid), "activity"], () => getRoleActivity(rid), EMPTY, { enabled: hasId });
+  const permissionsQ = useCachedQuery<PermDef[]>(qk.permissions, getAllPermissions, EMPTY, { staleTime: FRESH.RARE });
+  const departmentsQ = useCachedQuery<Department[]>(qk.departments, getDepartments, EMPTY, { staleTime: FRESH.RARE });
+  const rolesQ = useCachedQuery<Role[]>(qk.roles, getRoles, EMPTY, { staleTime: FRESH.RARE });
+  const usersQ = useCachedQuery<UserType[]>(qk.users, getUsers, EMPTY, { staleTime: FRESH.NORMAL });
+
+  const role = roleQ.data;
+  const setRole = roleQ.setData;
+  const activity = activityQ.data;
+  const allPermissions = permissionsQ.data;
+  const allDepartments = departmentsQ.data;
+  const allRoles = rolesQ.data;
+  const allUsers = usersQ.data;
+  const loading = roleQ.isLoading;
+  const [actionError, setError] = useState<string | null>(null);
+  const error = actionError || (roleQ.error ? roleQ.error.message || "Failed to load role details." : null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [localPermissionIds, setLocalPermissionIds] = useState<number[]>([]);
-  const [selectedModule, setSelectedModule] = useState<string>("");
   const [localAssignableRoleIds, setLocalAssignableRoleIds] = useState<number[]>([]);
+  const [localAllRoles, setLocalAllRoles] = useState(false);
 
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [editName, setEditName] = useState("");
@@ -89,34 +101,6 @@ export function RoleDetailPage() {
     return allRoles.filter((r) => r.id !== role?.id);
   }, [allRoles, role]);
 
-  useEffect(() => {
-    async function loadData() {
-      if (!roleId) return;
-      try {
-        setLoading(true);
-        setError(null);
-        const [roleData, activityData, permissionsData, departmentsData, rolesData, usersData] = await Promise.all([
-          getRole(Number(roleId)),
-          getRoleActivity(Number(roleId)),
-          getAllPermissions(),
-          getDepartments(),
-          getRoles(),
-          getUsers(),
-        ]);
-        setRole(roleData);
-        setActivity(activityData);
-        setAllPermissions(permissionsData);
-        setAllDepartments(departmentsData);
-        setAllRoles(rolesData);
-        setAllUsers(usersData);
-      } catch (err: any) {
-        setError(err?.message || "Failed to load role details.");
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, [roleId]);
 
   // Sync local state when switching to permissions tab or when role changes
   useEffect(() => {
@@ -125,33 +109,13 @@ export function RoleDetailPage() {
         const perm = allPermissions.find((ap) => ap.name === p);
         return perm?.id || 0;
       }).filter((id) => id !== 0));
-      setLocalAssignableRoleIds(
-        role.allRoles ? otherRoles.map((r) => r.id) : role.assignableRoles.map((r) => r.id)
-      );
+      setLocalAssignableRoleIds(role.assignableRoles.map((r) => r.id));
+      setLocalAllRoles(role.allRoles);
     }
-  }, [activeTab, role, allPermissions, otherRoles]);
+  }, [activeTab, role, allPermissions]);
 
-  // Group permissions by module (part before colon)
-  const permissionModules = useMemo(() => {
-    const modules: Record<string, PermDef[]> = {};
-    allPermissions.forEach((perm) => {
-      const [module] = perm.name.split(":");
-      if (!modules[module]) modules[module] = [];
-      modules[module].push(perm);
-    });
-    return modules;
-  }, [allPermissions]);
-
-  const moduleNames = Object.keys(permissionModules).sort();
-
-  // Select first module by default
-  useEffect(() => {
-    if (moduleNames.length > 0 && !selectedModule) {
-      setSelectedModule(moduleNames[0]);
-    }
-  }, [moduleNames, selectedModule]);
-
-  const currentModulePermissions = permissionModules[selectedModule] || [];
+  // Base assignable list only matters if the role can manage users
+  const localManagesUsers = hasModule(allPermissions, localPermissionIds, "user");
 
   // Check if local state differs from original role
   const hasUnsavedChanges = useMemo(() => {
@@ -168,25 +132,25 @@ export function RoleDetailPage() {
     if (sortedOriginalPermissions.some((id, i) => id !== sortedLocalPermissions[i])) return true;
 
     // Check assignable roles
-    const computedAllRoles = localAssignableRoleIds.length === otherRoles.length;
-    if (role.allRoles !== computedAllRoles) return true;
+    if (role.allRoles !== localAllRoles) return true;
     const originalAssignableIds = role.assignableRoles.map((r) => r.id).sort((a, b) => a - b);
     const sortedLocalAssignable = [...localAssignableRoleIds].sort((a, b) => a - b);
     if (originalAssignableIds.length !== sortedLocalAssignable.length) return true;
     if (originalAssignableIds.some((id, i) => id !== sortedLocalAssignable[i])) return true;
 
     return false;
-  }, [role, allPermissions, localPermissionIds, localAssignableRoleIds, allRoles]);
+  }, [role, allPermissions, localPermissionIds, localAssignableRoleIds, localAllRoles]);
 
   async function handleSavePermissions() {
     if (!role) return;
     try {
       setError(null);
-      const computedAllRoles = localAssignableRoleIds.length === otherRoles.length;
+      // If the role no longer manages users, its assignable list is cleared
+      const allRolesValue = localManagesUsers && localAllRoles;
       await updateRole(role.id, {
         permissionIds: localPermissionIds,
-        allRoles: computedAllRoles,
-        assignableRoleIds: computedAllRoles ? [] : localAssignableRoleIds,
+        allRoles: allRolesValue,
+        assignableRoleIds: localManagesUsers && !allRolesValue ? localAssignableRoleIds : [],
       });
       const updatedRole = await getRole(role.id);
       setRole(updatedRole);
@@ -229,35 +193,6 @@ export function RoleDetailPage() {
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (err: any) {
       setEditError(err?.message || "Failed to update role.");
-    }
-  }
-
-  function togglePermission(permId: number) {
-    setLocalPermissionIds((prev) =>
-      prev.includes(permId) ? prev.filter((id) => id !== permId) : [...prev, permId]
-    );
-  }
-
-  function toggleAllPermissionsInModule() {
-    const allSelected = currentModulePermissions.every((p) => localPermissionIds.includes(p.id));
-    if (allSelected) {
-      setLocalPermissionIds((prev) =>
-        prev.filter((id) => !currentModulePermissions.some((p) => p.id === id))
-      );
-    } else {
-      setLocalPermissionIds((prev) => {
-        const moduleIds = currentModulePermissions.map((p) => p.id);
-        return [...new Set([...prev, ...moduleIds])];
-      });
-    }
-  }
-
-  function toggleAllAssignableRoles() {
-    const allSelected = otherRoles.every((r) => localAssignableRoleIds.includes(r.id));
-    if (allSelected) {
-      setLocalAssignableRoleIds([]);
-    } else {
-      setLocalAssignableRoleIds(otherRoles.map((r) => r.id));
     }
   }
 
@@ -381,6 +316,10 @@ export function RoleDetailPage() {
                 </div>
               </div>
               <div>
+                <label className="block text-sm text-muted-foreground mb-1">Department Tag</label>
+                <p className="text-sm text-foreground">{role.departmentTag ? role.departmentTag.name : "General (any department)"}</p>
+              </div>
+              <div>
                 <label className="block text-sm text-muted-foreground mb-1">Created By</label>
                 <p className="text-sm text-foreground">{role.creator ? role.creator.name : "System"}</p>
               </div>
@@ -424,99 +363,26 @@ export function RoleDetailPage() {
             </div>
           )}
           <div className="bg-white rounded-xl border border-border p-4 space-y-4">
-            <div className="flex gap-4">
-              {/* Module Sidebar */}
-              <div className="w-48 flex-shrink-0">
-                <label className="block text-sm font-medium text-foreground mb-2">
-                  Modules
-                </label>
-                <div className="border border-border rounded-lg overflow-hidden">
-                  {moduleNames.map((module) => (
-                    <button
-                      key={module}
-                      onClick={() => setSelectedModule(module)}
-                      className={`w-full text-left px-3 py-2 text-sm border-b border-border last:border-b-0 transition-colors ${
-                        selectedModule === module
-                          ? "bg-blue-50 text-blue-700 font-medium"
-                          : "hover:bg-muted/50 text-foreground"
-                      }`}
-                    >
-                      {module.charAt(0).toUpperCase() + module.slice(1)}
-                    </button>
-                  ))}
-                </div>
-              </div>
+            {/* One box per module */}
+            <PermissionModulePicker
+              allPermissions={allPermissions}
+              selectedIds={localPermissionIds}
+              onChange={setLocalPermissionIds}
+            />
 
-              {/* Permission Checkboxes */}
-              <div className="flex-1">
-                <div className="flex items-center justify-between mb-2">
-                  <label className="block text-sm font-medium text-foreground">
-                    {selectedModule.charAt(0).toUpperCase() + selectedModule.slice(1)} Permissions
-                  </label>
-                  <button
-                    onClick={toggleAllPermissionsInModule}
-                    className="text-xs text-blue-600 hover:text-blue-700 cursor-pointer"
-                  >
-                    Select All
-                  </button>
-                </div>
-                <div className="border border-border rounded-lg p-3 space-y-2 max-h-96 overflow-y-auto">
-                  {currentModulePermissions.map((perm) => {
-                    const permName = perm.name.split(":")[1];
-                    const isChecked = localPermissionIds.includes(perm.id);
-                    return (
-                      <label key={perm.id} className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => togglePermission(perm.id)}
-                          className="w-4 h-4 accent-blue-600"
-                        />
-                        <span className="text-sm text-foreground">
-                          {permName.charAt(0).toUpperCase() + permName.slice(1)}
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            {/* Assignable Roles Section - only show if user:manage permission is selected */}
-            {localPermissionIds.length > 0 && allPermissions.find(p => p.name === "user:manage") && localPermissionIds.includes(allPermissions.find(p => p.name === "user:manage")!.id) && (
+            {/* Base Assignable Roles — only relevant if the role can manage users */}
+            {localManagesUsers && (
               <div className="pt-3 border-t border-border">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold text-foreground">Assignable Roles</h3>
-                  <button
-                    onClick={toggleAllAssignableRoles}
-                    className="text-xs text-blue-600 hover:text-blue-700 cursor-pointer"
-                  >
-                    {otherRoles.length > 0 && otherRoles.every((r) => localAssignableRoleIds.includes(r.id)) ? "Deselect All" : "Select All"}
-                  </button>
-                </div>
-                {otherRoles.length > 0 ? (
-                  <div className="border border-border rounded-lg p-3 grid grid-cols-2 lg:grid-cols-3 gap-2 max-h-96 overflow-y-auto">
-                    {otherRoles.map((r) => (
-                      <label key={r.id} className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={localAssignableRoleIds.includes(r.id)}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setLocalAssignableRoleIds((prev) => [...prev, r.id]);
-                            } else {
-                              setLocalAssignableRoleIds((prev) => prev.filter((id) => id !== r.id));
-                            }
-                          }}
-                          className="w-4 h-4 accent-blue-600"
-                        />
-                        <span className="text-sm text-foreground">{r.name}</span>
-                      </label>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">No other roles exist yet — create another role first</p>
-                )}
+                <RoleChecklist
+                  title="Assignable Roles (base list)"
+                  help="Roles that EVERYONE with this role can give to users. Extra roles for one specific person are set on that person's user profile."
+                  roles={otherRoles}
+                  selectedIds={localAssignableRoleIds}
+                  onChange={setLocalAssignableRoleIds}
+                  allRoles={localAllRoles}
+                  onAllRolesChange={setLocalAllRoles}
+                  emptyText="No other roles exist yet — create another role first"
+                />
               </div>
             )}
 

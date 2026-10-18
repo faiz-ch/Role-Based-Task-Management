@@ -1,3 +1,5 @@
+import { queryClient } from "./queryClient";
+
 // Set VITE_API_BASE_URL in your deployment platform's env vars (e.g. Vercel).
 // Falls back to localhost for local dev.
 export const API_BASE_URL =
@@ -89,7 +91,59 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Every API call goes through here.
+ *
+ * After any successful SAVE (POST / PUT / PATCH / DELETE), all data in the
+ * shared store is marked out of date: whatever is on screen is re-fetched
+ * at once, everything else is re-fetched the next time a page shows it.
+ * This is what makes related information (activity, counts, teams,
+ * dashboard, other pages) update after you save — without pressing F5.
+ */
 export async function apiFetch(path: string, options: RequestInit = {}): Promise<any> {
+  const result = await apiFetchRaw(path, options);
+  const method = (options.method || "GET").toUpperCase();
+  if (method !== "GET" && !path.startsWith("/auth")) {
+    scheduleRefreshAfterSave(path);
+  }
+  return result;
+}
+
+// Reference lists that rarely change. They are only refreshed when a save
+// actually touches them, instead of after every save.
+const REFERENCE_DATA = ["departments", "roles", "permissions", "categories"];
+let pendingRefresh: ReturnType<typeof setTimeout> | null = null;
+const touchedReferenceData = new Set<string>();
+
+/**
+ * Called after every successful save. Several saves made in quick succession
+ * (e.g. "create task" followed by "set its team") are combined into ONE
+ * refresh, 250 ms after the last save.
+ */
+function scheduleRefreshAfterSave(path: string) {
+  if (path.startsWith("/departments")) touchedReferenceData.add("departments");
+  if (path.startsWith("/roles")) touchedReferenceData.add("roles");
+  if (path.startsWith("/categories")) touchedReferenceData.add("categories");
+  // user changes affect role user-counts, "roles I can assign" and department member counts
+  if (path.startsWith("/users")) { touchedReferenceData.add("roles"); touchedReferenceData.add("departments"); }
+  // project changes affect department project counts
+  if (path.startsWith("/projects")) touchedReferenceData.add("departments");
+
+  if (pendingRefresh) clearTimeout(pendingRefresh);
+  pendingRefresh = setTimeout(() => {
+    const touched = new Set(touchedReferenceData);
+    touchedReferenceData.clear();
+    pendingRefresh = null;
+    queryClient.invalidateQueries({
+      predicate: (query) => {
+        const root = String(query.queryKey[0]);
+        return !REFERENCE_DATA.includes(root) || touched.has(root);
+      },
+    });
+  }, 250);
+}
+
+async function apiFetchRaw(path: string, options: RequestInit = {}): Promise<any> {
   const url = `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
   
   const headers = new Headers(options.headers || {});

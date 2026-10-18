@@ -1,19 +1,18 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useNavigate } from "react-router";
 import { Plus, Search, ChevronDown, ChevronRight, Trash2, Check, ChevronLeft, ArrowRight } from "lucide-react";
-import { Project, UserType, ProjectStatus, Priority, Department, Task } from "../types";
+import { Project, UserType, ProjectStatus, Priority, Department } from "../types";
 import { useAuth } from "../context/AuthContext";
 import { getProjects, createProject, deleteProject } from "../api/projects";
-import { getTasks } from "../api/tasks";
 import { getUsers } from "../api/users";
 import { getDepartments } from "../api/departments";
+import { useCachedQuery, qk, FRESH, EMPTY } from "../api/queries";
 import { Av } from "../components/Av";
 import { Dlg } from "../components/Dlg";
 import { FldInput } from "../components/FldInput";
 import { FldSelect } from "../components/FldSelect";
 import { PriBadge } from "../components/PriBadge";
 import { DatePicker } from "../components/DatePicker";
-import { getEffectiveDepartmentIds } from "../utils/roleAccess";
 
 const PROJECT_STATUSES: ProjectStatus[] = ["Planning", "Active", "Done", "Archived"];
 const PRIORITIES: Priority[] = ["Low", "Medium", "High"];
@@ -84,12 +83,21 @@ function fmtDate(d: string) {
 export function ProjectsPage() {
   const navigate = useNavigate();
   const { currentUser, permissions } = useAuth();
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [users, setUsers] = useState<UserType[]>([]);
-  const [departments, setDepartments] = useState<Department[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const canCreate = permissions.includes("project:manage");
+
+  // Data comes from the shared store: instant when already loaded,
+  // re-checked every 60 s and when returning to the tab.
+  const projectsQ = useCachedQuery<Project[]>(qk.projects, getProjects, EMPTY, { staleTime: FRESH.LIVE, poll: true });
+  const departmentsQ = useCachedQuery<Department[]>(qk.departments, getDepartments, EMPTY, { staleTime: FRESH.RARE });
+  // Users are only needed for the "New Project" lead/team picker
+  const usersQ = useCachedQuery<UserType[]>(qk.users, getUsers, EMPTY, { staleTime: FRESH.NORMAL, enabled: canCreate });
+  const projects = projectsQ.data;
+  const setProjects = projectsQ.setData;
+  const departments = departmentsQ.data;
+  const users = usersQ.data;
+  const loading = projectsQ.isLoading;
+  const [actionError, setError] = useState<string | null>(null);
+  const error = actionError || (projectsQ.error ? projectsQ.error.message || "Failed to load projects." : null);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("");
@@ -110,38 +118,6 @@ export function ProjectsPage() {
     leadId: "",
     teamUserIds: [],
   });
-
-  const canCreate = permissions.includes("project:manage");
-
-  useEffect(() => {
-    async function loadData() {
-      try {
-        setLoading(true);
-        setError(null);
-        const [projectsResult, departmentsResult, tasksResult] = await Promise.allSettled([
-          getProjects(),
-          getDepartments(),
-          getTasks(),
-        ]);
-
-        setProjects(projectsResult.status === "fulfilled" ? projectsResult.value : []);
-        setDepartments(departmentsResult.status === "fulfilled" ? departmentsResult.value : []);
-        setTasks(tasksResult.status === "fulfilled" ? tasksResult.value : []);
-
-        if (canCreate) {
-          const usersResult = await getUsers();
-          setUsers(usersResult);
-        }
-
-        if (projectsResult.status === "rejected") {
-          setError((projectsResult.reason as any)?.message || "Failed to load projects.");
-        }
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, []);
 
   const filteredProjects = projects.filter((project) => {
     if (filterStatus && project.status !== filterStatus) return false;
@@ -322,9 +298,9 @@ export function ProjectsPage() {
       {/* Project list */}
       <div className="flex-1 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
         {filteredProjects.map((project) => {
-          const projectTasks = tasks.filter((t) => t.projectId === project.id);
-          const totalTasks = projectTasks.length;
-          const doneTasks = projectTasks.filter((t) => t.status === "Done").length;
+          // Counts come with each project from the server (no task download needed)
+          const totalTasks = project.taskCount;
+          const doneTasks = project.doneTaskCount;
           const hasTasks = totalTasks > 0;
           const progressPercent = hasTasks ? Math.round((doneTasks / totalTasks) * 100) : 0;
           

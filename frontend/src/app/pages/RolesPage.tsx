@@ -5,17 +5,27 @@ import { Role, Department, Category, PermDef } from "../types";
 import { getRoles, createRole, updateRole, deleteRole, getAllPermissions } from "../api/roles";
 import { getDepartments } from "../api/departments";
 import { getCategories } from "../api/categories";
+import { useCachedQuery, qk, FRESH, EMPTY } from "../api/queries";
 import { Dlg } from "../components/Dlg";
 import { FldInput } from "../components/FldInput";
+import { PermissionModulePicker, hasModule } from "../components/PermissionModulePicker";
+import { RoleChecklist } from "../components/RoleChecklist";
 
 export function RolesPage() {
   const navigate = useNavigate();
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [departments, setDepartments] = useState<Department[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [allPermissions, setAllPermissions] = useState<PermDef[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Shared store: instant when already loaded, refreshed after every save
+  const rolesQ = useCachedQuery<Role[]>(qk.roles, getRoles, EMPTY, { staleTime: FRESH.RARE });
+  const departmentsQ = useCachedQuery<Department[]>(qk.departments, getDepartments, EMPTY, { staleTime: FRESH.RARE });
+  const categoriesQ = useCachedQuery<Category[]>(qk.categories, getCategories, EMPTY, { staleTime: FRESH.RARE });
+  const permissionsQ = useCachedQuery<PermDef[]>(qk.permissions, getAllPermissions, EMPTY, { staleTime: FRESH.RARE });
+  const roles = rolesQ.data;
+  const setRoles = rolesQ.setData;
+  const departments = departmentsQ.data;
+  const categories = categoriesQ.data;
+  const allPermissions = permissionsQ.data;
+  const loading = rolesQ.isLoading || permissionsQ.isLoading;
+  const [actionError, setError] = useState<string | null>(null);
+  const error = actionError || (rolesQ.error ? rolesQ.error.message || "Failed to load roles data." : null);
   const [searchQuery, setSearchQuery] = useState("");
 
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -25,62 +35,18 @@ export function RolesPage() {
   const [newRoleName, setNewRoleName] = useState("");
   const [newRoleDescription, setNewRoleDescription] = useState("");
   const [newRoleColor, setNewRoleColor] = useState("blue");
+  // Optional: which department this role is FOR (department scope itself lives on the user)
+  const [newDepartmentTagId, setNewDepartmentTagId] = useState<string>("");
   
   // Step 2 form state
   const [newPermissionIds, setNewPermissionIds] = useState<number[]>([]);
-  const [newDepartmentIds, setNewDepartmentIds] = useState<number[]>([]);
-  const [departmentSearchQuery, setDepartmentSearchQuery] = useState("");
+  // Base assignable roles (applies to everyone with this role); per-user extras are set on the user
   const [newAssignableRoleIds, setNewAssignableRoleIds] = useState<number[]>([]);
+  const [newAllRoles, setNewAllRoles] = useState(false);
   const [selectedPresetId, setSelectedPresetId] = useState<number | "">("");
-  const [selectedModule, setSelectedModule] = useState<string>("");
 
   const [deleteConfirmRole, setDeleteConfirmRole] = useState<Role | null>(null);
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        setLoading(true);
-        setError(null);
-        const [fetchedRoles, fetchedDepartments, fetchedCategories, fetchedPermissions] = await Promise.all([
-          getRoles(),
-          getDepartments(),
-          getCategories(),
-          getAllPermissions(),
-        ]);
-        setRoles(fetchedRoles);
-        setDepartments(fetchedDepartments);
-        setCategories(fetchedCategories);
-        setAllPermissions(fetchedPermissions);
-      } catch (err: any) {
-        setError(err?.message || "Failed to load roles data.");
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, []);
-
-  // Group permissions by module (part before colon)
-  const permissionModules = React.useMemo(() => {
-    const modules: Record<string, PermDef[]> = {};
-    allPermissions.forEach((perm) => {
-      const [module] = perm.name.split(":");
-      if (!modules[module]) modules[module] = [];
-      modules[module].push(perm);
-    });
-    return modules;
-  }, [allPermissions]);
-
-  const moduleNames = Object.keys(permissionModules).sort();
-
-  // Select first module by default
-  useEffect(() => {
-    if (moduleNames.length > 0 && !selectedModule) {
-      setSelectedModule(moduleNames[0]);
-    }
-  }, [moduleNames, selectedModule]);
-
-  const currentModulePermissions = permissionModules[selectedModule] || [];
 
   // Handle preset selection
   useEffect(() => {
@@ -96,6 +62,9 @@ export function RolesPage() {
       setNewPermissionIds(presetPermIds);
     }
   }, [selectedPresetId, categories, allPermissions]);
+
+  // Base assignable list only matters if the role can manage users
+  const newRoleManagesUsers = hasModule(allPermissions, newPermissionIds, "user");
 
   // Filter roles by search
   const filteredRoles = roles.filter((role) =>
@@ -116,19 +85,15 @@ export function RolesPage() {
     try {
       setError(null);
       
-      const computedAllDepartments = newDepartmentIds.length === departments.length;
-      const computedAllRoles = newAssignableRoleIds.length === roles.length;
-      
       const newRole = await createRole({
         name: newRoleName.trim(),
         description: newRoleDescription.trim() || undefined,
         color: newRoleColor,
         isActive: true,
         isSystem: false,
-        allDepartments: computedAllDepartments,
-        departmentIds: computedAllDepartments ? [] : newDepartmentIds,
-        allRoles: computedAllRoles,
-        assignableRoleIds: computedAllRoles ? [] : newAssignableRoleIds,
+        departmentTagId: newDepartmentTagId ? Number(newDepartmentTagId) : null,
+        allRoles: newRoleManagesUsers && newAllRoles,
+        assignableRoleIds: newRoleManagesUsers && !newAllRoles ? newAssignableRoleIds : [],
         permissionIds: newPermissionIds,
       });
 
@@ -156,56 +121,17 @@ export function RolesPage() {
     setNewRoleName("");
     setNewRoleDescription("");
     setNewRoleColor("blue");
+    setNewDepartmentTagId("");
     setNewPermissionIds([]);
-    setNewDepartmentIds([]);
-    setDepartmentSearchQuery("");
     setNewAssignableRoleIds([]);
+    setNewAllRoles(false);
     setSelectedPresetId("");
-    setSelectedModule(moduleNames[0] || "");
     setError(null);
   }
 
   function closeCreateDialog() {
     setShowCreateDialog(false);
     resetCreateForm();
-  }
-
-  function togglePermission(permId: number) {
-    setNewPermissionIds((prev) =>
-      prev.includes(permId) ? prev.filter((id) => id !== permId) : [...prev, permId]
-    );
-  }
-
-  function toggleAllPermissionsInModule() {
-    const allSelected = currentModulePermissions.every((p) => newPermissionIds.includes(p.id));
-    if (allSelected) {
-      setNewPermissionIds((prev) =>
-        prev.filter((id) => !currentModulePermissions.some((p) => p.id === id))
-      );
-    } else {
-      setNewPermissionIds((prev) => {
-        const moduleIds = currentModulePermissions.map((p) => p.id);
-        return [...new Set([...prev, ...moduleIds])];
-      });
-    }
-  }
-
-  function toggleAllDepartments() {
-    const allSelected = departments.every((d) => newDepartmentIds.includes(d.id));
-    if (allSelected) {
-      setNewDepartmentIds([]);
-    } else {
-      setNewDepartmentIds(departments.map((d) => d.id));
-    }
-  }
-
-  function toggleAllAssignableRoles() {
-    const allSelected = roles.every((r) => newAssignableRoleIds.includes(r.id));
-    if (allSelected) {
-      setNewAssignableRoleIds([]);
-    } else {
-      setNewAssignableRoleIds(roles.map((r) => r.id));
-    }
   }
 
   if (loading) {
@@ -354,7 +280,6 @@ export function RolesPage() {
       {/* Create Role Dialog */}
       {showCreateDialog && (
         <Dlg
-          isOpen={showCreateDialog}
           onClose={closeCreateDialog}
           title={createStep === 1 ? "Create Role - Step 1 of 2" : "Create Role - Step 2 of 2"}
           size="xl"
@@ -379,6 +304,7 @@ export function RolesPage() {
                       Role Name <span className="text-red-500">*</span>
                     </label>
                     <FldInput
+                      label=""
                       value={newRoleName}
                       onChange={(e) => setNewRoleName(e.target.value)}
                       placeholder="e.g., Team Lead"
@@ -397,6 +323,28 @@ export function RolesPage() {
                       rows={3}
                       className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                     />
+                  </div>
+
+                  {/* Department Tag (optional) */}
+                  <div className="mt-4">
+                    <label className="block text-sm font-medium text-foreground mb-1">
+                      Department Tag
+                    </label>
+                    <select
+                      value={newDepartmentTagId}
+                      onChange={(e) => setNewDepartmentTagId(e.target.value)}
+                      className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">No department (general role, usable anywhere)</option>
+                      {departments.map((dept) => (
+                        <option key={dept.id} value={dept.id.toString()}>
+                          {dept.name}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Optional. A tagged role can only be assigned by people who manage that department.
+                    </p>
                   </div>
                 </div>
 
@@ -418,7 +366,7 @@ export function RolesPage() {
                   </label>
                   <select
                     value={selectedPresetId}
-                    onChange={(e) => setSelectedPresetId(e.target.value)}
+                    onChange={(e) => setSelectedPresetId(e.target.value === "" ? "" : Number(e.target.value))}
                     className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">No preset</option>
@@ -430,146 +378,26 @@ export function RolesPage() {
                   </select>
                 </div>
 
-                {/* Permission Picker */}
-                <div className="flex gap-4">
-                  {/* Module Sidebar */}
-                  <div className="w-48 flex-shrink-0">
-                    <label className="block text-sm font-medium text-foreground mb-2">
-                      Modules
-                    </label>
-                    <div className="border border-border rounded-lg overflow-hidden">
-                      {moduleNames.map((module) => (
-                        <button
-                          key={module}
-                          onClick={() => setSelectedModule(module)}
-                          className={`w-full text-left px-3 py-2 text-sm border-b border-border last:border-b-0 transition-colors ${
-                            selectedModule === module
-                              ? "bg-blue-50 text-blue-700 font-medium"
-                              : "hover:bg-muted/50 text-foreground"
-                          }`}
-                        >
-                          {module.charAt(0).toUpperCase() + module.slice(1)}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                {/* Permission Picker — one box per module */}
+                <PermissionModulePicker
+                  allPermissions={allPermissions}
+                  selectedIds={newPermissionIds}
+                  onChange={setNewPermissionIds}
+                />
 
-                  {/* Permission Checkboxes */}
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between mb-2">
-                      <label className="block text-sm font-medium text-foreground">
-                        {selectedModule.charAt(0).toUpperCase() + selectedModule.slice(1)} Permissions
-                      </label>
-                      <button
-                        onClick={toggleAllPermissionsInModule}
-                        className="text-xs text-blue-600 hover:text-blue-700 cursor-pointer"
-                      >
-                        Select All
-                      </button>
-                    </div>
-                    <div className="border border-border rounded-lg p-3 space-y-2 max-h-64 overflow-y-auto">
-                      {currentModulePermissions.map((perm) => {
-                        const permName = perm.name.split(":")[1];
-                        const isChecked = newPermissionIds.includes(perm.id);
-                        return (
-                          <label key={perm.id} className="flex items-center gap-2 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={() => togglePermission(perm.id)}
-                              className="w-4 h-4 accent-blue-600"
-                            />
-                            <span className="text-sm text-foreground">
-                              {permName.charAt(0).toUpperCase() + permName.slice(1)}
-                            </span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Department Access Card - only show if permissions are selected */}
-                {newPermissionIds.length > 0 && (
+                {/* Base Assignable Roles — only relevant if the role can manage users */}
+                {newRoleManagesUsers && (
                   <div className="bg-muted/30 rounded-xl p-6 border border-border">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-sm font-semibold text-foreground">Department Access</h3>
-                      <button
-                        onClick={toggleAllDepartments}
-                        className="text-xs text-blue-600 hover:text-blue-700 cursor-pointer"
-                      >
-                        {departments.length > 0 && departments.every((d) => newDepartmentIds.includes(d.id)) ? "Deselect All" : "Select All"}
-                      </button>
-                    </div>
-
-                    {departments.length > 6 && (
-                      <div className="mb-3">
-                        <input
-                          type="text"
-                          placeholder="Search departments..."
-                          value={departmentSearchQuery}
-                          onChange={(e) => setDepartmentSearchQuery(e.target.value)}
-                          className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                      </div>
-                    )}
-                    <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border border-border rounded-lg p-2">
-                      {departments
-                        .filter((dept) =>
-                          dept.name.toLowerCase().includes(departmentSearchQuery.toLowerCase())
-                        )
-                        .map((dept) => (
-                          <label key={dept.id} className="flex items-center gap-2 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={newDepartmentIds.includes(dept.id)}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setNewDepartmentIds((prev) => [...prev, dept.id]);
-                                } else {
-                                  setNewDepartmentIds((prev) => prev.filter((id) => id !== dept.id));
-                                }
-                              }}
-                              className="w-4 h-4 accent-blue-600"
-                            />
-                            <span className="text-sm text-foreground">{dept.name}</span>
-                          </label>
-                        ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Assignable Roles Card - only show if user:manage permission is selected */}
-                {newPermissionIds.length > 0 && allPermissions.find(p => p.name === "user:manage") && newPermissionIds.includes(allPermissions.find(p => p.name === "user:manage")!.id) && (
-                  <div className="bg-muted/30 rounded-xl p-6 border border-border">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-sm font-semibold text-foreground">Assignable Roles</h3>
-                      <button
-                        onClick={toggleAllAssignableRoles}
-                        className="text-xs text-blue-600 hover:text-blue-700 cursor-pointer"
-                      >
-                        {roles.length > 0 && roles.every((r) => newAssignableRoleIds.includes(r.id)) ? "Deselect All" : "Select All"}
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border border-border rounded-lg p-2">
-                      {roles.map((role) => (
-                        <label key={role.id} className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={newAssignableRoleIds.includes(role.id)}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setNewAssignableRoleIds((prev) => [...prev, role.id]);
-                              } else {
-                                setNewAssignableRoleIds((prev) => prev.filter((id) => id !== role.id));
-                              }
-                            }}
-                            className="w-4 h-4 accent-blue-600"
-                          />
-                          <span className="text-sm text-foreground">{role.name}</span>
-                        </label>
-                      ))}
-                    </div>
+                    <RoleChecklist
+                      title="Assignable Roles (base list)"
+                      help="Roles that EVERYONE with this role can give to new users. You can add extra roles for one specific person on their user profile."
+                      roles={roles}
+                      selectedIds={newAssignableRoleIds}
+                      onChange={setNewAssignableRoleIds}
+                      allRoles={newAllRoles}
+                      onAllRolesChange={setNewAllRoles}
+                      emptyText="No other roles exist yet — create another role first"
+                    />
                   </div>
                 )}
 
@@ -596,7 +424,6 @@ export function RolesPage() {
       {/* Delete Confirmation Dialog */}
       {deleteConfirmRole && (
         <Dlg
-          isOpen={!!deleteConfirmRole}
           onClose={() => setDeleteConfirmRole(null)}
           title="Delete Role"
           size="sm"

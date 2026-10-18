@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
+import { useCachedQuery, qk, FRESH, EMPTY } from "../api/queries";
 import { useParams, useNavigate } from "react-router";
 import { ArrowLeft, AlertTriangle, ChevronRight, Clock } from "lucide-react";
 import { getOverdueTasks, getOverdueSubtasks, getOverdueProjects, OverdueItem } from "../api/dashboard";
@@ -41,25 +42,12 @@ export function OverdueViewAllPage({ type: propType }: OverdueViewAllPageProps) 
   const type = (propType || paramType || "tasks") as "tasks" | "subtasks" | "projects";
   const config = TYPE_CONFIG[type] || TYPE_CONFIG.tasks;
 
-  const [items, setItems] = useState<OverdueItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Shared store: instant on return, re-checked every 60 s and on tab focus
+  const itemsQ = useCachedQuery<OverdueItem[]>([...qk.dashboard, "overdue", type], () => config.fetchFn(), EMPTY, { staleTime: FRESH.LIVE, poll: true });
+  const items = itemsQ.data;
+  const loading = itemsQ.isLoading;
+  const error = itemsQ.error ? itemsQ.error.message || "Failed to load overdue items." : null;
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        setLoading(true);
-        setError(null);
-        const data = await config.fetchFn();
-        setItems(data);
-      } catch (err: any) {
-        setError(err?.message || "Failed to load overdue items.");
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, [type]);
 
   if (loading) {
     return (

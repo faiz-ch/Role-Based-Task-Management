@@ -49,6 +49,7 @@ export interface UserType {
   department: Department | null;
   manageAllDepartments: boolean;
   managedDepartments: Department[];
+  extraAssignableRoles: { id: number; name: string }[];
   createdAt: string;
   manager: { id: number; name: string; email: string } | null;
   hasAvatar: boolean;
@@ -77,6 +78,8 @@ export interface Project {
   reopenedReason: string | null;
   reopenedBy: number | null;
   reopenedAt: string | null;
+  taskCount: number;      // number of tasks in this project (sent by the server)
+  doneTaskCount: number;  // how many of them are Done
 }
 
 export interface Milestone {
@@ -114,6 +117,8 @@ export interface Task {
   teamApprovedBy: number | null;
   teamApprovedAt: string | null;
   teamUserIds: number[];
+  subtaskTotal: number;   // number of subtasks under this task
+  subtaskDone: number;    // how many of them are Done
 }
 
 export interface Subtask {

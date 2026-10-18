@@ -53,6 +53,10 @@ class TaskOut(BaseModel):
     team_approved_at: datetime | None
     team_user_ids: List[int]
     attachments: list = []
+    # Subtask progress, so list pages can draw progress bars without
+    # downloading every subtask
+    subtask_total: int = 0
+    subtask_done: int = 0
 
     class Config:
         from_attributes = True

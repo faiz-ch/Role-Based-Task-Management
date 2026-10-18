@@ -14,7 +14,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, joinedload
 
 from app.core.security import decode_token
 from app.database import get_db
@@ -28,6 +28,50 @@ from app.models.department import Department
 # tokenUrl is just used by the /docs page to know where to send a login
 # request from its "Authorize" button — it doesn't affect real API calls.
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
+
+def auth_load_options():
+    """
+    LEAN eager-load used on EVERY request (get_current_user).
+    Only what permission and department-scope checks need:
+      - role (joined into the main query, no extra trip) + its permissions
+      - the departments this user manages
+    Things only a few screens need (assignable roles, extras, manager,
+    home department) are NOT loaded here — see load_assign_context()
+    and user_load_options().
+    """
+    return [
+        joinedload(User.role).selectinload(Role.permissions),
+        selectinload(User.managed_departments),
+    ]
+
+
+def user_load_options():
+    """
+    FULL eager-load for any query whose result is sent to the browser as
+    UserOut. Async SQLAlchemy cannot lazy-load, so every relationship UserOut
+    touches MUST be listed here. Single items (role, department, manager) are
+    joined into the main query; lists use one extra query each.
+    """
+    return [
+        joinedload(User.role).selectinload(Role.permissions),
+        joinedload(User.role).selectinload(Role.assignable_roles),
+        joinedload(User.department),
+        joinedload(User.manager),
+        selectinload(User.managed_departments),
+        selectinload(User.extra_assignable_roles),
+    ]
+
+
+async def load_assign_context(db: AsyncSession, user: User) -> None:
+    """
+    Loads what can_assign_role() needs (role's base assignable list + the
+    user's personal extras). Call this ONLY in endpoints that assign roles,
+    so ordinary requests do not pay for it.
+    """
+    await db.refresh(user, ["extra_assignable_roles"])
+    if user.role is not None:
+        await db.refresh(user.role, ["assignable_roles"])
 
 
 async def get_current_user(
@@ -52,12 +96,7 @@ async def get_current_user(
     # Separate selectinload branches from shared parent to avoid chaining issues.
     result = await db.execute(
         select(User)
-        .options(
-            selectinload(User.role).selectinload(Role.permissions),
-            selectinload(User.role).selectinload(Role.assignable_roles),
-            selectinload(User.managed_departments),
-            selectinload(User.department),
-        )
+        .options(*auth_load_options())
         .where(User.id == int(user_id))
     )
     user = result.scalar_one_or_none()
@@ -106,6 +145,37 @@ def get_scoped_department_ids(user: User) -> set[int] | None:
     if user.manage_all_departments:
         return None
     return {d.id for d in user.managed_departments}
+
+
+def get_assignable_role_ids(user: User) -> set[int] | None:
+    """
+    Role ids this user may hand out, BEFORE the department-tag filter.
+    None means "every role" (the user's role has all_roles=True).
+    = role's base assignable list  UNION  the user's personal extras.
+    """
+    if user.role is None:
+        return set()
+    if user.role.all_roles:
+        return None
+    return {r.id for r in user.role.assignable_roles} | {r.id for r in user.extra_assignable_roles}
+
+
+def role_in_department_scope(user: User, role: Role) -> bool:
+    """A role tagged to a department is only assignable by someone who manages that department."""
+    if role.department_tag_id is None:
+        return True
+    scoped = get_scoped_department_ids(user)
+    return scoped is None or role.department_tag_id in scoped
+
+
+def can_assign_role(user: User, role: Role) -> bool:
+    """Base list + personal extras, then the department-tag filter."""
+    if user.role is None:
+        return False
+    allowed = get_assignable_role_ids(user)
+    if allowed is not None and role.id not in allowed:
+        return False
+    return role_in_department_scope(user, role)
 
 
 def is_project_lead(user: User, project: Project) -> bool:

@@ -11,6 +11,7 @@ from app.core.security import (
     decode_token,
 )
 from app.database import get_db
+from app.core.deps import user_load_options
 from app.models.user import User
 from app.models.role import Role
 from app.schemas.auth import RegisterRequest, LoginRequest, RefreshRequest, TokenResponse
@@ -39,11 +40,7 @@ async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db))
     await db.commit()
     # Re-fetch with eager load to avoid MissingGreenlet error
     result = await db.execute(
-        select(User).options(
-            selectinload(User.role).selectinload(Role.permissions),
-            selectinload(User.role).selectinload(Role.assignable_roles),
-            selectinload(User.managed_departments),
-        ).where(User.id == user.id)
+        select(User).options(*user_load_options()).where(User.id == user.id)
     )
     return result.scalar_one()
 

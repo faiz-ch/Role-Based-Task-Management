@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useNavigate } from "react-router";
 import { Plus, Edit2, Trash2, AlertTriangle, Search, MoreVertical, ChevronRight } from "lucide-react";
-import { Task, UserType, Status, Priority, Department, Project, Subtask } from "../types";
+import { Task, UserType, Status, Priority, Department, Project } from "../types";
 import { useAuth } from "../context/AuthContext";
 import {
   getTasks,
@@ -12,9 +12,9 @@ import {
   deleteTask,
 } from "../api/tasks";
 import { getProjects, getProjectCandidates } from "../api/projects";
-import { getSubtasks } from "../api/subtasks";
 import { getUsers } from "../api/users";
 import { getDepartments } from "../api/departments";
+import { useCachedQuery, qk, FRESH, EMPTY } from "../api/queries";
 import { Av } from "../components/Av";
 import { Dlg } from "../components/Dlg";
 import { FldInput } from "../components/FldInput";
@@ -22,7 +22,7 @@ import { FldSelect } from "../components/FldSelect";
 import { PriBadge } from "../components/PriBadge";
 import { DatePicker } from "../components/DatePicker";
 import { StatusBadge } from "../components/StatusBadge";
-import { getEffectiveDepartmentIds } from "../utils/roleAccess";
+import { inDepartmentScope } from "../utils/roleAccess";
 
 const STATUSES: Status[] = ["To Do", "Review", "Done", "Reschedule"];
 const PRIORITIES: Priority[] = ["Low", "Medium", "High"];
@@ -66,31 +66,41 @@ function getDueDateColor(dueDate: string): string {
   return "text-muted-foreground";
 }
 
-function getTaskProgress(task: Task, subtasks: Subtask[]): number {
-  const taskSubtasks = subtasks.filter(s => s.taskId === task.id);
-  if (taskSubtasks.length === 0) return 0;
-  const completed = taskSubtasks.filter(s => s.status === "Done").length;
-  return Math.round((completed / taskSubtasks.length) * 100);
+// Progress = completed subtasks / total subtasks. The server sends both
+// numbers with every task, so no subtasks need to be downloaded.
+function getTaskProgress(task: Task): number {
+  if (!task.subtaskTotal) return 0;
+  return Math.round((task.subtaskDone / task.subtaskTotal) * 100);
 }
 
 export function TasksPage() {
   const navigate = useNavigate();
   const { currentUser, permissions } = useAuth();
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [subtasks, setSubtasks] = useState<Subtask[]>([]);
-  const [users, setUsers] = useState<UserType[]>([]);
-  const [departments, setDepartments] = useState<Department[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
   const [projectCandidates, setProjectCandidates] = useState<UserType[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [scope, setScope] = useState<"all" | "mine">("all");
+
+  // Data comes from the shared store: instant when already loaded,
+  // re-checked every 60 s and when returning to the tab.
+  const mine = scope === "mine" && !!currentUser;
+  const taskParams = mine ? { assignedTo: currentUser!.id } : {};
+  const tasksQ = useCachedQuery<Task[]>(qk.tasks(taskParams), () => getTasks(taskParams), EMPTY, { staleTime: FRESH.LIVE, poll: true });
+  const usersQ = useCachedQuery<UserType[]>(qk.users, getUsers, EMPTY, { staleTime: FRESH.NORMAL });
+  const departmentsQ = useCachedQuery<Department[]>(qk.departments, getDepartments, EMPTY, { staleTime: FRESH.RARE });
+  const projectsQ = useCachedQuery<Project[]>(qk.projects, getProjects, EMPTY, { staleTime: FRESH.LIVE, poll: true });
+  const tasks = tasksQ.data;
+  const setTasks = tasksQ.setData;
+  const users = usersQ.data;
+  const departments = departmentsQ.data;
+  const projects = projectsQ.data;
+  const loading = tasksQ.isLoading;
+  const [actionError, setError] = useState<string | null>(null);
+  const error = actionError || (tasksQ.error ? tasksQ.error.message || "Failed to load tasks." : null);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [filterAssignee, setFilterAssignee] = useState<string>("");
   const [filterPriority, setFilterPriority] = useState<string>("");
   const [filterDueDate, setFilterDueDate] = useState<string>("");
   const [filterProject, setFilterProject] = useState<string>("");
-  const [scope, setScope] = useState<"all" | "mine">("all");
 
   const [showNew, setShowNew] = useState(false);
   const [editTask, setEditTask] = useState<Task | null>(null);
@@ -116,11 +126,8 @@ export function TasksPage() {
   function canManageTask(task: Task): boolean {
     const project = projectsById[task.projectId];
     if (!project) return false;
-    const effectiveDepartmentIds = getEffectiveDepartmentIds(currentUser?.role, departments);
-    const hasProjectManagePermission = permissions.includes("project:manage") && (
-      currentUser?.role?.allDepartments ||
-      (project.departmentIds && project.departmentIds.some(deptId => effectiveDepartmentIds.includes(deptId)))
-    );
+    // Department scope lives on the user (manageAllDepartments / managedDepartments)
+    const hasProjectManagePermission = permissions.includes("project:manage") && inDepartmentScope(currentUser, project.departmentIds);
     return (
       hasProjectManagePermission ||
       currentUser?.id === project.leadId ||
@@ -132,34 +139,6 @@ export function TasksPage() {
     return currentUser?.id === task.assigneeId;
   }
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        setLoading(true);
-        setError(null);
-        const [tasksResult, subtasksResult, usersResult, departmentsResult, projectsResult] = await Promise.allSettled([
-          scope === "mine" && currentUser ? getTasks({ assignedTo: currentUser.id }) : getTasks(),
-          getSubtasks(),
-          getUsers(),
-          getDepartments(),
-          getProjects(),
-        ]);
-
-        setTasks(tasksResult.status === "fulfilled" ? tasksResult.value : []);
-        setSubtasks(subtasksResult.status === "fulfilled" ? subtasksResult.value : []);
-        setUsers(usersResult.status === "fulfilled" ? usersResult.value : []);
-        setDepartments(departmentsResult.status === "fulfilled" ? departmentsResult.value : []);
-        setProjects(projectsResult.status === "fulfilled" ? projectsResult.value : []);
-
-        if (tasksResult.status === "rejected") {
-          setError((tasksResult.reason as any)?.message || "Failed to load tasks.");
-        }
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, [scope, currentUser]);
 
   // Filter tasks
   const filteredTasks = tasks.filter((task) => {
@@ -415,7 +394,7 @@ export function TasksPage() {
                     {columnTasks.map((task) => {
                       const assignee = users.find((u) => u.id === task.assigneeId);
                       const project = projectsById[task.projectId];
-                      const progress = getTaskProgress(task, subtasks);
+                      const progress = getTaskProgress(task);
                       return (
                         <div
                           key={task.id}

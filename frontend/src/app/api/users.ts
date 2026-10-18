@@ -1,8 +1,8 @@
 import { apiFetch } from "./client";
 import { API_BASE_URL } from "./client";
-import { UserType, Role, UserPerformance } from "../types";
+import { UserType, Role, UserPerformance, Department } from "../types";
 
-function mapRole(r: any): Role {
+export function mapRole(r: any): Role {
   return {
     id: r.id,
     name: r.name,
@@ -22,27 +22,34 @@ function mapRole(r: any): Role {
   };
 }
 
-function mapUser(u: any): UserType {
+function mapDepartmentBrief(d: any): Department {
+  return {
+    id: d.id,
+    name: d.name,
+    description: d.description || null,
+    headId: d.head_id || null,
+    head: d.head ? { id: d.head.id, name: d.head.name, email: d.head.email } : null,
+    color: d.color || "blue",
+    isActive: d.is_active ?? true,
+    memberCount: d.member_count || 0,
+    projectCount: d.project_count || 0,
+    createdAt: d.created_at || "",
+  };
+}
+
+export function mapUser(u: any): UserType {
   return {
     id: u.id,
     name: u.name,
     email: u.email,
     active: u.is_active,
     role: u.role ? mapRole(u.role) : null,
-    department: u.department ? { id: u.department.id, name: u.department.name } : null,
+    department: u.department ? mapDepartmentBrief(u.department) : null,
     manageAllDepartments: u.manage_all_departments || false,
-    managedDepartments: Array.isArray(u.managed_departments) ? u.managed_departments.map((d: any) => ({
-      id: d.id,
-      name: d.name,
-      description: d.description || null,
-      headId: d.head_id || null,
-      head: d.head ? { id: d.head.id, name: d.head.name, email: d.head.email } : null,
-      color: d.color || "blue",
-      isActive: d.is_active ?? true,
-      memberCount: d.member_count || 0,
-      projectCount: d.project_count || 0,
-      createdAt: d.created_at || "",
-    })) : [],
+    managedDepartments: Array.isArray(u.managed_departments) ? u.managed_departments.map(mapDepartmentBrief) : [],
+    extraAssignableRoles: Array.isArray(u.extra_assignable_roles)
+      ? u.extra_assignable_roles.map((r: any) => ({ id: r.id, name: r.name }))
+      : [],
     createdAt: u.created_at,
     manager: u.manager ? { id: u.manager.id, name: u.manager.name, email: u.manager.email } : null,
     hasAvatar: u.has_avatar || false,
@@ -98,7 +105,17 @@ export async function getUserActivity(id: number): Promise<{
   })) : [];
 }
 
-export async function updateUser(id: number, data: { name?: string; email?: string; password?: string; active?: boolean; department_id?: number; manager_id?: number | null; manage_all_departments?: boolean; managed_department_ids?: number[] }): Promise<UserType> {
+export async function updateUser(id: number, data: {
+  name?: string;
+  email?: string;
+  password?: string;
+  active?: boolean;
+  department_id?: number | null;
+  manager_id?: number | null;
+  manage_all_departments?: boolean;
+  managed_department_ids?: number[];
+  extra_assignable_role_ids?: number[];
+}): Promise<UserType> {
   const payload: any = {};
   if (data.name !== undefined) payload.name = data.name;
   if (data.email !== undefined) payload.email = data.email;
@@ -108,6 +125,7 @@ export async function updateUser(id: number, data: { name?: string; email?: stri
   if (data.manager_id !== undefined) payload.manager_id = data.manager_id;
   if (data.manage_all_departments !== undefined) payload.manage_all_departments = data.manage_all_departments;
   if (data.managed_department_ids !== undefined) payload.managed_department_ids = data.managed_department_ids;
+  if (data.extra_assignable_role_ids !== undefined) payload.extra_assignable_role_ids = data.extra_assignable_role_ids;
 
   const res = await apiFetch(`/users/${id}`, {
     method: "PATCH",
@@ -133,6 +151,7 @@ export async function createUser(data: {
   isActive?: boolean;
   manage_all_departments?: boolean;
   managed_department_ids?: number[];
+  extra_assignable_role_ids?: number[];
   sendWelcomeEmail?: boolean;
 }): Promise<UserType> {
   const payload: any = {};
@@ -144,6 +163,7 @@ export async function createUser(data: {
   if (data.isActive !== undefined) payload.is_active = data.isActive;
   if (data.manage_all_departments !== undefined) payload.manage_all_departments = data.manage_all_departments;
   if (data.managed_department_ids !== undefined) payload.managed_department_ids = data.managed_department_ids;
+  if (data.extra_assignable_role_ids !== undefined) payload.extra_assignable_role_ids = data.extra_assignable_role_ids;
   if (data.sendWelcomeEmail !== undefined) payload.send_welcome_email = data.sendWelcomeEmail;
 
   const res = await apiFetch("/users", {
