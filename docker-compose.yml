@@ -47,6 +47,9 @@ services:
       ZOOM_CLIENT_SECRET: ${ZOOM_CLIENT_SECRET:-}
       ZOOM_WEBHOOK_SECRET_TOKEN: ${ZOOM_WEBHOOK_SECRET_TOKEN:-}
       ZOOM_FALLBACK_HOST_EMAIL: ${ZOOM_FALLBACK_HOST_EMAIL:-}
+    volumes:
+      # Attachments and profile pictures survive rebuilds/redeploys
+      - uploads:/app/uploads
     expose:
       - "8000"
 
@@ -59,7 +62,9 @@ services:
     depends_on:
       - backend
     ports:
-      - "8080:80"
+      # Only reachable from the server itself; the public goes through Caddy (HTTPS)
+      - "127.0.0.1:8080:80"
 
 volumes:
   pgdata:
+  uploads:
