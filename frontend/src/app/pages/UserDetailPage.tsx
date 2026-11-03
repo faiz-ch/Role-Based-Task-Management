@@ -14,6 +14,7 @@ import { Av } from "../components/Av";
 import { useAuth } from "../context/AuthContext";
 import { DepartmentScopePicker } from "../components/DepartmentScopePicker";
 import { RoleChecklist } from "../components/RoleChecklist";
+import { roleNeedsDepartments, roleCanManageUsers, filterRolesByDepartments, pruneExtraRoles } from "../utils/roleAccess";
 
 
 function getInitials(name: string) {
@@ -96,6 +97,7 @@ export function UserDetailPage() {
     extraRoleIds: [] as number[],
   });
   const [editAvatarFile, setEditAvatarFile] = useState<File | null>(null);
+  const [editExtrasNote, setEditExtrasNote] = useState<string | null>(null);
   const [avatarUploadError, setAvatarUploadError] = useState<string | null>(null);
 
 
@@ -114,6 +116,7 @@ export function UserDetailPage() {
       managedDepartmentIds: user.managedDepartments.map(d => d.id),
       extraRoleIds: user.extraAssignableRoles.map(r => r.id),
     });
+    setEditExtrasNote(null);
     setShowEdit(true);
   }
 
@@ -132,17 +135,43 @@ export function UserDetailPage() {
       : []),
   ];
 
-  // Extra assignable roles: only if the selected role can manage users and doesn't assign every role
   const selectedEditRole = roles.find((r) => r.id === Number(editForm.roleId)) || null;
-  const showEditExtras = !!selectedEditRole
-    && selectedEditRole.permissions.includes("user:manage")
-    && !selectedEditRole.allRoles;
+  // "Departments this user manages" only for roles with a department-based permission
+  const showEditScope = roleNeedsDepartments(selectedEditRole);
+  // Extra assignable roles: only if the selected role can manage users and doesn't assign every role
+  const showEditExtras = roleCanManageUsers(selectedEditRole) && !selectedEditRole!.allRoles;
   // Lock 1: candidates = roles I can assign, minus the selected role and its base list
-  const editExtraCandidates = selectedEditRole
+  const editExtraLockOne = selectedEditRole
     ? assignableRoles.filter(
         (r) => r.id !== selectedEditRole.id && !selectedEditRole.assignableRoles.some((b) => b.id === r.id)
       )
     : [];
+  // ...then only roles that fit the departments ticked above (general roles always fit)
+  const editExtraCandidates = filterRolesByDepartments(
+    editExtraLockOne, editForm.manageAllDepartments, editForm.managedDepartmentIds
+  );
+
+  function handleEditRoleChange(value: string) {
+    const role = roles.find((r) => r.id === Number(value)) || null;
+    setEditExtrasNote(null);
+    setEditForm({
+      ...editForm,
+      roleId: value,
+      // Clear sections that do not apply to the new role
+      ...(roleNeedsDepartments(role) ? {} : { manageAllDepartments: false, managedDepartmentIds: [] }),
+      ...(roleCanManageUsers(role) ? {} : { extraRoleIds: [] }),
+    });
+  }
+
+  function handleEditScopeChange(manageAll: boolean, ids: number[]) {
+    const { kept, removedNames } = pruneExtraRoles(editForm.extraRoleIds, editExtraLockOne, manageAll, ids);
+    setEditForm({ ...editForm, manageAllDepartments: manageAll, managedDepartmentIds: ids, extraRoleIds: kept });
+    setEditExtrasNote(
+      removedNames.length
+        ? `Removed ${removedNames.join(", ")}: its department is no longer managed by this user.`
+        : null
+    );
+  }
   // Extras granted by someone with wider authority — shown read-only, preserved by the backend
   const lockedExtras = (user?.extraAssignableRoles ?? []).filter(
     (r) => !assignableRoles.some((a) => a.id === r.id)
@@ -165,17 +194,20 @@ export function UserDetailPage() {
       if (editForm.password && editForm.password.length > 0) {
         updateData.password = editForm.password;
       }
-      if (editForm.manageAllDepartments !== user.manageAllDepartments) {
-        updateData.manage_all_departments = editForm.manageAllDepartments;
-      }
-      if (editForm.managedDepartmentIds.join(',') !== user.managedDepartments.map(d => d.id).join(',')) {
-        updateData.managed_department_ids = editForm.managedDepartmentIds;
+      // Hidden sections are not sent; the server clears them when the role does not use them
+      if (showEditScope) {
+        if (editForm.manageAllDepartments !== user.manageAllDepartments) {
+          updateData.manage_all_departments = editForm.manageAllDepartments;
+        }
+        if (editForm.managedDepartmentIds.join(',') !== user.managedDepartments.map(d => d.id).join(',')) {
+          updateData.managed_department_ids = editForm.managedDepartmentIds;
+        }
       }
       if (showEditExtras) {
         const visibleExtras = editForm.extraRoleIds.filter((id) => editExtraCandidates.some((r) => r.id === id));
         const originalVisible = user.extraAssignableRoles
           .map((r) => r.id)
-          .filter((id) => editExtraCandidates.some((r) => r.id === id));
+          .filter((id) => editExtraLockOne.some((r) => r.id === id));
         if ([...visibleExtras].sort().join(",") !== [...originalVisible].sort().join(",")) {
           updateData.extra_assignable_role_ids = visibleExtras;
         }
@@ -184,10 +216,13 @@ export function UserDetailPage() {
       const roleChanged = editForm.roleId !== (user.role?.id?.toString() || "");
       const newRoleId = editForm.roleId ? Number(editForm.roleId) : null;
 
-      let updated = await updateUser(user.id, updateData);
+      // Save the role FIRST: the server decides which sections apply from the
+      // user's current role, so the department/extra-role changes below must
+      // be checked against the NEW role.
       if (roleChanged) {
-        updated = await assignRole(user.id, newRoleId);
+        await assignRole(user.id, newRoleId);
       }
+      let updated = await updateUser(user.id, updateData);
 
       // Upload avatar if a file was selected
       if (editAvatarFile) {
@@ -706,37 +741,38 @@ export function UserDetailPage() {
             <FldSelect
               label="Role"
               value={editForm.roleId}
-              onChange={(e) => setEditForm({ ...editForm, roleId: e.target.value })}
+              onChange={(e) => handleEditRoleChange(e.target.value)}
               options={[
                 { value: "", label: "No role" },
                 ...roleOptions,
               ]}
             />
-            {/* Department scope lives on the user */}
-            <DepartmentScopePicker
-              departments={departments}
-              manageAll={editForm.manageAllDepartments}
-              selectedIds={editForm.managedDepartmentIds}
-              onChange={({ manageAll, ids }) =>
-                setEditForm({ ...editForm, manageAllDepartments: manageAll, managedDepartmentIds: ids })
-              }
-              canGrantAll={canGrantAllDepartments}
-            />
-            {!canGrantAllDepartments && editForm.manageAllDepartments && (
+            {/* Department scope lives on the user — only for roles with a department-based permission */}
+            {showEditScope && (
+              <DepartmentScopePicker
+                departments={departments}
+                manageAll={editForm.manageAllDepartments}
+                selectedIds={editForm.managedDepartmentIds}
+                onChange={({ manageAll, ids }) => handleEditScopeChange(manageAll, ids)}
+                canGrantAll={canGrantAllDepartments}
+              />
+            )}
+            {showEditScope && !canGrantAllDepartments && editForm.manageAllDepartments && (
               <p className="text-xs text-muted-foreground -mt-2">This user manages all departments (only a global manager can change this).</p>
             )}
 
-            {/* Personal extra assignable roles (on top of the role's base list) */}
+            {/* Personal extra assignable roles — after the departments, filtered by them */}
             {showEditExtras && (
               <div>
                 <RoleChecklist
                   title="Extra roles this user can assign"
-                  help={`On top of the ${selectedEditRole!.name} role's base list. Only roles you can assign yourself are shown.`}
+                  help={`On top of the ${selectedEditRole!.name} role's base list. Shows roles you can assign yourself that are general or belong to the departments ticked above.`}
                   roles={editExtraCandidates}
                   selectedIds={editForm.extraRoleIds}
-                  onChange={(ids) => setEditForm({ ...editForm, extraRoleIds: ids })}
-                  emptyText="No additional roles available to grant"
+                  onChange={(ids) => { setEditForm({ ...editForm, extraRoleIds: ids }); setEditExtrasNote(null); }}
+                  emptyText="No additional roles available for the ticked departments"
                 />
+                {editExtrasNote && <p className="text-xs text-amber-600 mt-1">{editExtrasNote}</p>}
                 {lockedExtras.length > 0 && (
                   <p className="text-xs text-muted-foreground mt-1">
                     Also granted by a higher authority (kept): {lockedExtras.map((r) => r.name).join(", ")}

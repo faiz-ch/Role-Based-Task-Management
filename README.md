@@ -1,95 +1,87 @@
-# Fix round 3: Issues 2, 3a and 3b
+# Fix round 4: user form sections and dashboard filters
 
-There are **26 files**: 24 replacements and 2 new files. Copy each one to the same path in your project.
-This round builds on round 2, so apply it on top of round 2.
+This package has **11 files**: 10 replacements and 1 new file. Apply it on top of round 3.
+**No database change. No reset.**
 
 ## How to apply
 1. Commit or back up your project first.
 2. Copy the `backend` and `frontend` folders from this package into your project folder and choose **Replace**.
-3. In Windsurf Source Control you should see **24 modified files + 2 new files** (`api/queries.ts`, `api/queryClient.ts`).
-4. Install the new library. In a terminal inside the `frontend` folder:
+3. In Windsurf Source Control you should see **10 modified files and 1 new file** (`components/DashboardFilters.tsx`).
+4. Test locally: `docker compose up --build`
+5. Push to GitHub. Then on the VPS run:
    ```
-   npm install
+   cd ~/app && git pull && docker compose up -d --build
    ```
-   This installs **@tanstack/react-query 5.59.0**, which is already listed in `package.json`. Docker does this automatically when building.
-5. Restart: `docker compose up --build`. **No database reset is needed.**
 
 ---
 
-## What each file does
+## Part 1: user form shows only what applies
 
-### New files (the shared data store)
-| File | Purpose |
+| Section | Shown when |
 |---|---|
-| `frontend/src/app/api/queryClient.ts` | Creates the **one shared store** for the whole app. Data counts as fresh for 30 s, stays in memory for 10 min, is re-checked when you return to the tab, and failed requests are retried once (but not "no permission" or "not found" errors). |
-| `frontend/src/app/api/queries.ts` | `useCachedQuery()`: how every page now reads data. It returns the data plus a `setData` that works exactly like the old `setProjects(...)`, so existing page code kept working. Also holds the labels (`qk`) and freshness times: 5 min for departments, roles and permissions; 2 min for users; 30 s plus a 60 s re-check for projects, tasks and the dashboard. |
+| Department (belongs to) | Always |
+| Role | Always |
+| **Departments this user manages** | The role has **Project view/manage**, **User view/manage** or **Department manage** |
+| **Extra roles this user can assign** | The role has **User manage**. It appears **after** the departments and lists only general roles plus roles tagged to the ticked departments. |
 
-### Wiring
-| File | What changed |
-|---|---|
-| `frontend/src/main.tsx` | Wraps the app in the shared store. |
-| `frontend/src/app/api/client.ts` | **Refresh after every save (Issue 3b).** After any successful POST, PUT, PATCH or DELETE, the data on screen is refreshed. Several quick saves (for example "create task" then "set team") are combined into **one** refresh. Departments, roles, permissions and categories refresh only when the save affects them. |
-| `frontend/src/app/context/AuthContext.tsx` | The store is **emptied at login and logout**, so the next person never sees the previous user's data. |
-| `frontend/package.json`, `package-lock.json` | Adds `@tanstack/react-query` 5.59.0, pinned to that exact version. |
+Behaviour:
+- **Changing the role** clears any section that no longer applies.
+- **Unticking a department** removes its tagged extra roles, with a note such as *"Removed HR Officer: its department is no longer managed by this user."*
+- **The server enforces the same rules.** Department ticks and extra roles that don't apply to the role are cleared on create, on edit, and when the role changes. The clean-up is written to the user's activity log.
+- **Giving an extra role tagged to a department the user doesn't manage is refused** with a clear message.
+- **Edit form save order:** the role is saved **first**, so department and extra-role changes are checked against the **new** role.
+- **Role page reminder:** when a role that already has users gains a department-based permission, a reminder appears saying those users need *Departments this user manages* set on their profiles.
 
-### Backend: send only what is needed
-| File | What changed |
+| File | Change |
 |---|---|
-| `backend/app/routers/tasks.py` | `GET /tasks?project_id=N` returns only that project's tasks. |
-| `backend/app/schemas/project.py` | Each project now carries `task_count` and `done_task_count`. |
-| `backend/app/routers/projects.py` | Counts the tasks of **all** projects in **one** grouped query (`_task_counts`). |
-| `frontend/src/app/api/tasks.ts`, `api/projects.ts`, `types.ts` | Support the new filter and the two count fields. |
-
-### Pages (Issue 2): each now reads from the shared store instead of downloading everything when it opens
-| Page | Notes |
-|---|---|
-| `ProjectsPage.tsx` | No longer downloads all tasks; progress comes from the server's counts. Users are downloaded only if you can create projects. |
-| `ProjectDetailPage.tsx` | Downloads only **this project's** tasks. Activity, team, reports, milestones and files refresh after any save. |
-| `TasksPage.tsx`, `TaskDetailPage.tsx`, `SubtaskDetailPage.tsx` | Same pattern. |
-| `UsersPage.tsx`, `UserDetailPage.tsx` | Same pattern. The Edit form now fills from the **latest** data each time you open it. |
-| `RolesPage.tsx`, `RoleDetailPage.tsx` | Same pattern. |
-| `DepartmentsPage.tsx`, `DepartmentDetailPage.tsx` | Same pattern. The department page uses the server's task counts and no longer downloads all tasks. |
-| `DashboardPage.tsx`, `OverdueViewAllPage.tsx` | Re-checked every 60 s while open (Issue 3a). |
+| `backend/app/routers/users.py` | `SCOPE_PERMISSIONS`, `_enforce_form_rules()`, `_check_extras_fit_scope()`; create, edit and change-role use them |
+| `frontend/src/app/utils/roleAccess.ts` | `roleNeedsDepartments`, `roleCanManageUsers`, `filterRolesByDepartments`, `pruneExtraRoles` |
+| `frontend/src/app/pages/UsersPage.tsx` | Create form: show/hide, ordering, live filtering, note |
+| `frontend/src/app/pages/UserDetailPage.tsx` | Edit form: the same, plus role saved first |
+| `frontend/src/app/pages/RoleDetailPage.tsx` | The reminder |
 
 ---
 
-## Test results (fresh database, real browser)
+## Part 2: dashboard
 
-### Issue 2: server requests per navigation
-| Action | Before | After |
-|---|---|---|
-| Open Projects (first time) | 4 (incl. **all tasks**) | 3 (no tasks) |
-| Open Tasks | 5 | **1** (projects and departments reused) |
-| Projects again | 4 | **0** |
-| Open Project 1 | 8 (incl. **all tasks**) | 7 (only its own tasks) |
-| Back to Projects | 4 | **0** |
-| Open Project 1 again | 8 | **0** |
-| Departments / Dashboard (already cached) | 2 / 1 | **0 / 0** |
-| Users again | 4 | **0** |
+**Fixes**
+- **Gap 1:** users with **Project view** now get the department dashboard, not just their own tasks.
+- **Gap 2:** the employee dashboard now includes tasks where the person is a **team member**.
+- **Also fixed:** someone with **All Departments** but **no project permission** (for example a project lead whose role only has User view) was shown **every** project. They now see only the projects they lead.
 
-### Issue 3b: your own saves
-- Create a task with a team: the task list and Activity refresh automatically, and the task shows its team and lead (Dr Ahmed) with no F5.
-- That save costs **7** refresh requests (it was 16 before the "combine quick saves" improvement).
-- Rename a project in Settings: the Projects list shows the new name with no F5.
+**Filters:** `[Department] [Project] [Time period] [Clear]`
+- **Managers** get Department, Project and Time period. **Employees** get Project and Time period.
+- The **Project list follows the Department** you choose.
+- **Time period** options: Any time, Due this week (Mon–Sun), Due this month, Overdue only, and Custom dates (From/To date boxes).
+- **All cards and lists update together.** The previous numbers stay on screen while the new ones load, with "Updating…" shown.
+- The **"View all" overdue pages use the same filters**, so their counts match the dashboard.
+- The choice is **remembered per person** in that browser. A saved department or project the person can no longer see is dropped automatically.
+- **Safety:** the server refuses (403) any department or project outside the person's dashboard view. Filters can only **narrow** what's shown.
+- **Speed:** the database now pre-selects only matching rows instead of loading every task. The existing visibility rules still make the final decision, so the results are unchanged.
 
-### Issue 3a: other people's changes
-- A colleague renamed a project while the Projects page was open. It appeared after **59 s**, with no navigation.
-- Returning to the tab after 30 s or more refreshes **immediately**. Returning sooner sends **no** request.
+| File | Change |
+|---|---|
+| `backend/app/routers/dashboard.py` | Gaps 1–2, filters on all 4 dashboard addresses, new `GET /dashboard/filter-options`, database pre-filter |
+| `frontend/src/app/api/dashboard.ts` | Sends the filters; adds `getDashboardFilterOptions()` |
+| `frontend/src/app/api/queries.ts` | Cache labels per filter combination; `keepPrevious` option |
+| `frontend/src/app/components/DashboardFilters.tsx` | **New.** The filter bar and the shared filter state |
+| `frontend/src/app/pages/DashboardPage.tsx` | Filter bar; "(filtered)" in the subtitle |
+| `frontend/src/app/pages/OverdueViewAllPage.tsx` | The same filter bar and filters |
 
-### Safety
-- Logging out and in as another user: the store is emptied, and the department head sees only his own department's users.
-- No uncaught page errors and no server errors.
+**Notes**
+- With a **Department or Project filter** on, **standalone tasks** (tasks with no project) are not counted, because they don't belong to any department.
+- **Custom dates** use the browser's own date boxes rather than the date-and-time picker, because only a date is needed.
 
-### Regression (nothing broken)
-- 51/51 backend scenario checks (roles, departments, assignable roles)
-- 19/19 refresh and progress-bar browser checks (rounds 1–2)
-- 27/29 earlier screen checks. The 2 remaining are the same test-timing issue on the Role detail Permissions tab as in round 2: the boxes tick correctly a moment after the data loads (confirmed 3 times).
-- `vite build` succeeds. TypeScript: same 13 older errors, no new ones.
+---
 
-## Note
-- On the Projects and Department pages, a project's progress now counts **all** tasks in the project, which is the true project progress. Before, it counted only the tasks the viewer could see.
+## Test results (fresh database)
 
-## Remaining
-- **Issue 7:** paging, 25 per page (next step)
-- **Issue 8:** secure login cookie (before go-live)
-- **Revoke the Gmail app password** in `backend/.env.example`
+| Check | Result |
+|---|---|
+| New backend checks (form rules, gaps, filters, 403 safety, dashboard total = Tasks page total for 4 user types, overdue counts = "View all" lists) | **45/45** |
+| New browser checks (create and edit form show/hide, ordering, filtering, note, role-first save, role reminder, filter bar for COO / HR Head / employee / viewer, View-all match, remembered filters, Clear, stale filter) | **34/34** |
+| Earlier backend scenario (roles, departments, assignable roles) | **51/51**, after updating the test's "Team Lead" role to include User manage. Extra roles are now intentionally ignored for roles without it. |
+| Earlier refresh / navigation browser checks | **18/19**. The one miss also fails on the round-3 code with the same test data, so it isn't caused by this round. |
+| `vite build` | ✅ |
+| TypeScript | No new errors (same older ones as before) |
+| Server errors during all runs | 0 |

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { getDashboardSummary, DashboardSummary } from "../api/dashboard";
 import { useCachedQuery, qk, FRESH } from "../api/queries";
+import { DashboardFilters, useDashboardFilters } from "../components/DashboardFilters";
 
 const STATUS_COLORS: Record<string, string> = {
   "To Do": "bg-slate-100 text-slate-700 border-slate-200",
@@ -73,13 +74,30 @@ function getDueDateColor(dueDate: string): string {
 }
 
 export function DashboardPage() {
-  // Shared store: instant on return, re-checked every 60 s and on tab focus
-  const summaryQ = useCachedQuery<DashboardSummary | null>(qk.dashboard, getDashboardSummary, null, { staleTime: FRESH.LIVE, poll: true });
+  // Filters (Department / Project / Time period) — remembered per person
+  const dash = useDashboardFilters();
+
+  // Shared store: instant on return, re-checked every 60 s and on tab focus.
+  // Each filter combination is cached; the previous numbers stay on screen while new ones load.
+  const summaryQ = useCachedQuery<DashboardSummary | null>(
+    qk.dashboardSummary(dash.params as Record<string, unknown>),
+    () => getDashboardSummary(dash.params),
+    null,
+    { staleTime: FRESH.LIVE, poll: true, enabled: dash.ready, keepPrevious: true }
+  );
   const summary = summaryQ.data;
-  const loading = summaryQ.isLoading;
+  const loading = summaryQ.isLoading || (!dash.ready && !summary);
   const error = summaryQ.error ? summaryQ.error.message || "Failed to load dashboard data." : null;
   const navigate = useNavigate();
 
+  const filterBar = (
+    <DashboardFilters
+      filters={dash.filters}
+      setFilters={dash.setFilters}
+      options={dash.options}
+      updating={summaryQ.isFetching && !summaryQ.isLoading}
+    />
+  );
 
   if (loading) {
     return (
@@ -92,7 +110,8 @@ export function DashboardPage() {
 
   if (error) {
     return (
-      <div className="p-6">
+      <div className="p-6 max-w-7xl space-y-4">
+        {filterBar}
         <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm">
           <AlertTriangle size={16} className="text-red-500 flex-shrink-0" />
           <span className="text-red-700 font-semibold">{error}</span>
@@ -118,6 +137,7 @@ export function DashboardPage() {
           <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
           <p className="text-sm text-muted-foreground">
             {isManager ? "Overview of your department scope" : "Your assigned tasks and subtasks"}
+            {dash.isFiltered && " (filtered)"}
           </p>
         </div>
         {isManager && summary.scope && (
@@ -136,6 +156,8 @@ export function DashboardPage() {
           </div>
         )}
       </div>
+
+      {filterBar}
 
       {/* Stat Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

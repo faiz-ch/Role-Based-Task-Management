@@ -10,6 +10,7 @@ import { Dlg } from "../components/Dlg";
 import { FldInput } from "../components/FldInput";
 import { PermissionModulePicker, hasModule } from "../components/PermissionModulePicker";
 import { RoleChecklist } from "../components/RoleChecklist";
+import { roleNeedsDepartments } from "../utils/roleAccess";
 
 const COLOR_SWATCHES = [
   { name: "purple", value: "#a855f7", bg: "bg-purple-100", text: "text-purple-600" },
@@ -117,6 +118,16 @@ export function RoleDetailPage() {
   // Base assignable list only matters if the role can manage users
   const localManagesUsers = hasModule(allPermissions, localPermissionIds, "user");
 
+  // Reminder: when a role GAINS a department-based permission, its existing users
+  // need "Departments this user manages" set on their profiles to benefit from it.
+  const localPermissionNames = localPermissionIds
+    .map((id) => allPermissions.find((p) => p.id === id)?.name)
+    .filter((n): n is string => !!n);
+  const gainsDepartmentScope = !!role
+    && role.userCount > 0
+    && !roleNeedsDepartments(role)
+    && roleNeedsDepartments({ permissions: localPermissionNames });
+
   // Check if local state differs from original role
   const hasUnsavedChanges = useMemo(() => {
     if (!role) return false;
@@ -153,9 +164,14 @@ export function RoleDetailPage() {
         assignableRoleIds: localManagesUsers && !allRolesValue ? localAssignableRoleIds : [],
       });
       const updatedRole = await getRole(role.id);
+      const reminder = gainsDepartmentScope;
       setRole(updatedRole);
-      setSuccessMessage("Permissions updated successfully");
-      setTimeout(() => setSuccessMessage(null), 3000);
+      setSuccessMessage(
+        reminder
+          ? "Permissions updated. Users with this role now need 'Departments this user manages' set on their profile."
+          : "Permissions updated successfully"
+      );
+      setTimeout(() => setSuccessMessage(null), reminder ? 8000 : 3000);
     } catch (err: any) {
       setError(err?.message || "Failed to update permissions.");
     }
@@ -369,6 +385,17 @@ export function RoleDetailPage() {
               selectedIds={localPermissionIds}
               onChange={setLocalPermissionIds}
             />
+
+            {gainsDepartmentScope && (
+              <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800">
+                <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+                <span>
+                  This role now includes a department-based permission. The {role!.userCount} user
+                  {role!.userCount === 1 ? "" : "s"} with this role will need <b>Departments this user manages</b> set
+                  on their profile before they can see other departments' projects or users.
+                </span>
+              </div>
+            )}
 
             {/* Base Assignable Roles — only relevant if the role can manage users */}
             {localManagesUsers && (

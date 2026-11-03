@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
+import { useQuery, useQueryClient, keepPreviousData, type QueryKey } from "@tanstack/react-query";
 
 /**
  * How long each kind of data counts as "fresh" before a background re-check.
@@ -25,6 +25,11 @@ export const EMPTY: any[] = [];
 export const qk = {
   me: ["me"] as const,
   dashboard: ["dashboard"] as const,
+  // Each filter combination is cached separately (switching back is instant).
+  // Keys start with "dashboard", so saving anything still refreshes them all.
+  dashboardSummary: (filters: Record<string, unknown> = {}) => ["dashboard", "summary", filters] as const,
+  dashboardOverdue: (type: string, filters: Record<string, unknown> = {}) => ["dashboard", "overdue", type, filters] as const,
+  dashboardFilterOptions: ["dashboard", "filter-options"] as const,
   departments: ["departments"] as const,
   department: (id: number) => ["departments", id] as const,
   roles: ["roles"] as const,
@@ -56,7 +61,7 @@ export function useCachedQuery<T>(
   key: QueryKey,
   fetcher: () => Promise<T>,
   fallback: T,
-  options: { staleTime?: number; enabled?: boolean; poll?: boolean } = {}
+  options: { staleTime?: number; enabled?: boolean; poll?: boolean; keepPrevious?: boolean } = {}
 ) {
   const qc = useQueryClient();
   const enabled = options.enabled ?? true;
@@ -69,6 +74,8 @@ export function useCachedQuery<T>(
     enabled,
     refetchInterval: options.poll ? POLL_MS : false,
     refetchIntervalInBackground: false,
+    // e.g. dashboard filters: keep showing the previous numbers while the new ones load
+    ...(options.keepPrevious ? { placeholderData: keepPreviousData } : {}),
   });
 
   const keyString = JSON.stringify(key);
@@ -90,6 +97,8 @@ export function useCachedQuery<T>(
     // true only on the FIRST load (no data in the store yet) — never while
     // refreshing in the background, so the page does not flash a spinner
     isLoading: enabled && query.isPending,
+    // true while a newer copy is being fetched (also while previous data is shown)
+    isFetching: query.isFetching,
     error: query.error as Error | null,
     refetch: query.refetch,
   };

@@ -121,6 +121,101 @@ async def _replace_extra_roles(db: AsyncSession, user_id: int, roles: list[Role]
         await db.execute(user_extra_assignable_role.insert().values(user_id=user_id, role_id=role.id))
 
 
+# ---------------------------------------------------------------------------
+# Which sections of the user form apply to which roles.
+# The frontend uses the SAME list (utils/roleAccess.ts → SCOPE_PERMISSIONS).
+# ---------------------------------------------------------------------------
+# Permissions whose reach is limited by "Departments this user manages".
+# A role with none of these gets no benefit from a department scope.
+SCOPE_PERMISSIONS = {"project:view", "project:manage", "user:view", "user:manage", "department:manage"}
+
+
+def role_uses_department_scope(role: Role | None) -> bool:
+    return role is not None and any(p.name in SCOPE_PERMISSIONS for p in role.permissions)
+
+
+def role_can_manage_users(role: Role | None) -> bool:
+    """Only people who can create users / give roles need extra assignable roles."""
+    return role is not None and any(p.name == "user:manage" for p in role.permissions)
+
+
+async def _load_role_with_permissions(db: AsyncSession, role_id: int | None) -> Role | None:
+    if role_id is None:
+        return None
+    result = await db.execute(select(Role).options(selectinload(Role.permissions)).where(Role.id == role_id))
+    return result.scalar_one_or_none()
+
+
+def _check_extras_fit_scope(extra_roles: list[Role], manage_all: bool, managed_ids: set[int]) -> None:
+    """
+    A role tagged to a department can only ever be assigned by someone who manages
+    that department, so giving it as an extra to a user who does NOT manage that
+    department would be useless. Reject it with a clear message.
+    """
+    if manage_all:
+        return
+    for role in extra_roles:
+        if role.department_tag_id is not None and role.department_tag_id not in managed_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{role.name}' belongs to a department this user does not manage. "
+                       f"Tick that department under 'Departments this user manages' first.",
+            )
+
+
+async def _enforce_form_rules(db: AsyncSession, user_id: int) -> list[str]:
+    """
+    Keeps a user's data consistent with their CURRENT role (run after every save):
+      - role has no department-based permission → clear "All Departments" and managed departments
+      - role has no user:manage                 → clear extra assignable roles
+      - otherwise drop extras tagged to a department the user does not manage
+    Returns the names of what was cleared (for the activity log).
+    """
+    result = await db.execute(
+        select(User)
+        .options(
+            selectinload(User.role).selectinload(Role.permissions),
+            selectinload(User.managed_departments),
+            selectinload(User.extra_assignable_roles),
+        )
+        .where(User.id == user_id)
+        # re-read links written earlier in this request (callers flush first)
+        .execution_options(populate_existing=True)
+    )
+    user = result.scalar_one()
+    cleared: list[str] = []
+
+    if not role_uses_department_scope(user.role):
+        if user.manage_all_departments or user.managed_departments:
+            user.manage_all_departments = False
+            await db.execute(user_managed_department.delete().where(user_managed_department.c.user_id == user_id))
+            cleared.append("managed_departments")
+        managed_ids: set[int] = set()
+        manage_all = False
+    else:
+        managed_ids = {d.id for d in user.managed_departments}
+        manage_all = user.manage_all_departments
+
+    if not role_can_manage_users(user.role):
+        if user.extra_assignable_roles:
+            await db.execute(user_extra_assignable_role.delete().where(user_extra_assignable_role.c.user_id == user_id))
+            cleared.append("extra_assignable_roles")
+    elif not manage_all:
+        unusable = [
+            r.id for r in user.extra_assignable_roles
+            if r.department_tag_id is not None and r.department_tag_id not in managed_ids
+        ]
+        if unusable:
+            await db.execute(
+                user_extra_assignable_role.delete().where(
+                    (user_extra_assignable_role.c.user_id == user_id)
+                    & (user_extra_assignable_role.c.role_id.in_(unusable))
+                )
+            )
+            cleared.append("extra_assignable_roles")
+    return cleared
+
+
 @router.post("", response_model=UserOut, status_code=201)
 async def create_user(
     payload: UserCreate,
@@ -155,9 +250,9 @@ async def create_user(
         await _validate_department_ids(db, [payload.department_id])
 
     # Role: base list + creator's extras, filtered by department tag
+    role = None
     if payload.role_id is not None:
-        role_result = await db.execute(select(Role).where(Role.id == payload.role_id))
-        role = role_result.scalar_one_or_none()
+        role = await _load_role_with_permissions(db, payload.role_id)
         if role is None:
             raise HTTPException(status_code=404, detail="Role not found")
         if current_user.role is None:
@@ -165,13 +260,22 @@ async def create_user(
         if not can_assign_role(current_user, role):
             raise HTTPException(status_code=403, detail="You are not allowed to assign this role")
 
-    # Department scope this new user will MANAGE (no escalation)
-    managed_ids = [] if payload.manage_all_departments else list(dict.fromkeys(payload.managed_department_ids))
-    _check_scope_grant(current_user, payload.manage_all_departments, managed_ids)
+    # Department scope this new user will MANAGE (no escalation).
+    # Only kept when the role has a department-based permission; otherwise it would do nothing.
+    if role_uses_department_scope(role):
+        manage_all = payload.manage_all_departments
+        managed_ids = [] if manage_all else list(dict.fromkeys(payload.managed_department_ids))
+    else:
+        manage_all = False
+        managed_ids = []
+    _check_scope_grant(current_user, manage_all, managed_ids)
     await _validate_department_ids(db, managed_ids)
 
-    # Personal extra assignable roles (Lock 1)
-    extra_roles = await _resolve_extra_roles(db, current_user, payload.extra_assignable_role_ids)
+    # Personal extra assignable roles (Lock 1) — only for roles that can manage users
+    extra_roles: list[Role] = []
+    if role_can_manage_users(role):
+        extra_roles = await _resolve_extra_roles(db, current_user, payload.extra_assignable_role_ids)
+        _check_extras_fit_scope(extra_roles, manage_all, set(managed_ids))
 
     # ---- Write ----
     user = User(
@@ -181,7 +285,7 @@ async def create_user(
         role_id=payload.role_id,
         department_id=payload.department_id,
         is_active=payload.is_active,
-        manage_all_departments=payload.manage_all_departments,
+        manage_all_departments=manage_all,
     )
     db.add(user)
     await db.flush()  # get user.id
@@ -190,6 +294,8 @@ async def create_user(
         await db.execute(user_managed_department.insert().values(user_id=user.id, department_id=dept_id))
     await _replace_extra_roles(db, user.id, extra_roles)
     await log_activity(db, current_user.id, "user_created", "user", user.id, detail=f"Account created by {current_user.name}")
+    await db.flush()
+    await _enforce_form_rules(db, user.id)
     await db.commit()
 
     if payload.send_welcome_email:
@@ -393,15 +499,22 @@ async def update_user(
             user.manager_id = payload.manager_id
             changed_fields.append("manager_id")
 
+    # Sections that do not apply to this user's role are ignored here and cleared
+    # by _enforce_form_rules() below. (When the role is changed in the same edit,
+    # the frontend saves the role FIRST, so these checks see the new role.)
+    uses_scope = role_uses_department_scope(user.role)
+    manages_users = role_can_manage_users(user.role)
+
     # "All Departments" toggle — only someone with global scope may change it
-    if payload.manage_all_departments is not None and payload.manage_all_departments != user.manage_all_departments:
+    if uses_scope and payload.manage_all_departments is not None and payload.manage_all_departments != user.manage_all_departments:
         if scoped_dept_ids is not None:
             raise HTTPException(status_code=403, detail="Only users who manage all departments can change 'All Departments'")
         user.manage_all_departments = payload.manage_all_departments
         changed_fields.append("manage_all_departments")
 
     # Departments this user manages
-    if payload.managed_department_ids is not None:
+    final_managed_ids = {d.id for d in user.managed_departments}
+    if uses_scope and payload.managed_department_ids is not None:
         requested = list(dict.fromkeys(payload.managed_department_ids))
         _check_scope_grant(current_user, None, requested)
         await _validate_department_ids(db, requested)
@@ -412,20 +525,34 @@ async def update_user(
         await db.execute(user_managed_department.delete().where(user_managed_department.c.user_id == user_id))
         for dept_id in requested:
             await db.execute(user_managed_department.insert().values(user_id=user.id, department_id=dept_id))
+        final_managed_ids = set(requested)
         changed_fields.append("managed_departments")
 
     # A global-scope user does not also need a department list
     if user.manage_all_departments and payload.manage_all_departments:
         await db.execute(user_managed_department.delete().where(user_managed_department.c.user_id == user_id))
+        final_managed_ids = set()
 
-    # Personal extra assignable roles (Lock 1)
-    if payload.extra_assignable_role_ids is not None:
+    # Personal extra assignable roles (Lock 1) — only for roles that can manage users
+    if manages_users and payload.extra_assignable_role_ids is not None:
         await load_assign_context(db, current_user)   # needed by can_assign_role()
         extra_roles = await _resolve_extra_roles(
             db, current_user, payload.extra_assignable_role_ids, existing=list(user.extra_assignable_roles)
         )
+        # Newly chosen extras must fit the departments this user will manage
+        newly_requested = set(payload.extra_assignable_role_ids)
+        _check_extras_fit_scope(
+            [r for r in extra_roles if r.id in newly_requested],
+            user.manage_all_departments,
+            final_managed_ids,
+        )
         await _replace_extra_roles(db, user.id, extra_roles)
         changed_fields.append("extra_assignable_roles")
+
+    await db.flush()
+    for cleared in await _enforce_form_rules(db, user_id):
+        if cleared not in changed_fields:
+            changed_fields.append(cleared)
 
     if changed_fields:
         await log_activity(db, current_user.id, "user_updated", "user", user.id, detail=f"Updated: {', '.join(changed_fields)}")
@@ -475,6 +602,12 @@ async def assign_role(
         user.role_id = role.id
 
     await log_activity(db, current_user.id, "role_assigned", "user", user_id, detail=f"Role changed to '{role.name}'" if role else "Role removed")
+    # The new role may not use department scope / extra roles → clear what no longer applies
+    await db.flush()
+    db.expire(user, ["role"])
+    cleared = await _enforce_form_rules(db, user_id)
+    if cleared:
+        await log_activity(db, current_user.id, "user_updated", "user", user_id, detail=f"Cleared (not used by new role): {', '.join(cleared)}")
     await db.commit()
 
     db.expire_all()

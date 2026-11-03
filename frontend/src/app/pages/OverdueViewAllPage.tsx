@@ -4,6 +4,7 @@ import { useParams, useNavigate } from "react-router";
 import { ArrowLeft, AlertTriangle, ChevronRight, Clock } from "lucide-react";
 import { getOverdueTasks, getOverdueSubtasks, getOverdueProjects, OverdueItem } from "../api/dashboard";
 import { StatusBadge } from "../components/StatusBadge";
+import { DashboardFilters, useDashboardFilters } from "../components/DashboardFilters";
 
 interface OverdueViewAllPageProps {
   type?: "tasks" | "subtasks" | "projects";
@@ -42,10 +43,26 @@ export function OverdueViewAllPage({ type: propType }: OverdueViewAllPageProps) 
   const type = (propType || paramType || "tasks") as "tasks" | "subtasks" | "projects";
   const config = TYPE_CONFIG[type] || TYPE_CONFIG.tasks;
 
+  // Same filters as the dashboard, so the numbers match
+  const dash = useDashboardFilters();
+
   // Shared store: instant on return, re-checked every 60 s and on tab focus
-  const itemsQ = useCachedQuery<OverdueItem[]>([...qk.dashboard, "overdue", type], () => config.fetchFn(), EMPTY, { staleTime: FRESH.LIVE, poll: true });
+  const itemsQ = useCachedQuery<OverdueItem[]>(
+    qk.dashboardOverdue(type, dash.params as Record<string, unknown>),
+    () => config.fetchFn(dash.params),
+    EMPTY,
+    { staleTime: FRESH.LIVE, poll: true, enabled: dash.ready, keepPrevious: true }
+  );
   const items = itemsQ.data;
-  const loading = itemsQ.isLoading;
+  const loading = itemsQ.isLoading || !dash.ready;
+  const filterBar = (
+    <DashboardFilters
+      filters={dash.filters}
+      setFilters={dash.setFilters}
+      options={dash.options}
+      updating={itemsQ.isFetching && !itemsQ.isLoading}
+    />
+  );
   const error = itemsQ.error ? itemsQ.error.message || "Failed to load overdue items." : null;
 
 
@@ -60,7 +77,8 @@ export function OverdueViewAllPage({ type: propType }: OverdueViewAllPageProps) 
 
   if (error) {
     return (
-      <div className="p-6">
+      <div className="p-6 space-y-4">
+        {filterBar}
         <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm mb-4">
           <AlertTriangle size={16} className="text-red-500 flex-shrink-0" />
           <span className="text-red-700 font-semibold">{error}</span>
@@ -100,6 +118,8 @@ export function OverdueViewAllPage({ type: propType }: OverdueViewAllPageProps) 
           </div>
         </div>
       </div>
+
+      {filterBar}
 
       <div className="bg-white rounded-xl border border-red-200 shadow-sm overflow-hidden">
         {items.length === 0 ? (

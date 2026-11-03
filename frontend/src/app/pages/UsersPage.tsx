@@ -13,6 +13,7 @@ import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router";
 import { DepartmentScopePicker } from "../components/DepartmentScopePicker";
 import { RoleChecklist } from "../components/RoleChecklist";
+import { roleNeedsDepartments, roleCanManageUsers, filterRolesByDepartments, pruneExtraRoles } from "../utils/roleAccess";
 
 function fmtDate(d: string) {
   if (!d) return "—";
@@ -79,6 +80,7 @@ export function UsersPage() {
   const [createManageAll, setCreateManageAll] = useState(false);
   const [createManagedIds, setCreateManagedIds] = useState<number[]>([]);
   const [createExtraRoleIds, setCreateExtraRoleIds] = useState<number[]>([]);
+  const [createExtrasNote, setCreateExtrasNote] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [createAvatarFile, setCreateAvatarFile] = useState<File | null>(null);
   const [avatarUploadError, setAvatarUploadError] = useState<string | null>(null);
@@ -90,18 +92,43 @@ export function UsersPage() {
   // Only someone who manages ALL departments may grant "All Departments"
   const canGrantAllDepartments = !!currentUser?.manageAllDepartments;
 
-  // Extra assignable roles are only meaningful if the chosen role can manage users
-  // and does not already assign every role.
   const selectedCreateRole = assignableRoles.find((r) => r.id === Number(createRole)) || null;
-  const showCreateExtras = !!selectedCreateRole
-    && selectedCreateRole.permissions.includes("user:manage")
-    && !selectedCreateRole.allRoles;
+  // "Departments this user manages" only for roles with a department-based permission
+  const showCreateScope = roleNeedsDepartments(selectedCreateRole);
+  // Extra assignable roles only if the chosen role can manage users and does not already assign every role
+  const showCreateExtras = roleCanManageUsers(selectedCreateRole) && !selectedCreateRole!.allRoles;
   // Lock 1: candidates = roles I can assign, minus the chosen role and its base list
-  const createExtraCandidates = selectedCreateRole
+  const createExtraLockOne = selectedCreateRole
     ? assignableRoles.filter(
         (r) => r.id !== selectedCreateRole.id && !selectedCreateRole.assignableRoles.some((b) => b.id === r.id)
       )
     : [];
+  // ...then only roles that fit the departments ticked above (general roles always fit)
+  const createExtraCandidates = filterRolesByDepartments(createExtraLockOne, createManageAll, createManagedIds);
+
+  function handleCreateRoleChange(value: string) {
+    setCreateRole(value);
+    setCreateExtrasNote(null);
+    const role = assignableRoles.find((r) => r.id === Number(value)) || null;
+    // Clear sections that do not apply to the new role
+    if (!roleNeedsDepartments(role)) {
+      setCreateManageAll(false);
+      setCreateManagedIds([]);
+    }
+    if (!roleCanManageUsers(role)) setCreateExtraRoleIds([]);
+  }
+
+  function handleCreateScopeChange(manageAll: boolean, ids: number[]) {
+    setCreateManageAll(manageAll);
+    setCreateManagedIds(ids);
+    const { kept, removedNames } = pruneExtraRoles(createExtraRoleIds, createExtraLockOne, manageAll, ids);
+    setCreateExtraRoleIds(kept);
+    setCreateExtrasNote(
+      removedNames.length
+        ? `Removed ${removedNames.join(", ")}: its department is no longer managed by this user.`
+        : null
+    );
+  }
 
   // Filter users based on search and filters
   const filteredUsers = users.filter((user) => {
@@ -160,8 +187,8 @@ export function UsersPage() {
         role_id: roleId,
         department_id: deptId,
         isActive: createActive,
-        manage_all_departments: createManageAll,
-        managed_department_ids: createManageAll ? [] : createManagedIds,
+        manage_all_departments: showCreateScope && createManageAll,
+        managed_department_ids: showCreateScope && !createManageAll ? createManagedIds : [],
         extra_assignable_role_ids: showCreateExtras
           ? createExtraRoleIds.filter((id) => createExtraCandidates.some((r) => r.id === id))
           : [],
@@ -201,6 +228,7 @@ export function UsersPage() {
     setCreateManageAll(false);
     setCreateManagedIds([]);
     setCreateExtraRoleIds([]);
+    setCreateExtrasNote(null);
     setCreateError(null);
     setCreateAvatarFile(null);
     setAvatarUploadError(null);
@@ -596,32 +624,34 @@ export function UsersPage() {
                 ...assignableRoles.map((r) => ({ value: r.id.toString(), label: r.name })),
               ]}
               value={createRole}
-              onChange={(e) => setCreateRole(e.target.value)}
+              onChange={(e) => handleCreateRoleChange(e.target.value)}
               required
             />
 
-            {/* Department scope lives on the user */}
-            <DepartmentScopePicker
-              departments={departments}
-              manageAll={createManageAll}
-              selectedIds={createManagedIds}
-              onChange={({ manageAll, ids }) => {
-                setCreateManageAll(manageAll);
-                setCreateManagedIds(ids);
-              }}
-              canGrantAll={canGrantAllDepartments}
-            />
-
-            {/* Personal extra assignable roles (on top of the role's base list) */}
-            {showCreateExtras && (
-              <RoleChecklist
-                title="Extra roles this user can assign"
-                help={`On top of the ${selectedCreateRole!.name} role's base list. Only roles you can assign yourself are shown.`}
-                roles={createExtraCandidates}
-                selectedIds={createExtraRoleIds}
-                onChange={setCreateExtraRoleIds}
-                emptyText="No additional roles available to grant"
+            {/* Department scope lives on the user — only for roles with a department-based permission */}
+            {showCreateScope && (
+              <DepartmentScopePicker
+                departments={departments}
+                manageAll={createManageAll}
+                selectedIds={createManagedIds}
+                onChange={({ manageAll, ids }) => handleCreateScopeChange(manageAll, ids)}
+                canGrantAll={canGrantAllDepartments}
               />
+            )}
+
+            {/* Personal extra assignable roles — after the departments, filtered by them */}
+            {showCreateExtras && (
+              <div>
+                <RoleChecklist
+                  title="Extra roles this user can assign"
+                  help={`On top of the ${selectedCreateRole!.name} role's base list. Shows roles you can assign yourself that are general or belong to the departments ticked above.`}
+                  roles={createExtraCandidates}
+                  selectedIds={createExtraRoleIds}
+                  onChange={(ids) => { setCreateExtraRoleIds(ids); setCreateExtrasNote(null); }}
+                  emptyText="No additional roles available for the ticked departments"
+                />
+                {createExtrasNote && <p className="text-xs text-amber-600 mt-1">{createExtrasNote}</p>}
+              </div>
             )}
 
             {/* Avatar Upload */}
