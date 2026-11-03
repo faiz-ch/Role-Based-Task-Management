@@ -25,3 +25,8 @@ Thumbs.db
 .idea/
 
 uploads/
+
+# Database backups — never push
+*.sql
+*.sql.gz
+*.dump
