@@ -368,7 +368,7 @@ export function UserDetailPage() {
           <div className="flex items-center gap-2">
             <button
               onClick={openEdit}
-              className="flex items-center gap-1.5 px-3 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-2 bg-[#15171C] text-white text-sm font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer"
             >
               <Edit2 size={16} /> Edit User
             </button>
@@ -406,7 +406,7 @@ export function UserDetailPage() {
               onClick={() => setActiveTab(tab)}
               className={`pb-3 text-sm font-medium transition-colors ${
                 activeTab === tab
-                  ? "text-foreground border-b-2 border-[#0C1022]"
+                  ? "text-foreground border-b-2 border-[#15171C]"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
@@ -906,7 +906,7 @@ export function UserDetailPage() {
               </button>
               <button
                 onClick={handleSaveEdit}
-                className="px-4 py-2 text-sm bg-[#0C1022] text-white rounded-lg hover:bg-[#1a2240] transition-colors"
+                className="px-4 py-2 text-sm bg-[#15171C] text-white rounded-lg hover:bg-[#2A2D35] transition-colors"
               >
                 Save Changes
               </button>

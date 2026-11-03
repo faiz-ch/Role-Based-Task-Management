@@ -373,7 +373,7 @@ export function UsersPage() {
           {canManage && (
             <button
               onClick={() => setShowCreateDialog(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer self-end"
+              className="flex items-center gap-2 px-4 py-2 bg-[#15171C] text-white text-sm font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer self-end"
             >
               <Plus size={16} />
               Add User
@@ -443,13 +443,7 @@ export function UsersPage() {
                   <td className="px-4 py-3 text-sm text-muted-foreground">{user.email}</td>
                   <td className="px-4 py-3">
                     {user.role ? (
-                      <span
-                        className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium"
-                        style={{
-                          backgroundColor: `${user.role.color}20`,
-                          color: user.role.color,
-                        }}
-                      >
+                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold border bg-blue-50 text-blue-700 border-blue-200">
                         {user.role.name}
                       </span>
                     ) : (
@@ -748,7 +742,7 @@ export function UsersPage() {
               </button>
               <button
                 onClick={handleCreateUser}
-                className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+                className="px-4 py-2 bg-[#15171C] text-white text-sm font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer"
               >
                 Create User
               </button>

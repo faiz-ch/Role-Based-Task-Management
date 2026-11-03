@@ -396,7 +396,7 @@ export function ProjectDetailPage() {
           {canScheduleMeeting && project.status !== "Done" && project.status !== "Archived" && (
             <button
               onClick={() => setShowScheduleDialog(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#15171C] text-white text-xs font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer"
             >
               <Video size={12} />
               Schedule meeting

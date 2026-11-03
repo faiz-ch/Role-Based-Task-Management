@@ -146,9 +146,6 @@ export function useDashboardFilters() {
   return { filters, setFilters, params, options, ready, isFiltered: isFiltered(filters) };
 }
 
-const selectClass =
-  "px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-foreground";
-
 export function DashboardFilters({
   filters,
   setFilters,
@@ -180,18 +177,18 @@ export function DashboardFilters({
   }
 
   return (
-    <div className="bg-white rounded-xl border border-border p-3 shadow-sm flex flex-wrap items-end gap-3" data-testid="dashboard-filters">
-      <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider self-center">
+    <section aria-label="Filters" className="rlk-panel rlk-filters" data-testid="dashboard-filters">
+      <div className="rlk-filters__label">
         <Filter size={14} />
         Filters
       </div>
 
       {isManager && (
-        <label className="flex flex-col gap-1">
-          <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Department</span>
+        <label className="rlk-filters__field rlk-filters__dept">
+          <span>Department</span>
           <select
             aria-label="Department filter"
-            className={selectClass}
+            
             value={filters.departmentId ?? ""}
             onChange={(e) => changeDepartment(e.target.value)}
           >
@@ -203,11 +200,11 @@ export function DashboardFilters({
         </label>
       )}
 
-      <label className="flex flex-col gap-1">
-        <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Project</span>
+      <label className="rlk-filters__field rlk-filters__proj">
+        <span>Project</span>
         <select
           aria-label="Project filter"
-          className={selectClass}
+          
           value={filters.projectId ?? ""}
           onChange={(e) => setFilters({ ...filters, projectId: e.target.value ? Number(e.target.value) : null })}
         >
@@ -218,11 +215,11 @@ export function DashboardFilters({
         </select>
       </label>
 
-      <label className="flex flex-col gap-1">
-        <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Time period</span>
+      <label className="rlk-filters__field rlk-filters__time">
+        <span>Time period</span>
         <select
           aria-label="Time period filter"
-          className={selectClass}
+          
           value={filters.period}
           onChange={(e) => setFilters({ ...filters, period: e.target.value as Period })}
         >
@@ -234,23 +231,23 @@ export function DashboardFilters({
 
       {filters.period === "custom" && (
         <>
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">From</span>
+          <label className="rlk-filters__field">
+            <span>From</span>
             <input
               type="date"
               aria-label="From date"
-              className={selectClass}
+              
               value={filters.from}
               max={filters.to || undefined}
               onChange={(e) => setFilters({ ...filters, from: e.target.value })}
             />
           </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">To</span>
+          <label className="rlk-filters__field">
+            <span>To</span>
             <input
               type="date"
               aria-label="To date"
-              className={selectClass}
+              
               value={filters.to}
               min={filters.from || undefined}
               onChange={(e) => setFilters({ ...filters, to: e.target.value })}
@@ -262,15 +259,15 @@ export function DashboardFilters({
       {isFiltered(filters) && (
         <button
           onClick={() => setFilters(DEFAULT_FILTERS)}
-          className="flex items-center gap-1 px-3 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors cursor-pointer"
+          className="rlk-filters__clear"
         >
           <X size={14} />
           Clear
         </button>
       )}
 
-      {updating && <span className="text-xs text-muted-foreground self-center">Updating…</span>}
-    </div>
+      {updating && <span className="rlk-filters__busy">Updating…</span>}
+    </section>
   );
 }
 

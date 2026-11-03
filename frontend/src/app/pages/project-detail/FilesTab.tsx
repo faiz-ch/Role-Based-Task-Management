@@ -98,7 +98,7 @@ export function FilesTab({
       <div className="bg-white rounded-xl border border-border p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-semibold text-foreground">Attachments</h2>
-          <label className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer">
+          <label className="flex items-center gap-1.5 px-3 py-1.5 bg-[#15171C] text-white text-xs font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer">
             <Upload size={12} />
             Upload File
             <input

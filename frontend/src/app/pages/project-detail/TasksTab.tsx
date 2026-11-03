@@ -100,7 +100,7 @@ export function TasksTab({ project, tasks, teamMembers, onCreateTask }: TasksTab
           <h2 className="text-sm font-semibold text-foreground">Tasks</h2>
           <button
             onClick={openNewTask}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#15171C] text-white text-xs font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer"
           >
             <Plus size={12} /> New Task
           </button>
@@ -245,7 +245,7 @@ export function TasksTab({ project, tasks, teamMembers, onCreateTask }: TasksTab
             <button
               onClick={handleCreateTask}
               disabled={!taskForm.title.trim()}
-              className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2 bg-[#15171C] text-white text-sm font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Create Task
             </button>

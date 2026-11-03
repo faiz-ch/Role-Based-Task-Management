@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useLocation } from "react-router";
 import {
   LayoutDashboard,
@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { Page } from "../types";
 import { useAuth } from "../context/AuthContext";
-import { Av } from "./Av";
+import { InstitutionsFooter } from "./InstitutionsFooter";
 
 const NAV: {
   id: Page;
@@ -29,133 +29,203 @@ const NAV: {
   { id: "departments", label: "Departments", Icon: Building2, perm: "department:manage" },
 ];
 
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase() || "?";
+}
+
+/** Mobile header: hides while scrolling down, comes back as soon as you scroll up. */
+function useHideOnScroll(scrollRef: React.RefObject<HTMLElement | null>, resetKey: string, enabled: boolean) {
+  const [hidden, setHidden] = useState(false);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const mobile = window.matchMedia("(max-width: 899.98px)");
+    let last = el.scrollTop;
+    let ticking = false;
+    const onScroll = () => {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(() => {
+        ticking = false;
+        const y = el.scrollTop;
+        if (!mobile.matches || y < 72) setHidden(false); // always shown near the top
+        else if (y > last + 6) setHidden(true); // scrolling down
+        else if (y < last - 6) setHidden(false); // scrolling up
+        last = y;
+      });
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [scrollRef, enabled]);
+  // new page → header visible again
+  useEffect(() => setHidden(false), [resetKey]);
+  return hidden;
+}
+
 export function Shell({ children }: { children: React.ReactNode }) {
   const { currentUser, permissions, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const headerHidden = useHideOnScroll(scrollRef, location.pathname, !!currentUser);
 
   // Derive current page from pathname
   const page: Page = (() => {
     const path = location.pathname;
-    if (path === "/dashboard") return "dashboard";
+    if (path === "/dashboard" || path.startsWith("/dashboard/")) return "dashboard";
     if (path.startsWith("/projects")) return "projects";
-    if (path.startsWith("/tasks")) return "tasks";
+    if (path.startsWith("/tasks") || path.startsWith("/subtasks")) return "tasks";
     if (path.startsWith("/users")) return "users";
     if (path.startsWith("/roles")) return "roles";
     if (path.startsWith("/departments")) return "departments";
     return "tasks"; // default
   })();
 
+  // New page: start at the top and close the account menu
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: 0 });
+    setMenuOpen(false);
+  }, [location.pathname]);
+
   if (!currentUser) return <>{children}</>;
 
   const visNav = NAV.filter(
     (n) => n.perm === null || (Array.isArray(n.perm) ? n.perm.some(p => permissions.includes(p)) : permissions.includes(n.perm))
   );
+  const me = initials(currentUser.name);
+  const roleName = currentUser.role?.name ?? "No role";
 
   return (
-    <div
-      className="h-screen flex bg-background overflow-hidden"
-      style={{ fontFamily: "'Inter', sans-serif" }}
-    >
-      {/* Sidebar */}
-      <aside
-        className="flex flex-col flex-shrink-0 transition-all duration-200 overflow-hidden"
-        style={{ width: collapsed ? "56px" : "220px", background: "#0C1022" }}
-      >
-        {/* Logo */}
-        <div
-          className="flex items-center gap-2.5 h-14 px-3.5 border-b flex-shrink-0"
-          style={{ borderColor: "rgba(255,255,255,0.1)" }}
-        >
-          <div className="w-7 h-7 bg-blue-500 rounded-lg flex items-center justify-center flex-shrink-0">
-            <CheckSquare size={14} className="text-white" />
-          </div>
-          {!collapsed && (
-            <span className="text-white font-semibold tracking-tight text-sm">
-              RLKU PMS
-            </span>
-          )}
-        </div>
-
-        {/* Nav */}
-        <nav className="flex-1 py-3 px-2 space-y-0.5">
-          {visNav.map(({ id, label, Icon }) => {
-            const active = page === id;
-            return (
-              <button
-                key={id}
-                onClick={() => navigate(`/${id}`)}
-                title={collapsed ? label : undefined}
-                className={`w-full flex items-center gap-3 px-2.5 py-2.5 rounded-lg transition-all text-sm font-medium cursor-pointer ${
-                  active
-                    ? "bg-blue-500/20 text-blue-300"
-                    : "text-slate-400 hover:text-white hover:bg-white/8"
-                }`}
-              >
-                <Icon size={15} className="flex-shrink-0" />
-                {!collapsed && <span>{label}</span>}
-              </button>
-            );
-          })}
-        </nav>
-
-        {/* User card */}
-        <div
-          className="border-t p-2.5 flex-shrink-0"
-          style={{ borderColor: "rgba(255,255,255,0.1)" }}
-        >
-          <div className="flex items-center gap-2.5">
-            <Av name={currentUser.name} />
+    <div className="rlk-shell">
+      {/* ---------- Sidebar (desktop) ---------- */}
+      <nav aria-label="Main" className={`rlk-side ${collapsed ? "rlk-side--collapsed" : ""}`}>
+        <img src="/brand/rlk-logo-white.png" alt="" aria-hidden="true" className="rlk-side__watermark" />
+        <div style={{ position: "relative" }}>
+          <div className="rlk-brand">
+            <img src="/brand/rlk-logo-gold.png" alt="RLK Group logo" />
             {!collapsed && (
-              <>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-white truncate">
-                    {currentUser.name}
-                  </p>
-                  <p
-                    className="text-xs truncate"
-                    style={{ color: "rgba(148,163,184,0.7)" }}
-                  >
-                    {currentUser.role?.name ?? "No role"}
-                  </p>
-                </div>
-                <button
-                  onClick={logout}
-                  className="p-1.5 rounded-lg transition-colors hover:bg-white/10 cursor-pointer"
-                  title="Sign out"
-                >
-                  <LogOut size={13} className="text-slate-400" />
-                </button>
-              </>
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                <span className="rlk-brand__name">RLKG PMS</span>
+                <span className="rlk-brand__sub">RLK Group</span>
+              </div>
             )}
           </div>
+          <div className="rlk-nav">
+            {visNav.map(({ id, label, Icon }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => navigate(`/${id}`)}
+                title={collapsed ? label : undefined}
+                aria-label={collapsed ? label : undefined}
+                aria-current={page === id ? "page" : undefined}
+                className="rlk-nav__item"
+              >
+                <Icon size={18} aria-hidden="true" />
+                {!collapsed && <span>{label}</span>}
+              </button>
+            ))}
+          </div>
         </div>
-      </aside>
+        <div className="rlk-me">
+          <span className="rlk-initials rlk-initials--gold" aria-hidden="true">{me}</span>
+          {!collapsed && (
+            <div className="rlk-me__text">
+              <span className="rlk-me__name">{currentUser.name}</span>
+              <span className="rlk-me__role">{roleName}</span>
+            </div>
+          )}
+          {!collapsed && (
+            <button type="button" onClick={logout} aria-label="Sign out" title="Sign out" className="rlk-iconbtn rlk-iconbtn--dark">
+              <LogOut size={18} aria-hidden="true" />
+            </button>
+          )}
+        </div>
+      </nav>
 
-      {/* Main */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Topbar */}
-        <header className="h-14 bg-white border-b border-border flex items-center gap-3 px-5 flex-shrink-0">
+      <div className="rlk-mainwrap">
+        {/* ---------- Top bar (desktop) ---------- */}
+        <header className="rlk-topbar">
           <button
+            type="button"
             onClick={() => setCollapsed((c) => !c)}
-            className="p-1.5 hover:bg-muted rounded-lg transition-colors cursor-pointer"
+            aria-label={collapsed ? "Expand menu" : "Collapse menu"}
+            className="rlk-iconbtn"
           >
-            <Menu size={15} className="text-muted-foreground" />
+            <Menu size={20} aria-hidden="true" />
           </button>
-          <div className="flex-1" />
-          <button className="p-1.5 hover:bg-muted rounded-lg transition-colors cursor-pointer">
-            <Bell size={15} className="text-muted-foreground" />
-          </button>
-          <div className="flex items-center gap-2 pl-3 border-l border-border">
-            <Av name={currentUser.name} />
-            <span className="text-sm font-medium text-foreground hidden sm:block">
-              {currentUser.name}
-            </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button type="button" aria-label="Notifications" className="rlk-iconbtn">
+              <Bell size={19} aria-hidden="true" />
+            </button>
+            <div className="rlk-topbar__me">
+              <span className="rlk-initials rlk-initials--ink" aria-hidden="true">{me}</span>
+              <span>{currentUser.name}</span>
+            </div>
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto bg-slate-50/50">{children}</main>
+        {/* ---------- Scrolling area: page + footer ---------- */}
+        <div className="rlk-scroll" ref={scrollRef}>
+          {/* Mobile header: the sidebar moves up here and hides while scrolling down */}
+          <header className={`rlk-mhead ${headerHidden && !menuOpen ? "rlk-mhead--hidden" : ""}`}>
+            <div className="rlk-mhead__row">
+              <div className="rlk-mhead__brand">
+                <img src="/brand/rlk-logo-gold.png" alt="RLK Group logo" />
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  <span style={{ fontSize: 15, fontWeight: 800 }}>RLKG PMS</span>
+                  <span style={{ fontSize: 10, letterSpacing: 1.2, textTransform: "uppercase", color: "#C9B98F" }}>RLK Group</span>
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center" }}>
+                <button type="button" aria-label="Notifications" className="rlk-iconbtn rlk-iconbtn--dark">
+                  <Bell size={20} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Account: ${currentUser.name}`}
+                  aria-expanded={menuOpen}
+                  onClick={() => setMenuOpen((o) => !o)}
+                  className="rlk-iconbtn"
+                >
+                  <span className="rlk-initials rlk-initials--gold" style={{ width: 34, height: 34 }}>{me}</span>
+                </button>
+              </div>
+            </div>
+            <div className="rlk-mnav" role="navigation" aria-label="Main">
+              {visNav.map(({ id, label, Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => navigate(`/${id}`)}
+                  aria-current={page === id ? "page" : undefined}
+                  className="rlk-mnav__item"
+                >
+                  <Icon size={16} aria-hidden="true" />
+                  {label}
+                </button>
+              ))}
+            </div>
+            {menuOpen && (
+              <div className="rlk-menu" role="menu">
+                <div className="rlk-menu__who">
+                  <div style={{ fontSize: 14, fontWeight: 800 }}>{currentUser.name}</div>
+                  <div style={{ fontSize: 12.5, color: "var(--rlk-muted)" }}>{roleName}</div>
+                </div>
+                <button type="button" role="menuitem" className="rlk-menu__btn" onClick={logout}>
+                  <LogOut size={16} aria-hidden="true" /> Sign out
+                </button>
+              </div>
+            )}
+          </header>
+
+          <img src="/brand/rlk-logo-gold.png" alt="" aria-hidden="true" className="rlk-scroll__watermark" />
+          <main className="rlk-page">{children}</main>
+          <InstitutionsFooter />
+        </div>
       </div>
     </div>
   );

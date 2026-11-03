@@ -19,7 +19,7 @@ const PRIORITIES: Priority[] = ["Low", "Medium", "High"];
 
 const COLOR_SWATCHES = [
   { name: "purple", value: "#a855f7", bg: "bg-purple-100", text: "text-purple-600" },
-  { name: "blue", value: "#3b82f6", bg: "bg-blue-100", text: "text-blue-600" },
+  { name: "blue", value: "#B08C2E", bg: "bg-blue-100", text: "text-blue-600" },
   { name: "green", value: "#10b981", bg: "bg-emerald-100", text: "text-emerald-600" },
   { name: "orange", value: "#f97316", bg: "bg-orange-100", text: "text-orange-600" },
   { name: "red", value: "#ef4444", bg: "bg-red-100", text: "text-red-600" },
@@ -256,7 +256,7 @@ export function ProjectsPage() {
         {canCreate && (
           <button
             onClick={openNew}
-            className="flex items-center gap-1.5 px-3 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-2 bg-[#15171C] text-white text-sm font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer"
           >
             <Plus size={14} /> New Project
           </button>
@@ -663,7 +663,7 @@ export function ProjectsPage() {
                 <button
                   onClick={() => setWizardStep((prev) => prev + 1)}
                   disabled={wizardStep === 1 ? !canProceedToStep2() : !canProceedToStep3()}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex items-center gap-1.5 px-4 py-2 bg-[#15171C] text-white text-sm font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Next
                   <ArrowRight size={16} />
@@ -671,7 +671,7 @@ export function ProjectsPage() {
               ) : (
                 <button
                   onClick={saveNew}
-                  className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+                  className="px-4 py-2 bg-[#15171C] text-white text-sm font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer"
                 >
                   Create Project
                 </button>

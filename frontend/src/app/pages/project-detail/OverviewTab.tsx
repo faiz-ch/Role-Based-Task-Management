@@ -336,7 +336,7 @@ export function OverviewTab({
               <button
                 onClick={handleCreateReport}
                 disabled={!reportContent.trim()}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#15171C] text-white text-xs font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Submit Report
               </button>
@@ -360,7 +360,7 @@ export function OverviewTab({
           <div className="mt-4 pt-4 border-t border-border">
             <button
               onClick={handleSendForApproval}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#15171C] text-white text-xs font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer"
             >
               Send for Approval
             </button>

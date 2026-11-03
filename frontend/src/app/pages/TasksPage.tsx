@@ -571,7 +571,7 @@ export function TasksPage() {
             </button>
             <button
               onClick={saveNew}
-              className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+              className="px-4 py-2 bg-[#15171C] text-white text-sm font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer"
             >
               Create Task
             </button>
@@ -631,7 +631,7 @@ export function TasksPage() {
             </button>
             <button
               onClick={saveEdit}
-              className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+              className="px-4 py-2 bg-[#15171C] text-white text-sm font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer"
             >
               Save Changes
             </button>

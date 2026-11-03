@@ -1,81 +1,88 @@
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * RLKG PMS theme — charcoal + RLK gold on warm off-white (from the RLKG PMS Screens design).
+ * Light only, by decision. Status colours (red / amber / green) are left as they were.
+ */
 :root {
   --font-size: 15px;
-  --background: #F0F2F7;
-  --foreground: #0C1022;
+  --font-ui: "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-names: "Tinos", "Times New Roman", "Liberation Serif", Times, serif;
+
+  /* brand */
+  --rlk-ink: #15171C;          /* charcoal: sidebar, headings, dark buttons */
+  --rlk-ink-2: #2A2D35;        /* charcoal hover / dividers on dark */
+  --rlk-gold: #D4B061;         /* bright gold: on dark backgrounds, primary sign-in button */
+  --rlk-gold-soft: #E6C77E;    /* active nav text on dark */
+  --rlk-gold-deep: #8A6A1F;    /* gold text / links on light (5:1 on white) */
+  --rlk-gold-line: #B08C2E;    /* gold rules and focus rings */
+  --rlk-sand: #F4ECD8;         /* gold tint fills */
+  --rlk-sand-line: #E2D3AC;    /* gold tint borders */
+  --rlk-page: #FAF8F3;         /* warm page background */
+  --rlk-line: #ECE5D3;         /* card borders */
+  --rlk-track: #F1ECE0;        /* progress tracks, soft dividers */
+  --rlk-muted: #5B606B;        /* secondary text */
+  --rlk-side-text: #BFC2CA;    /* inactive nav text on dark */
+  --rlk-shadow: 0 1px 2px rgba(21,23,28,.04), 0 10px 24px rgba(21,23,28,.05);
+
+  --background: var(--rlk-page);
+  --foreground: var(--rlk-ink);
   --card: #ffffff;
-  --card-foreground: #0C1022;
+  --card-foreground: var(--rlk-ink);
   --popover: #ffffff;
-  --popover-foreground: #0C1022;
-  --primary: #0C1022;
+  --popover-foreground: var(--rlk-ink);
+  --primary: var(--rlk-ink);
   --primary-foreground: #ffffff;
-  --secondary: #E8EAF0;
-  --secondary-foreground: #0C1022;
-  --muted: #EAECF3;
-  --muted-foreground: #6B7280;
-  --accent: #2563EB;
+  --secondary: #F1ECE0;
+  --secondary-foreground: var(--rlk-ink);
+  --muted: #F3EFE5;
+  --muted-foreground: #5B606B;
+  --accent: var(--rlk-gold-deep);
   --accent-foreground: #ffffff;
-  --destructive: #DC2626;
+  --destructive: #B23A2E;
   --destructive-foreground: #ffffff;
-  --border: rgba(12, 16, 34, 0.09);
+  --border: var(--rlk-line);
   --input: transparent;
-  --input-background: #f5f6fa;
-  --switch-background: #cbd5e1;
+  --input-background: #FBF9F4;
+  --switch-background: #D9D4C7;
   --font-weight-medium: 500;
   --font-weight-normal: 400;
-  --ring: #2563EB;
-  --chart-1: #94a3b8;
-  --chart-2: #3b82f6;
-  --chart-3: #f59e0b;
-  --chart-4: #10b981;
-  --chart-5: #ef4444;
-  --radius: 0.5rem;
-  --sidebar: #0C1022;
+  --ring: var(--rlk-gold-line);
+  --chart-1: #8B8F98;
+  --chart-2: #B08C2E;
+  --chart-3: #D4B061;
+  --chart-4: #2F7D5B;
+  --chart-5: #B23A2E;
+  --radius: 0.625rem;
+  --sidebar: var(--rlk-ink);
   --sidebar-foreground: #ffffff;
-  --sidebar-primary: #3b82f6;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: rgba(255,255,255,0.08);
-  --sidebar-accent-foreground: #ffffff;
-  --sidebar-border: rgba(255,255,255,0.1);
-  --sidebar-ring: #3b82f6;
+  --sidebar-primary: var(--rlk-gold);
+  --sidebar-primary-foreground: var(--rlk-ink);
+  --sidebar-accent: rgba(212,176,97,0.14);
+  --sidebar-accent-foreground: var(--rlk-gold-soft);
+  --sidebar-border: var(--rlk-ink-2);
+  --sidebar-ring: var(--rlk-gold-line);
+  color-scheme: light;
 }
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.145 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.145 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.985 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.396 0.141 25.723);
-  --destructive-foreground: oklch(0.637 0.237 25.331);
-  --border: oklch(0.269 0 0);
-  --input: oklch(0.269 0 0);
-  --ring: oklch(0.439 0 0);
-  --font-weight-medium: 500;
-  --font-weight-normal: 400;
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(0.269 0 0);
-  --sidebar-ring: oklch(0.439 0 0);
+/*
+ * The app used Tailwind's blue for buttons, links, focus rings and highlights
+ * (about 200 places). Re-pointing the blue scale to RLK gold switches all of
+ * them at once. Shades 500+ are dark enough for white text and for text on white.
+ */
+@theme {
+  --color-blue-50: #FBF7EC;
+  --color-blue-100: #F4ECD8;
+  --color-blue-200: #E9DBB5;
+  --color-blue-300: #D4B061;
+  --color-blue-400: #B08C2E;
+  --color-blue-500: #8A6A1F;
+  --color-blue-600: #75591A;
+  --color-blue-700: #5E4714;
+  --color-blue-800: #4A3810;
+  --color-blue-900: #33270B;
+  --color-blue-950: #221A07;
+  --font-sans: "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
 @theme inline {
@@ -126,6 +133,7 @@
 
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-ui);
   }
 
   /**

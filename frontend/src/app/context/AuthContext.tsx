@@ -115,8 +115,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setCurrentUser(user);
       setPermissions(perms);
     } catch (err: any) {
-      setError(err?.message || "Login failed. Please check your credentials.");
+      // clear the half-finished session FIRST, then show the message
+      // (logout() resets the error, so the old order hid it)
       logout();
+      setError(err?.message || "Login failed. Please check your credentials.");
       throw err;
     } finally {
       setLoading(false);

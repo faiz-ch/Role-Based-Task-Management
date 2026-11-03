@@ -14,7 +14,7 @@ import { roleNeedsDepartments } from "../utils/roleAccess";
 
 const COLOR_SWATCHES = [
   { name: "purple", value: "#a855f7", bg: "bg-purple-100", text: "text-purple-600" },
-  { name: "blue", value: "#3b82f6", bg: "bg-blue-100", text: "text-blue-600" },
+  { name: "blue", value: "#B08C2E", bg: "bg-blue-100", text: "text-blue-600" },
   { name: "green", value: "#10b981", bg: "bg-emerald-100", text: "text-emerald-600" },
   { name: "orange", value: "#f97316", bg: "bg-orange-100", text: "text-orange-600" },
   { name: "red", value: "#ef4444", bg: "bg-red-100", text: "text-red-600" },
@@ -280,7 +280,7 @@ export function RoleDetailPage() {
           </div>
           <button
             onClick={openEditDialog}
-            className="flex items-center gap-2 px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+            className="flex items-center gap-2 px-4 py-2 bg-[#15171C] text-white text-sm font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer"
           >
             <Edit2 size={16} />
             Edit Role
@@ -572,7 +572,7 @@ export function RoleDetailPage() {
               </button>
               <button
                 onClick={handleSaveEdit}
-                className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+                className="px-4 py-2 bg-[#15171C] text-white text-sm font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer"
               >
                 Save Changes
               </button>

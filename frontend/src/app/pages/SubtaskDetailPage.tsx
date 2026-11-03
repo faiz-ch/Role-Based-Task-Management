@@ -320,7 +320,7 @@ export function SubtaskDetailPage() {
                   canSubmitForReview() ? (
                     <button
                       onClick={handleSubmitForReview}
-                      className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+                      className="px-4 py-2 bg-[#15171C] text-white text-sm font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer"
                     >
                       Submit for review
                     </button>
@@ -402,7 +402,7 @@ export function SubtaskDetailPage() {
                     <button
                       onClick={handleReschedule}
                       disabled={!rescheduleComment.trim()}
-                      className="mt-2 w-full px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="mt-2 w-full px-4 py-2 bg-[#15171C] text-white text-sm font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Confirm reschedule
                     </button>
@@ -437,7 +437,7 @@ export function SubtaskDetailPage() {
                 {isSubtaskAssignee() && (
                   <button
                     onClick={() => setShowNewReport(true)}
-                    className="flex items-center gap-1.5 px-2 py-1 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer"
+                    className="flex items-center gap-1.5 px-2 py-1 bg-[#15171C] text-white text-xs font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer"
                   >
                     <Plus size={10} />
                   </button>
@@ -476,7 +476,7 @@ export function SubtaskDetailPage() {
                   <h2 className="text-sm font-semibold text-foreground">Attachments</h2>
                 </div>
                 {(isSubtaskAssignee() || canManageSubtask()) && (
-                  <label className="flex items-center gap-1.5 px-2 py-1 bg-[#0C1022] text-white text-xs font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer">
+                  <label className="flex items-center gap-1.5 px-2 py-1 bg-[#15171C] text-white text-xs font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer">
                     <Plus size={10} />
                     <input
                       type="file"
@@ -652,7 +652,7 @@ export function SubtaskDetailPage() {
             <button
               onClick={handleCreateReport}
               disabled={!reportContent.trim()}
-              className="px-4 py-2 bg-[#0C1022] text-white text-sm font-semibold rounded-lg hover:bg-[#1a2240] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2 bg-[#15171C] text-white text-sm font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Submit Report
             </button>
