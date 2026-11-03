@@ -37,11 +37,13 @@ async def zoom_webhook(request: Request, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
     event_type = payload.get("event", "")
-    event_ts = payload.get("event_ts")
+    # Zoom puts the event details under "payload":
+    #   {"event": "...", "event_ts": 1700000000000, "payload": {"plainToken": ...} or {"object": {...}}}
+    event_data = payload.get("payload") or {}
 
-    # URL validation challenge
+    # URL validation challenge (Zoom "Validate" button)
     if event_type == "endpoint.url_validation":
-        plain_token = payload.get("plainToken", "")
+        plain_token = event_data.get("plainToken") or payload.get("plainToken", "")
         if not plain_token:
             raise HTTPException(status_code=400, detail="Missing plainToken")
 
@@ -57,29 +59,41 @@ async def zoom_webhook(request: Request, background_tasks: BackgroundTasks):
     if not verify_webhook_signature(raw_body, timestamp, signature):
         raise HTTPException(status_code=403, detail="Invalid signature")
 
-    # Reject old timestamps (5 minutes)
+    # Reject old requests (5 minutes). The x-zm-request-timestamp header is in
+    # SECONDS (and is the value covered by the signature); event_ts in the body
+    # is in MILLISECONDS, so it is only a fallback.
     try:
-        event_time = datetime.fromtimestamp(int(event_ts), tz=timezone.utc)
-        if datetime.now(timezone.utc) - event_time > timedelta(minutes=5):
-            raise HTTPException(status_code=403, detail="Timestamp too old")
-    except (ValueError, TypeError):
+        ts = int(timestamp) if timestamp else int(payload.get("event_ts")) // 1000
+        event_time = datetime.fromtimestamp(ts, tz=timezone.utc)
+    except (ValueError, TypeError, OverflowError, OSError):
         raise HTTPException(status_code=400, detail="Invalid timestamp")
+    if abs(datetime.now(timezone.utc) - event_time) > timedelta(minutes=5):
+        raise HTTPException(status_code=403, detail="Timestamp too old")
 
-    # Handle events
+    # Handle events (handlers receive the "payload" part, which holds "object")
     if event_type == "meeting.started":
-        background_tasks.add_task(_handle_meeting_started, payload)
+        background_tasks.add_task(_handle_meeting_started, event_data)
     elif event_type == "meeting.ended":
-        background_tasks.add_task(_handle_meeting_ended, payload)
+        background_tasks.add_task(_handle_meeting_ended, event_data)
     elif event_type == "recording.completed":
-        background_tasks.add_task(_handle_recording_completed, payload)
+        background_tasks.add_task(_handle_recording_completed, event_data)
 
     return {"status": "ok"}
+
+
+def _meeting_id(event_data: dict) -> int | None:
+    """Zoom sends the meeting id as a number or as text; the database column is a number."""
+    raw = (event_data.get("object") or {}).get("id")
+    try:
+        return int(raw) if raw not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
 
 
 async def _handle_meeting_started(payload: dict) -> None:
     """Handle meeting.started event."""
     async with AsyncSessionLocal() as db:
-        zoom_meeting_id = payload.get("object", {}).get("id")
+        zoom_meeting_id = _meeting_id(payload)
         if not zoom_meeting_id:
             return
 
@@ -98,7 +112,7 @@ async def _handle_meeting_started(payload: dict) -> None:
 async def _handle_meeting_ended(payload: dict) -> None:
     """Handle meeting.ended event."""
     async with AsyncSessionLocal() as db:
-        zoom_meeting_id = payload.get("object", {}).get("id")
+        zoom_meeting_id = _meeting_id(payload)
         meeting_uuid = payload.get("object", {}).get("uuid")
         if not zoom_meeting_id or not meeting_uuid:
             return
@@ -139,7 +153,7 @@ async def _schedule_sync_with_retries(meeting_id: int) -> None:
 async def _handle_recording_completed(payload: dict) -> None:
     """Handle recording.completed event."""
     async with AsyncSessionLocal() as db:
-        zoom_meeting_id = payload.get("object", {}).get("id")
+        zoom_meeting_id = _meeting_id(payload)
         if not zoom_meeting_id:
             return
 
