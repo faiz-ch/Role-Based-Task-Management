@@ -10,11 +10,13 @@ import {
   Menu,
   Bell,
   FolderKanban,
+  UserCircle,
 } from "lucide-react";
 import { Page } from "../types";
 import { useAuth } from "../context/AuthContext";
 import { InstitutionsFooter } from "./InstitutionsFooter";
 import { toast } from "sonner";
+import { ProfileDialog } from "./ProfileDialog";
 
 const NAV: {
   id: Page;
@@ -70,6 +72,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const headerHidden = useHideOnScroll(scrollRef, location.pathname, !!currentUser);
 
@@ -134,13 +137,15 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
         <div className="rlk-me">
-          <span className="rlk-initials rlk-initials--gold" aria-hidden="true">{me}</span>
-          {!collapsed && (
-            <div className="rlk-me__text">
-              <span className="rlk-me__name">{currentUser.name}</span>
-              <span className="rlk-me__role">{roleName}</span>
-            </div>
-          )}
+          <button type="button" className="rlk-me__open" onClick={() => setProfileOpen(true)} aria-label="Open my profile" title="My Profile">
+            <span className="rlk-initials rlk-initials--gold" aria-hidden="true">{me}</span>
+            {!collapsed && (
+              <span className="rlk-me__text">
+                <span className="rlk-me__name">{currentUser.name}</span>
+                <span className="rlk-me__role">{roleName}</span>
+              </span>
+            )}
+          </button>
           {!collapsed && (
             <button type="button" onClick={logout} aria-label="Sign out" title="Sign out" className="rlk-iconbtn rlk-iconbtn--dark">
               <LogOut size={18} aria-hidden="true" />
@@ -164,10 +169,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <button type="button" aria-label="Notifications" className="rlk-iconbtn">
               <Bell size={19} aria-hidden="true" />
             </button>
-            <div className="rlk-topbar__me">
+            <button type="button" className="rlk-topbar__me" onClick={() => setProfileOpen(true)} aria-label="My Profile" title="My Profile">
               <span className="rlk-initials rlk-initials--ink" aria-hidden="true">{me}</span>
               <span>{currentUser.name}</span>
-            </div>
+            </button>
           </div>
         </header>
 
@@ -218,6 +223,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   <div style={{ fontSize: 14, fontWeight: 800 }}>{currentUser.name}</div>
                   <div style={{ fontSize: 12.5, color: "var(--rlk-muted)" }}>{roleName}</div>
                 </div>
+                <button type="button" role="menuitem" className="rlk-menu__btn" onClick={() => { setMenuOpen(false); setProfileOpen(true); }}>
+                  <UserCircle size={16} aria-hidden="true" /> My Profile
+                </button>
                 <button type="button" role="menuitem" className="rlk-menu__btn" onClick={logout}>
                   <LogOut size={16} aria-hidden="true" /> Sign out
                 </button>
@@ -230,6 +238,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <InstitutionsFooter />
         </div>
       </div>
+      {profileOpen && <ProfileDialog onClose={() => setProfileOpen(false)} />}
     </div>
   );
 }

@@ -44,10 +44,20 @@ export function mapUser(u: any): UserType {
     name: u.name,
     email: u.email,
     active: u.is_active,
+    employeeCode: u.employee_code ?? null,
+    joiningDate: u.joining_date ?? null,
     role: u.role ? mapRole(u.role) : null,
+    area: u.area ? { id: u.area.id, name: u.area.name, code: u.area.code } : null,
+    station: u.station ? { id: u.station.id, name: u.station.name, code: u.station.code, areaId: u.station.area_id } : null,
     department: u.department ? mapDepartmentBrief(u.department) : null,
+    division: u.division ? { id: u.division.id, name: u.division.name } : null,
     manageAllDepartments: u.manage_all_departments || false,
+    managedAreas: Array.isArray(u.managed_areas) ? u.managed_areas.map((a: any) => ({ id: a.id, name: a.name, code: a.code })) : [],
+    managedStations: Array.isArray(u.managed_stations)
+      ? u.managed_stations.map((st: any) => ({ id: st.id, name: st.name, code: st.code, areaId: st.area_id }))
+      : [],
     managedDepartments: Array.isArray(u.managed_departments) ? u.managed_departments.map(mapDepartmentBrief) : [],
+    scopeDepartmentIds: Array.isArray(u.scope_department_ids) ? u.scope_department_ids : [],
     extraAssignableRoles: Array.isArray(u.extra_assignable_roles)
       ? u.extra_assignable_roles.map((r: any) => ({ id: r.id, name: r.name }))
       : [],
@@ -55,6 +65,33 @@ export function mapUser(u: any): UserType {
     manager: u.manager ? { id: u.manager.id, name: u.manager.name, email: u.manager.email } : null,
     hasAvatar: u.has_avatar || false,
   };
+}
+
+/** Phase 2 fields, sent as-is when present (null clears). */
+export type PlacementFields = {
+  employee_code?: string | null;
+  joining_date?: string | null;
+  area_id?: number | null;
+  station_id?: number | null;
+  division_id?: number | null;
+  managed_area_ids?: number[];
+  managed_station_ids?: number[];
+};
+
+function pickPlacement(data: PlacementFields): any {
+  const out: any = {};
+  for (const k of ["employee_code", "joining_date", "area_id", "station_id", "division_id", "managed_area_ids", "managed_station_ids"] as const) {
+    if (data[k] !== undefined) out[k] = data[k];
+  }
+  return out;
+}
+
+/** My Profile: change my own password (I stay signed in). */
+export async function changeMyPassword(currentPassword: string, newPassword: string): Promise<void> {
+  await apiFetch("/auth/change-password", {
+    method: "POST",
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
 }
 
 export async function getUsers(): Promise<UserType[]> {
@@ -116,8 +153,8 @@ export async function updateUser(id: number, data: {
   manage_all_departments?: boolean;
   managed_department_ids?: number[];
   extra_assignable_role_ids?: number[];
-}): Promise<UserType> {
-  const payload: any = {};
+} & PlacementFields): Promise<UserType> {
+  const payload: any = pickPlacement(data);
   if (data.name !== undefined) payload.name = data.name;
   if (data.email !== undefined) payload.email = data.email;
   if (data.password !== undefined) payload.password = data.password;
@@ -154,8 +191,8 @@ export async function createUser(data: {
   managed_department_ids?: number[];
   extra_assignable_role_ids?: number[];
   sendWelcomeEmail?: boolean;
-}): Promise<UserType> {
-  const payload: any = {};
+} & PlacementFields): Promise<UserType> {
+  const payload: any = pickPlacement(data);
   if (data.name !== undefined) payload.name = data.name;
   if (data.email !== undefined) payload.email = data.email;
   if (data.password !== undefined) payload.password = data.password;

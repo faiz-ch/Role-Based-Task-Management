@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Edit2, AlertTriangle, Plus, Trash2, Search, Eye, EyeOff, RefreshCw, Upload } from "lucide-react";
-import { UserType, Role, Department } from "../types";
+import { UserType, Role, Department, Area, Station, Division } from "../types";
 import { getUsers, createUser, deleteUser, uploadAvatar } from "../api/users";
 import { getRoles, getAssignableRoles } from "../api/roles";
 import { useCachedQuery, qk, FRESH, EMPTY } from "../api/queries";
@@ -11,7 +11,10 @@ import { FldInput } from "../components/FldInput";
 import { FldSelect } from "../components/FldSelect";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router";
-import { DepartmentScopePicker } from "../components/DepartmentScopePicker";
+import { ScopeTreePicker } from "../components/ScopeTreePicker";
+import { PlacementPicker, PlacementValue, EMPTY_PLACEMENT, placementComplete } from "../components/PlacementPicker";
+import { getAreas, getStations, getDivisions } from "../api/organization";
+import { ScopeValue, EMPTY_SCOPE, effectiveDepartmentIds, grantableFor } from "../utils/orgScope";
 import { RoleChecklist } from "../components/RoleChecklist";
 import { roleNeedsDepartments, roleCanManageUsers, filterRolesByDepartments, pruneExtraRoles, managesAllDepartments } from "../utils/roleAccess";
 import { useErrorPopup } from "../utils/notify";
@@ -42,6 +45,10 @@ export function UsersPage() {
   const usersQ = useCachedQuery<UserType[]>(qk.users, getUsers, EMPTY, { staleTime: FRESH.NORMAL });
   const rolesQ = useCachedQuery<Role[]>(qk.roles, getRoles, EMPTY, { staleTime: FRESH.RARE });
   const departmentsQ = useCachedQuery<Department[]>(qk.departments, getDepartments, EMPTY, { staleTime: FRESH.RARE });
+  const areasQ = useCachedQuery<Area[]>(qk.areas, getAreas, EMPTY, { staleTime: FRESH.RARE });
+  const stationsQ = useCachedQuery<Station[]>(qk.stations, () => getStations(), EMPTY, { staleTime: FRESH.RARE });
+  const divisionsQ = useCachedQuery<Division[]>(qk.divisions, getDivisions, EMPTY, { staleTime: FRESH.RARE });
+  const areas = areasQ.data, stations = stationsQ.data, divisions = divisionsQ.data;
   // Roles the current user may hand out (GET /roles/assignable — base list + personal extras, dept-tag filtered)
   const assignableQ = useCachedQuery<Role[]>(qk.assignableRoles, getAssignableRoles, EMPTY, { staleTime: FRESH.RARE });
   const users = usersQ.data;
@@ -61,6 +68,18 @@ export function UsersPage() {
   const [filterDepartment, setFilterDepartment] = useState<string>("all");
   const [filterRole, setFilterRole] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [filterArea, setFilterArea] = useState<string>("all");
+  const [filterStation, setFilterStation] = useState<string>("all");
+  const [filterDivision, setFilterDivision] = useState<string>("all");
+  const [filterJoinedFrom, setFilterJoinedFrom] = useState("");
+  const [filterJoinedTo, setFilterJoinedTo] = useState("");
+  const filtersActive = [filterDepartment, filterRole, filterStatus, filterArea, filterStation, filterDivision].some((f) => f !== "all")
+    || !!filterJoinedFrom || !!filterJoinedTo || !!searchQuery;
+  function clearFilters() {
+    setSearchQuery(""); setFilterDepartment("all"); setFilterRole("all"); setFilterStatus("all");
+    setFilterArea("all"); setFilterStation("all"); setFilterDivision("all"); setFilterJoinedFrom(""); setFilterJoinedTo("");
+    setCurrentPage(1);
+  }
 
   // Selection state
   const [selectedUserIds, setSelectedUserIds] = useState<Set<number>>(new Set());
@@ -75,12 +94,15 @@ export function UsersPage() {
   const [createEmail, setCreateEmail] = useState("");
   const [createPassword, setCreatePassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [createDepartment, setCreateDepartment] = useState<string>("");
+  const [createCode, setCreateCode] = useState("");
+  const [createJoining, setCreateJoining] = useState("");
+  const [createPlacement, setCreatePlacement] = useState<PlacementValue>(EMPTY_PLACEMENT);
   const [createRole, setCreateRole] = useState<string>("");
   const [createActive, setCreateActive] = useState(true);
   const [createSendWelcome, setCreateSendWelcome] = useState(true);
-  const [createManageAll, setCreateManageAll] = useState(false);
-  const [createManagedIds, setCreateManagedIds] = useState<number[]>([]);
+  const [createScope, setCreateScope] = useState<ScopeValue>(EMPTY_SCOPE);
+  const createManageAll = createScope.manageAll;
+  const createManagedIds = effectiveDepartmentIds(createScope, stations);
   const [createExtraRoleIds, setCreateExtraRoleIds] = useState<number[]>([]);
   const [createExtrasNote, setCreateExtrasNote] = useState<string | null>(null);
   const setCreateError = useErrorPopup(); // → pop-up
@@ -93,8 +115,9 @@ export function UsersPage() {
   const [deleteConfirmUser, setDeleteConfirmUser] = useState<UserType | null>(null);
 
 
-  // Only someone who manages ALL departments may grant "All Departments"
-  const canGrantAllDepartments = managesAllDepartments(currentUser);
+  // What I may hand out (whole areas / stations / departments), and where I may place people
+  const grantable = grantableFor(currentUser, stations);
+  const placeableDeptIds = managesAllDepartments(currentUser) ? null : [...grantable.departmentIds];
 
   const selectedCreateRole = assignableRoles.find((r) => r.id === Number(createRole)) || null;
   // "Departments this user manages" only for roles with a department-based permission
@@ -115,16 +138,14 @@ export function UsersPage() {
     setCreateExtrasNote(null);
     const role = assignableRoles.find((r) => r.id === Number(value)) || null;
     // Clear sections that do not apply to the new role
-    if (!roleNeedsDepartments(role)) {
-      setCreateManageAll(false);
-      setCreateManagedIds([]);
-    }
+    if (!roleNeedsDepartments(role)) setCreateScope(EMPTY_SCOPE);
     if (!roleCanManageUsers(role)) setCreateExtraRoleIds([]);
   }
 
-  function handleCreateScopeChange(manageAll: boolean, ids: number[]) {
-    setCreateManageAll(manageAll);
-    setCreateManagedIds(ids);
+  function handleCreateScopeChange(scope: ScopeValue) {
+    setCreateScope(scope);
+    const manageAll = scope.manageAll;
+    const ids = effectiveDepartmentIds(scope, stations);
     const { kept, removedNames } = pruneExtraRoles(createExtraRoleIds, createExtraLockOne, manageAll, ids);
     setCreateExtraRoleIds(kept);
     setCreateExtrasNote(
@@ -136,10 +157,19 @@ export function UsersPage() {
 
   // Filter users based on search and filters
   const filteredUsers = users.filter((user) => {
-    const matchesSearch = 
-      searchQuery === "" || 
-      user.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      user.email.toLowerCase().includes(searchQuery.toLowerCase());
+    const q = searchQuery.trim().toLowerCase();
+    const matchesSearch =
+      q === "" ||
+      user.name.toLowerCase().includes(q) ||
+      user.email.toLowerCase().includes(q) ||
+      (user.employeeCode ?? "").includes(q);
+    const matchesPlace =
+      (filterArea === "all" || user.area?.id === Number(filterArea)) &&
+      (filterStation === "all" || user.station?.id === Number(filterStation)) &&
+      (filterDivision === "all" || (filterDivision === "none" ? !user.division : user.division?.id === Number(filterDivision)));
+    const matchesJoined =
+      (!filterJoinedFrom || (!!user.joiningDate && user.joiningDate >= filterJoinedFrom)) &&
+      (!filterJoinedTo || (!!user.joiningDate && user.joiningDate <= filterJoinedTo));
     
     const matchesDepartment = 
       filterDepartment === "all" || 
@@ -154,7 +184,7 @@ export function UsersPage() {
       (filterStatus === "active" && user.active) ||
       (filterStatus === "inactive" && !user.active);
     
-    return matchesSearch && matchesDepartment && matchesRole && matchesStatus;
+    return matchesSearch && matchesDepartment && matchesRole && matchesStatus && matchesPlace && matchesJoined;
   });
 
   // Pagination
@@ -171,8 +201,20 @@ export function UsersPage() {
   const noDepartment = users.filter((u) => !u.department).length;
 
   async function handleCreateUser() {
+    if (!/^\d{1,20}$/.test(createCode.trim())) {
+      setCreateError("Employee Code is required and must contain numbers only.");
+      return;
+    }
     if (!createName.trim() || !createEmail.trim() || !createPassword) {
-      setCreateError("All fields are required.");
+      setCreateError("Full Name, Email and Password are required.");
+      return;
+    }
+    if (!placementComplete(createPlacement)) {
+      setCreateError("Please select the Area, Station and Department where this person works.");
+      return;
+    }
+    if (!createRole) {
+      setCreateError("Please select a role.");
       return;
     }
     if (createPassword.length < 8) {
@@ -183,16 +225,22 @@ export function UsersPage() {
       setCreateError(null);
       setError(null);
       const roleId = createRole ? Number(createRole) : undefined;
-      const deptId = createDepartment ? Number(createDepartment) : undefined;
       const newUser = await createUser({
         name: createName.trim(),
         email: createEmail.trim().toLowerCase(),
         password: createPassword,
+        employee_code: createCode.trim(),
+        joining_date: createJoining || null,
         role_id: roleId,
-        department_id: deptId,
+        area_id: createPlacement.areaId,
+        station_id: createPlacement.stationId,
+        department_id: createPlacement.departmentId!,
+        division_id: createPlacement.divisionId,
         isActive: createActive,
         manage_all_departments: showCreateScope && createManageAll,
-        managed_department_ids: showCreateScope && !createManageAll ? createManagedIds : [],
+        managed_area_ids: showCreateScope && !createManageAll ? createScope.areaIds : [],
+        managed_station_ids: showCreateScope && !createManageAll ? createScope.stationIds : [],
+        managed_department_ids: showCreateScope && !createManageAll ? createScope.departmentIds : [],
         extra_assignable_role_ids: showCreateExtras
           ? createExtraRoleIds.filter((id) => createExtraCandidates.some((r) => r.id === id))
           : [],
@@ -225,17 +273,16 @@ export function UsersPage() {
     setCreateEmail("");
     setCreatePassword("");
     setShowPassword(false);
-    setCreateDepartment("");
+    setCreateCode("");
+    setCreateJoining("");
+    setCreatePlacement(EMPTY_PLACEMENT);
     setCreateRole("");
     setCreateActive(true);
     setCreateSendWelcome(true);
-    setCreateManageAll(false);
-    setCreateManagedIds([]);
+    setCreateScope(EMPTY_SCOPE);
     setCreateExtraRoleIds([]);
     setCreateExtrasNote(null);
-    setCreateError(null);
     setCreateAvatarFile(null);
-    setAvatarUploadError(null);
   }
 
   async function handleDelete(user: UserType) {
@@ -334,29 +381,74 @@ export function UsersPage() {
       </div>
 
       {/* Filters and Search */}
-      <div className="bg-white rounded-xl border border-border p-4">
-        <div className="flex flex-col lg:flex-row gap-4">
+      <div className="bg-white rounded-xl border border-border p-4 space-y-3">
+        <div className="flex flex-col sm:flex-row gap-3">
           <div className="flex-1 relative">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <input
               type="text"
-              placeholder="Search by name or email..."
+              aria-label="Search users"
+              placeholder="Search by name, email or employee code..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
               className="w-full pl-10 pr-4 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-foreground"
             />
           </div>
+          {filtersActive && (
+            <button type="button" onClick={clearFilters} className="px-3 py-2 text-sm border border-border rounded-lg hover:bg-muted cursor-pointer">
+              Clear filters
+            </button>
+          )}
+          {canManage && (
+            <button
+              onClick={() => setShowCreateDialog(true)}
+              className="flex items-center justify-center gap-2 px-4 py-2 bg-[#15171C] text-white text-sm font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer"
+            >
+              <Plus size={16} />
+              Add User
+            </button>
+          )}
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3" onChange={() => setCurrentPage(1)}>
+          <FldSelect
+            label="Area"
+            aria-label="Filter by area"
+            options={[{ value: "all", label: "All Areas" }, ...areas.map((a) => ({ value: a.id.toString(), label: a.name }))]}
+            value={filterArea}
+            onChange={(e) => { setFilterArea(e.target.value); setFilterStation("all"); }}
+          />
+          <FldSelect
+            label="Station"
+            aria-label="Filter by station"
+            options={[
+              { value: "all", label: "All Stations" },
+              ...stations.filter((st) => filterArea === "all" || st.area.id === Number(filterArea)).map((st) => ({ value: st.id.toString(), label: st.code || st.name })),
+            ]}
+            value={filterStation}
+            onChange={(e) => setFilterStation(e.target.value)}
+          />
           <FldSelect
             label="Department"
+            aria-label="Filter by department"
             options={[
               { value: "all", label: "All Departments" },
-              ...departments.map((d) => ({ value: d.id.toString(), label: d.name })),
+              ...departments
+                .filter((d) => filterStation === "all" || stations.find((st) => st.id === Number(filterStation))?.departments.some((x) => x.id === d.id))
+                .map((d) => ({ value: d.id.toString(), label: d.name })),
             ]}
             value={filterDepartment}
             onChange={(e) => setFilterDepartment(e.target.value)}
           />
           <FldSelect
+            label="Division"
+            aria-label="Filter by division"
+            options={[{ value: "all", label: "All" }, { value: "none", label: "No division" }, ...divisions.map((d) => ({ value: d.id.toString(), label: d.name }))]}
+            value={filterDivision}
+            onChange={(e) => setFilterDivision(e.target.value)}
+          />
+          <FldSelect
             label="Role"
+            aria-label="Filter by role"
             options={[
               { value: "all", label: "All Roles" },
               ...roles.map((r) => ({ value: r.id.toString(), label: r.name })),
@@ -366,6 +458,7 @@ export function UsersPage() {
           />
           <FldSelect
             label="Status"
+            aria-label="Filter by status"
             options={[
               { value: "all", label: "All" },
               { value: "active", label: "Active" },
@@ -374,16 +467,20 @@ export function UsersPage() {
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
           />
-          {canManage && (
-            <button
-              onClick={() => setShowCreateDialog(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-[#15171C] text-white text-sm font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer self-end"
-            >
-              <Plus size={16} />
-              Add User
-            </button>
-          )}
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Joined from</span>
+            <input type="date" aria-label="Joined from" value={filterJoinedFrom} onChange={(e) => setFilterJoinedFrom(e.target.value)}
+              className="px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground" />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Joined to</span>
+            <input type="date" aria-label="Joined to" value={filterJoinedTo} onChange={(e) => setFilterJoinedTo(e.target.value)}
+              className="px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground" />
+          </label>
         </div>
+        <p className="text-xs text-muted-foreground" data-testid="users-count">
+          Showing {filteredUsers.length} of {users.length} users
+        </p>
       </div>
 
       {/* Users Table */}
@@ -400,11 +497,12 @@ export function UsersPage() {
                     className="w-4 h-4 accent-blue-600"
                   />
                 </th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Code</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">User</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Email</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Role</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Department</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Joined On</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Joining Date</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Status</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Actions</th>
               </tr>
@@ -427,6 +525,7 @@ export function UsersPage() {
                       className="w-4 h-4 accent-blue-600"
                     />
                   </td>
+                  <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{user.employeeCode || "—"}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
                       {user.hasAvatar ? (
@@ -456,8 +555,9 @@ export function UsersPage() {
                   </td>
                   <td className="px-4 py-3 text-sm text-muted-foreground">
                     {user.department?.name || "—"}
+                    {user.station && <span className="block text-xs">{user.station.code || user.station.name}</span>}
                   </td>
-                  <td className="px-4 py-3 text-sm text-muted-foreground">{fmtDate(user.createdAt)}</td>
+                  <td className="px-4 py-3 text-sm text-muted-foreground">{user.joiningDate ? fmtDate(user.joiningDate) : "—"}</td>
                   <td className="px-4 py-3">
                     {user.active ? (
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -501,7 +601,7 @@ export function UsersPage() {
               ))}
               {paginatedUsers.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                  <td colSpan={9} className="px-4 py-8 text-center text-sm text-muted-foreground">
                     No users found
                   </td>
                 </tr>
@@ -543,7 +643,7 @@ export function UsersPage() {
             resetCreateForm();
           }}
           title="Create New User"
-          size="md"
+          size="lg"
         >
           <div className="space-y-4">
             {createError && (
@@ -552,6 +652,35 @@ export function UsersPage() {
                 <span className="text-red-700">{createError}</span>
               </div>
             )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="cu-code" className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                  Employee Code <span className="text-red-500">*</span>
+                </label>
+                <input
+                  id="cu-code"
+                  inputMode="numeric"
+                  maxLength={20}
+                  placeholder="Numbers only"
+                  value={createCode}
+                  onChange={(e) => setCreateCode(e.target.value.replace(/\D/g, ""))}
+                  className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-foreground"
+                />
+              </div>
+              <div>
+                <label htmlFor="cu-joining" className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                  Joining Date
+                </label>
+                <input
+                  id="cu-joining"
+                  type="date"
+                  value={createJoining}
+                  onChange={(e) => setCreateJoining(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-foreground"
+                />
+              </div>
+            </div>
 
             <FldInput
               label="Full Name"
@@ -604,15 +733,13 @@ export function UsersPage() {
               )}
             </div>
 
-            <FldSelect
-              label="Department"
-              options={[
-                { value: "", label: "Select department" },
-                ...departments.map((d) => ({ value: d.id.toString(), label: d.name })),
-              ]}
-              value={createDepartment}
-              onChange={(e) => setCreateDepartment(e.target.value)}
-              required
+            <PlacementPicker
+              areas={areas}
+              stations={stations}
+              divisions={divisions}
+              value={createPlacement}
+              onChange={setCreatePlacement}
+              allowedDepartmentIds={placeableDeptIds}
             />
 
             <FldSelect
@@ -628,12 +755,13 @@ export function UsersPage() {
 
             {/* Department scope lives on the user — only for roles with a department-based permission */}
             {showCreateScope && (
-              <DepartmentScopePicker
+              <ScopeTreePicker
+                areas={areas}
+                stations={stations}
                 departments={departments}
-                manageAll={createManageAll}
-                selectedIds={createManagedIds}
-                onChange={({ manageAll, ids }) => handleCreateScopeChange(manageAll, ids)}
-                canGrantAll={canGrantAllDepartments}
+                value={createScope}
+                onChange={handleCreateScopeChange}
+                grantable={grantable}
               />
             )}
 

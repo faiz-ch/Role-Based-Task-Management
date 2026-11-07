@@ -1,5 +1,6 @@
 from pydantic import BaseModel, EmailStr, field_validator
-from datetime import datetime
+from datetime import datetime, date
+import re
 from app.schemas.role import PermissionOut
 
 
@@ -11,6 +12,34 @@ class DepartmentBrief(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class OrgBrief(BaseModel):
+    id: int
+    name: str
+    code: str | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class StationBrief(OrgBrief):
+    area_id: int
+
+
+_CODE_RE = re.compile(r"^\d{1,20}$")
+
+
+def clean_employee_code(v):
+    """Numbers only (leading zeros kept), up to 20 digits. Blank -> None."""
+    if v is None:
+        return None
+    v = str(v).strip()
+    if not v:
+        return None
+    if not _CODE_RE.match(v):
+        raise ValueError("Employee Code must contain numbers only (up to 20 digits)")
+    return v
 
 
 class RoleBriefMinimal(BaseModel):
@@ -54,10 +83,20 @@ class UserOut(BaseModel):
     name: str
     email: EmailStr
     is_active: bool
+    employee_code: str | None = None
+    joining_date: date | None = None
     role: RoleBrief | None = None
+    # Placement (where the person works)
+    area: OrgBrief | None = None
+    station: StationBrief | None = None
     department: DepartmentBrief | None = None
+    division: OrgBrief | None = None
+    # What the person manages
     manage_all_departments: bool = False
+    managed_areas: list[OrgBrief] = []
+    managed_stations: list[StationBrief] = []
     managed_departments: list[DepartmentBrief] = []
+    scope_department_ids: list[int] = []  # everything the above covers, as department ids
     extra_assignable_roles: list[RoleBriefMinimal] = []
     created_at: datetime
     manager: UserBrief | None = None
@@ -79,11 +118,23 @@ class UserUpdate(BaseModel):
     email: EmailStr | None = None
     password: str | None = None
     is_active: bool | None = None
+    employee_code: str | None = None
+    joining_date: date | None = None
+    area_id: int | None = None
+    station_id: int | None = None
     department_id: int | None = None
+    division_id: int | None = None
     manager_id: int | None = None
     manage_all_departments: bool | None = None
+    managed_area_ids: list[int] | None = None
+    managed_station_ids: list[int] | None = None
     managed_department_ids: list[int] | None = None
     extra_assignable_role_ids: list[int] | None = None
+
+    @field_validator("employee_code", mode="before")
+    @classmethod
+    def _code(cls, v):
+        return clean_employee_code(v)
 
     @field_validator("password")
     @classmethod
@@ -105,13 +156,29 @@ class UserCreate(BaseModel):
     name: str
     email: EmailStr
     password: str
+    employee_code: str
+    joining_date: date | None = None
     role_id: int | None = None
-    department_id: int | None = None
+    # Placement: Area, Station and Department are required; Division is optional
+    area_id: int
+    station_id: int
+    department_id: int
+    division_id: int | None = None
     is_active: bool = True
     manage_all_departments: bool = False
+    managed_area_ids: list[int] = []
+    managed_station_ids: list[int] = []
     managed_department_ids: list[int] = []
     extra_assignable_role_ids: list[int] = []
     send_welcome_email: bool = True
+
+    @field_validator("employee_code", mode="before")
+    @classmethod
+    def _code_required(cls, v):
+        v = clean_employee_code(v)
+        if v is None:
+            raise ValueError("Employee Code is required")
+        return v
 
     @field_validator("password")
     @classmethod
@@ -134,3 +201,14 @@ class UserPerformanceOut(BaseModel):
     projects: PerformanceCategoryOut
     tasks: PerformanceCategoryOut
     subtasks: PerformanceCategoryOut
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def new_min_length(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("New password must be at least 8 characters")
+        return v

@@ -221,7 +221,18 @@ async def update_department(
     # Track changed fields for activity log
     changed_fields = []
     if payload.station_ids is not None:
-        department.stations = await _load_stations(db, payload.station_ids)
+        new_stations = await _load_stations(db, payload.station_ids)
+        keep = {st.id for st in new_stations}
+        for st in department.stations:
+            if st.id not in keep:
+                n = (await db.execute(select(func.count(User.id)).where(
+                    User.department_id == department.id, User.station_id == st.id))).scalar() or 0
+                if n:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"{n} person(s) work in '{department.name}' at '{st.name}'. Move them first, then remove the station.",
+                    )
+        department.stations = new_stations
         changed_fields.append("stations")
     if payload.name is not None and payload.name != department.name:
         clash = await db.execute(select(Department.id).where(Department.name == payload.name, Department.id != department_id))
@@ -307,7 +318,18 @@ async def delete_department(
             raise HTTPException(status_code=404, detail="Target department for users not found")
         if payload.move_users_to == department_id:
             raise HTTPException(status_code=400, detail="Cannot move users to the same department being deleted")
-        # Reassign users
+        # Reassign users. Their placement must stay valid: the new department
+        # has to be at each person's station.
+        target_station_ids = {st.id for st in (await db.execute(
+            select(Station).join(Station.departments).where(Department.id == payload.move_users_to)
+        )).scalars().all()}
+        stuck = [u.name for u in users if u.station_id is not None and u.station_id not in target_station_ids]
+        if stuck:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{target_dept.name}' is not at the station of: {', '.join(stuck[:5])}"
+                       f"{' and others' if len(stuck) > 5 else ''}. Choose a department at their station, or move them first.",
+            )
         for user in users:
             user.department_id = payload.move_users_to
 

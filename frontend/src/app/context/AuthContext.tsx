@@ -16,6 +16,8 @@ interface AuthContextType {
   register: (name: string, email: string, password: string) => Promise<void>;
   logout: () => void;
   clearError: () => void;
+  /** replace the signed-in user's data (e.g. after changing the profile photo) */
+  setCurrentUser: (u: UserType) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -158,6 +160,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         register,
         logout,
         clearError,
+        setCurrentUser,
       }}
     >
       {children}

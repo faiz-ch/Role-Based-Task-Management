@@ -100,6 +100,11 @@ async def update_area(area_id: int, payload: AreaUpdate, db: AsyncSession = Depe
     return _area_out(await _get_area(db, area_id))
 
 
+async def _people_count(db: AsyncSession, *conds) -> int:
+    from sqlalchemy import func as _f
+    return (await db.execute(select(_f.count(User.id)).where(*conds))).scalar() or 0
+
+
 @router.delete("/areas/{area_id}", status_code=204)
 async def delete_area(area_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(require_permission(MANAGE))):
     area = await _get_area(db, area_id)
@@ -195,8 +200,20 @@ async def update_station(station_id: int, payload: StationUpdate, db: AsyncSessi
     if payload.area_id is not None and payload.area_id != st.area_id:
         await _load_area(db, payload.area_id)
         st.area_id = payload.area_id
+        # people who work at this station move with it
+        from sqlalchemy import update as _upd
+        await db.execute(_upd(User).where(User.station_id == st.id).values(area_id=payload.area_id))
     if payload.department_ids is not None:
-        st.departments = await _load_departments(db, payload.department_ids)
+        new_depts = await _load_departments(db, payload.department_ids)
+        removed = [d for d in st.departments if d.id not in {x.id for x in new_depts}]
+        for d in removed:
+            n = await _people_count(db, User.station_id == st.id, User.department_id == d.id)
+            if n:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{n} person(s) work in '{d.name}' at '{st.name}'. Move them to another department first.",
+                )
+        st.departments = new_depts
     if payload.is_active is not None:
         st.is_active = payload.is_active
     await log_activity(db, user.id, "station_updated", "station", st.id, detail=f"Updated station '{st.name}'")
@@ -207,6 +224,9 @@ async def update_station(station_id: int, payload: StationUpdate, db: AsyncSessi
 @router.delete("/stations/{station_id}", status_code=204)
 async def delete_station(station_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(require_permission(MANAGE))):
     st = await _get_station(db, station_id)
+    n = await _people_count(db, User.station_id == st.id)
+    if n:
+        raise HTTPException(status_code=400, detail=f"{n} person(s) work at '{st.name}'. Move them to another station first.")
     name = st.name
     await db.delete(st)  # its department links are removed by the database
     await log_activity(db, user.id, "station_deleted", "station", station_id, detail=f"Deleted station '{name}'")
@@ -255,6 +275,9 @@ async def delete_division(division_id: int, db: AsyncSession = Depends(get_db), 
     div = await db.get(Division, division_id)
     if div is None:
         raise HTTPException(status_code=404, detail="Division not found")
+    n = await _people_count(db, User.division_id == div.id)
+    if n:
+        raise HTTPException(status_code=400, detail=f"{n} person(s) are in '{div.name}'. Change their division first.")
     name = div.name
     await db.delete(div)
     await log_activity(db, user.id, "division_deleted", "division", division_id, detail=f"Deleted division '{name}'")

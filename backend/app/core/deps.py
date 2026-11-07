@@ -24,6 +24,7 @@ from app.models.project import Project
 from app.models.task import Task
 from app.models.subtask import SubTask
 from app.models.department import Department
+from app.models.organization import Area, Station
 
 # tokenUrl is just used by the /docs page to know where to send a login
 # request from its "Authorize" button — it doesn't affect real API calls.
@@ -42,7 +43,17 @@ def auth_load_options():
     """
     return [
         joinedload(User.role).selectinload(Role.permissions),
+        *scope_load_options(),
+    ]
+
+
+def scope_load_options():
+    """What get_scoped_department_ids() needs: managed areas/stations/departments,
+    down to the departments they cover."""
+    return [
         selectinload(User.managed_departments),
+        selectinload(User.managed_stations).selectinload(Station.departments),
+        selectinload(User.managed_areas).selectinload(Area.stations).selectinload(Station.departments),
     ]
 
 
@@ -58,7 +69,10 @@ def user_load_options():
         joinedload(User.role).selectinload(Role.assignable_roles),
         joinedload(User.department),
         joinedload(User.manager),
-        selectinload(User.managed_departments),
+        joinedload(User.area),
+        joinedload(User.station),
+        joinedload(User.division),
+        *scope_load_options(),
         selectinload(User.extra_assignable_roles),
     ]
 
@@ -158,7 +172,32 @@ def get_scoped_department_ids(user: User) -> set[int] | None:
     """
     if user.manage_all_departments or is_admin(user):
         return None
-    return {d.id for d in user.managed_departments}
+    return effective_department_ids(user.managed_areas, user.managed_stations, user.managed_departments)
+
+
+def effective_department_ids(areas, stations, departments) -> set[int]:
+    """A whole area covers all its stations; a whole station covers all its departments."""
+    ids = {d.id for d in departments}
+    for st in stations:
+        ids |= {d.id for d in st.departments}
+    for area in areas:
+        for st in area.stations:
+            ids |= {d.id for d in st.departments}
+    return ids
+
+
+def covers_area(user: User, area_id: int) -> bool:
+    """May this user hand out a whole area? (all-scope, or they manage that whole area)"""
+    if user.manage_all_departments or is_admin(user):
+        return True
+    return any(a.id == area_id for a in user.managed_areas)
+
+
+def covers_station(user: User, station) -> bool:
+    """May this user hand out a whole station? (whole area, or that whole station)"""
+    if covers_area(user, station.area_id):
+        return True
+    return any(s.id == station.id for s in user.managed_stations)
 
 
 def get_assignable_role_ids(user: User) -> set[int] | None:

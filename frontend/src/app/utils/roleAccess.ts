@@ -77,13 +77,13 @@ export function getEffectiveDepartmentIds(user: UserType | null | undefined, all
   if (!user) return [];
   return managesAllDepartments(user)
     ? allDepartments.map((d) => d.id)
-    : user.managedDepartments.map((d) => d.id);
+    : user.scopeDepartmentIds;
 }
 
 /** True if the user's department scope covers at least one of the given departments. */
 export function inDepartmentScope(user: UserType | null | undefined, departmentIds: number[] | undefined): boolean {
   if (!user) return false;
   if (managesAllDepartments(user)) return true;
-  const mine = new Set(user.managedDepartments.map((d) => d.id));
+  const mine = new Set(user.scopeDepartmentIds);
   return (departmentIds ?? []).some((id) => mine.has(id));
 }

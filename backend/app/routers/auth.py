@@ -11,11 +11,11 @@ from app.core.security import (
     decode_token,
 )
 from app.database import get_db
-from app.core.deps import user_load_options
+from app.core.deps import user_load_options, get_current_user
 from app.models.user import User
 from app.models.role import Role
 from app.schemas.auth import RegisterRequest, LoginRequest, RefreshRequest, TokenResponse
-from app.schemas.user import UserOut
+from app.schemas.user import UserOut, ChangePasswordRequest
 from app.services.activity_log import log_activity
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -93,3 +93,19 @@ async def refresh(payload: RefreshRequest, db: AsyncSession = Depends(get_db)):
         access_token=create_access_token(user.id),
         refresh_token=create_refresh_token(user.id),
     )
+
+
+@router.post("/change-password", status_code=204)
+async def change_password(
+    payload: ChangePasswordRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Any signed-in user can change their OWN password (My Profile). They stay signed in."""
+    if not verify_password(payload.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    if payload.current_password == payload.new_password:
+        raise HTTPException(status_code=400, detail="The new password must be different from the current one")
+    current_user.hashed_password = hash_password(payload.new_password)
+    await log_activity(db, current_user.id, "password_changed", "user", current_user.id, detail="Changed own password")
+    await db.commit()

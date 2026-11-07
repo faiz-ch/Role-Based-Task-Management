@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useParams, useNavigate, Link } from "react-router";
 import { Edit2, Trash2, MoreVertical, AlertTriangle, User, Briefcase, BarChart3, Clock, CheckCircle2, XCircle, Activity, Upload } from "lucide-react";
-import { UserType, Role, Department, UserPerformance } from "../types";
+import { UserType, Role, Department, UserPerformance, Area, Station, Division } from "../types";
 import { getUser, getUserPerformance, getUserActivity, updateUser, deleteUser, assignRole, uploadAvatar, deleteAvatar, getAvatarUrl } from "../api/users";
 import { getDepartments } from "../api/departments";
 import { getRoles, getAssignableRoles } from "../api/roles";
@@ -12,7 +12,10 @@ import { FldSelect } from "../components/FldSelect";
 import { FldInput } from "../components/FldInput";
 import { Av } from "../components/Av";
 import { useAuth } from "../context/AuthContext";
-import { DepartmentScopePicker } from "../components/DepartmentScopePicker";
+import { ScopeTreePicker } from "../components/ScopeTreePicker";
+import { PlacementPicker, PlacementValue, EMPTY_PLACEMENT, placementComplete } from "../components/PlacementPicker";
+import { getAreas, getStations, getDivisions } from "../api/organization";
+import { ScopeValue, EMPTY_SCOPE, scopeOf, effectiveDepartmentIds, grantableFor, describeScope } from "../utils/orgScope";
 import { RoleChecklist } from "../components/RoleChecklist";
 import { roleNeedsDepartments, roleCanManageUsers, filterRolesByDepartments, pruneExtraRoles, managesAllDepartments } from "../utils/roleAccess";
 import { useErrorPopup } from "../utils/notify";
@@ -51,6 +54,10 @@ function fmtDateTime(d: string) {
 
 type Tab = "overview" | "permissions" | "projects" | "activity";
 
+function placementOf(u: UserType): PlacementValue {
+  return { areaId: u.area?.id ?? null, stationId: u.station?.id ?? null, departmentId: u.department?.id ?? null, divisionId: u.division?.id ?? null };
+}
+
 export function UserDetailPage() {
   const { userId } = useParams<{ userId: string }>();
   const navigate = useNavigate();
@@ -65,6 +72,10 @@ export function UserDetailPage() {
     [...qk.user(uid), "activity"], () => getUserActivity(uid), EMPTY, { enabled: hasId });
   const departmentsQ = useCachedQuery<Department[]>(qk.departments, getDepartments, EMPTY, { staleTime: FRESH.RARE });
   const rolesQ = useCachedQuery<Role[]>(qk.roles, getRoles, EMPTY, { staleTime: FRESH.RARE });
+  const areasQ = useCachedQuery<Area[]>(qk.areas, getAreas, EMPTY, { staleTime: FRESH.RARE });
+  const stationsQ = useCachedQuery<Station[]>(qk.stations, () => getStations(), EMPTY, { staleTime: FRESH.RARE });
+  const divisionsQ = useCachedQuery<Division[]>(qk.divisions, getDivisions, EMPTY, { staleTime: FRESH.RARE });
+  const areas = areasQ.data, stations = stationsQ.data, divisions = divisionsQ.data;
   const allUsersQ = useCachedQuery<UserType[]>(qk.users, getUsers, EMPTY, { staleTime: FRESH.NORMAL });
   const assignableQ = useCachedQuery<Role[]>(qk.assignableRoles, getAssignableRoles, EMPTY, { staleTime: FRESH.RARE });
 
@@ -89,13 +100,14 @@ export function UserDetailPage() {
   const [editForm, setEditForm] = useState({
     name: "",
     email: "",
-    departmentId: "" as string,
+    employeeCode: "",
+    joiningDate: "",
+    placement: EMPTY_PLACEMENT as PlacementValue,
     roleId: "" as string,
     managerId: "" as string,
     active: true,
     password: "",
-    manageAllDepartments: false,
-    managedDepartmentIds: [] as number[],
+    scope: EMPTY_SCOPE as ScopeValue,
     extraRoleIds: [] as number[],
   });
   const [editAvatarFile, setEditAvatarFile] = useState<File | null>(null);
@@ -110,13 +122,14 @@ export function UserDetailPage() {
     setEditForm({
       name: user.name,
       email: user.email,
-      departmentId: user.department?.id?.toString() || "",
+      employeeCode: user.employeeCode ?? "",
+      joiningDate: user.joiningDate ?? "",
+      placement: placementOf(user),
       roleId: user.role?.id?.toString() || "",
       managerId: user.manager?.id?.toString() || "",
       active: user.active,
       password: "",
-      manageAllDepartments: user.manageAllDepartments,
-      managedDepartmentIds: user.managedDepartments.map(d => d.id),
+      scope: scopeOf(user),
       extraRoleIds: user.extraAssignableRoles.map(r => r.id),
     });
     setEditExtrasNote(null);
@@ -126,8 +139,12 @@ export function UserDetailPage() {
   // Filter out current user from manager options
   const managerOptions = allUsers.filter((u) => u.id !== Number(userId));
 
-  // Only someone who manages ALL departments may grant/remove "All Departments"
-  const canGrantAllDepartments = managesAllDepartments(currentUser);
+  // What I may hand out, and where I may place people
+  const grantable = grantableFor(currentUser, stations);
+  const canGrantAllDepartments = grantable.all;
+  const placeableDeptIds = grantable.all ? null : [...grantable.departmentIds];
+  const targetIsAdmin = !!user?.role?.isSystem; // the main Admin may stay without code / placement
+  const editManagedIds = effectiveDepartmentIds(editForm.scope, stations);
 
   // Role dropdown = roles I can assign (GET /roles/assignable). Keep the user's
   // current role visible even if I could not assign it myself.
@@ -151,7 +168,7 @@ export function UserDetailPage() {
     : [];
   // ...then only roles that fit the departments ticked above (general roles always fit)
   const editExtraCandidates = filterRolesByDepartments(
-    editExtraLockOne, editForm.manageAllDepartments, editForm.managedDepartmentIds
+    editExtraLockOne, editForm.scope.manageAll, editManagedIds
   );
 
   function handleEditRoleChange(value: string) {
@@ -161,14 +178,15 @@ export function UserDetailPage() {
       ...editForm,
       roleId: value,
       // Clear sections that do not apply to the new role
-      ...(roleNeedsDepartments(role) ? {} : { manageAllDepartments: false, managedDepartmentIds: [] }),
+      ...(roleNeedsDepartments(role) ? {} : { scope: EMPTY_SCOPE }),
       ...(roleCanManageUsers(role) ? {} : { extraRoleIds: [] }),
     });
   }
 
-  function handleEditScopeChange(manageAll: boolean, ids: number[]) {
-    const { kept, removedNames } = pruneExtraRoles(editForm.extraRoleIds, editExtraLockOne, manageAll, ids);
-    setEditForm({ ...editForm, manageAllDepartments: manageAll, managedDepartmentIds: ids, extraRoleIds: kept });
+  function handleEditScopeChange(scope: ScopeValue) {
+    const ids = effectiveDepartmentIds(scope, stations);
+    const { kept, removedNames } = pruneExtraRoles(editForm.extraRoleIds, editExtraLockOne, scope.manageAll, ids);
+    setEditForm({ ...editForm, scope, extraRoleIds: kept });
     setEditExtrasNote(
       removedNames.length
         ? `Removed ${removedNames.join(", ")}: its department is no longer managed by this user.`
@@ -187,9 +205,24 @@ export function UserDetailPage() {
       const updateData: any = {};
       if (editForm.name !== user.name) updateData.name = editForm.name;
       if (editForm.email !== user.email) updateData.email = editForm.email;
-      if (editForm.departmentId !== (user.department?.id?.toString() || "")) {
-        updateData.department_id = editForm.departmentId ? Number(editForm.departmentId) : null;
+      const code = editForm.employeeCode.trim();
+      if (code !== (user.employeeCode ?? "")) {
+        if (!code && !targetIsAdmin) { setError("Employee Code is required."); return; }
+        if (code && !/^\d{1,20}$/.test(code)) { setError("Employee Code must contain numbers only."); return; }
+        updateData.employee_code = code || null;
       }
+      if (editForm.joiningDate !== (user.joiningDate ?? "")) updateData.joining_date = editForm.joiningDate || null;
+      const pl = editForm.placement, was = placementOf(user);
+      if (pl.areaId !== was.areaId || pl.stationId !== was.stationId || pl.departmentId !== was.departmentId) {
+        if (!placementComplete(pl) && !targetIsAdmin) {
+          setError("Please select the Area, Station and Department where this person works.");
+          return;
+        }
+        updateData.area_id = pl.areaId;
+        updateData.station_id = pl.stationId;
+        updateData.department_id = pl.departmentId;
+      }
+      if (pl.divisionId !== was.divisionId) updateData.division_id = pl.divisionId;
       if (editForm.managerId !== (user.manager?.id?.toString() || "")) {
         updateData.manager_id = editForm.managerId ? Number(editForm.managerId) : null;
       }
@@ -199,11 +232,13 @@ export function UserDetailPage() {
       }
       // Hidden sections are not sent; the server clears them when the role does not use them
       if (showEditScope) {
-        if (editForm.manageAllDepartments !== user.manageAllDepartments) {
-          updateData.manage_all_departments = editForm.manageAllDepartments;
-        }
-        if (editForm.managedDepartmentIds.join(',') !== user.managedDepartments.map(d => d.id).join(',')) {
-          updateData.managed_department_ids = editForm.managedDepartmentIds;
+        const before = scopeOf(user), now = editForm.scope;
+        const same = (a: number[], b: number[]) => [...a].sort().join(",") === [...b].sort().join(",");
+        if (now.manageAll !== before.manageAll) updateData.manage_all_departments = now.manageAll;
+        if (!now.manageAll && (!same(now.areaIds, before.areaIds) || !same(now.stationIds, before.stationIds) || !same(now.departmentIds, before.departmentIds))) {
+          updateData.managed_area_ids = now.areaIds;
+          updateData.managed_station_ids = now.stationIds;
+          updateData.managed_department_ids = now.departmentIds;
         }
       }
       if (showEditExtras) {
@@ -440,22 +475,36 @@ export function UserDetailPage() {
                 <p className="text-sm text-foreground">{user.email}</p>
               </div>
               <div>
+                <p className="text-xs text-muted-foreground mb-1">Employee Code</p>
+                <p className="text-sm text-foreground font-mono">{user.employeeCode || "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Joining Date</p>
+                <p className="text-sm text-foreground">{user.joiningDate ? fmtDate(user.joiningDate) : "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Area</p>
+                <p className="text-sm text-foreground">{user.area?.name || "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Station</p>
+                <p className="text-sm text-foreground">{user.station ? `${user.station.name}${user.station.code ? ` (${user.station.code})` : ""}` : "—"}</p>
+              </div>
+              <div>
                 <p className="text-xs text-muted-foreground mb-1">Department</p>
                 <p className="text-sm text-foreground">{user.department?.name || "Unassigned"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Division</p>
+                <p className="text-sm text-foreground">{user.division?.name || "—"}</p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Role</p>
                 <p className="text-sm text-foreground">{user.role?.name || "No role"}</p>
               </div>
               <div>
-                <p className="text-xs text-muted-foreground mb-1">Manages Departments</p>
-                <p className="text-sm text-foreground">
-                  {user.manageAllDepartments
-                    ? "All Departments"
-                    : user.managedDepartments.length > 0
-                      ? user.managedDepartments.map((d) => d.name).join(", ")
-                      : "None"}
-                </p>
+                <p className="text-xs text-muted-foreground mb-1">Manages</p>
+                <p className="text-sm text-foreground">{describeScope(user)}</p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Extra Assignable Roles</p>
@@ -719,8 +768,35 @@ export function UserDetailPage() {
         <Dlg
           onClose={() => setShowEdit(false)}
           title="Edit User"
+          size="lg"
         >
           <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="eu-code" className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                  Employee Code {!targetIsAdmin && <span className="text-red-500">*</span>}
+                </label>
+                <input
+                  id="eu-code"
+                  inputMode="numeric"
+                  maxLength={20}
+                  placeholder="Numbers only"
+                  value={editForm.employeeCode}
+                  onChange={(e) => setEditForm({ ...editForm, employeeCode: e.target.value.replace(/\D/g, "") })}
+                  className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-foreground"
+                />
+              </div>
+              <div>
+                <label htmlFor="eu-joining" className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Joining Date</label>
+                <input
+                  id="eu-joining"
+                  type="date"
+                  value={editForm.joiningDate}
+                  onChange={(e) => setEditForm({ ...editForm, joiningDate: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-foreground"
+                />
+              </div>
+            </div>
             <FldInput
               label="Full Name"
               value={editForm.name}
@@ -732,14 +808,14 @@ export function UserDetailPage() {
               value={editForm.email}
               onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
             />
-            <FldSelect
-              label="Department"
-              value={editForm.departmentId}
-              onChange={(e) => setEditForm({ ...editForm, departmentId: e.target.value })}
-              options={[
-                { value: "", label: "Unassigned" },
-                ...departments.map((d) => ({ value: d.id.toString(), label: d.name })),
-              ]}
+            <PlacementPicker
+              areas={areas}
+              stations={stations}
+              divisions={divisions}
+              value={editForm.placement}
+              onChange={(placement) => setEditForm({ ...editForm, placement })}
+              allowedDepartmentIds={placeableDeptIds}
+              required={!targetIsAdmin}
             />
             <FldSelect
               label="Role"
@@ -752,16 +828,17 @@ export function UserDetailPage() {
             />
             {/* Department scope lives on the user — only for roles with a department-based permission */}
             {showEditScope && (
-              <DepartmentScopePicker
+              <ScopeTreePicker
+                areas={areas}
+                stations={stations}
                 departments={departments}
-                manageAll={editForm.manageAllDepartments}
-                selectedIds={editForm.managedDepartmentIds}
-                onChange={({ manageAll, ids }) => handleEditScopeChange(manageAll, ids)}
-                canGrantAll={canGrantAllDepartments}
+                value={editForm.scope}
+                onChange={handleEditScopeChange}
+                grantable={grantable}
               />
             )}
-            {showEditScope && !canGrantAllDepartments && editForm.manageAllDepartments && (
-              <p className="text-xs text-muted-foreground -mt-2">This user manages all departments (only a global manager can change this).</p>
+            {showEditScope && !canGrantAllDepartments && editForm.scope.manageAll && (
+              <p className="text-xs text-muted-foreground -mt-2">This user manages everything (only someone who manages everything can change this).</p>
             )}
 
             {/* Personal extra assignable roles — after the departments, filtered by them */}

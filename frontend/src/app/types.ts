@@ -81,10 +81,21 @@ export interface UserType {
   name: string;
   email: string;
   active: boolean; // maps to backend's `is_active`
+  employeeCode: string | null;
+  joiningDate: string | null; // YYYY-MM-DD
   role: Role | null;
+  // Placement: where the person works (one per person)
+  area: OrgRef | null;
+  station: (OrgRef & { areaId: number }) | null;
   department: Department | null;
+  division: OrgRef | null;
+  // What the person manages
   manageAllDepartments: boolean;
+  managedAreas: OrgRef[];
+  managedStations: (OrgRef & { areaId: number })[];
   managedDepartments: Department[];
+  /** every department covered by what the person manages (from the server) */
+  scopeDepartmentIds: number[];
   extraAssignableRoles: { id: number; name: string }[];
   createdAt: string;
   manager: { id: number; name: string; email: string } | null;
