@@ -14,7 +14,8 @@ import { Av } from "../components/Av";
 import { useAuth } from "../context/AuthContext";
 import { DepartmentScopePicker } from "../components/DepartmentScopePicker";
 import { RoleChecklist } from "../components/RoleChecklist";
-import { roleNeedsDepartments, roleCanManageUsers, filterRolesByDepartments, pruneExtraRoles } from "../utils/roleAccess";
+import { roleNeedsDepartments, roleCanManageUsers, filterRolesByDepartments, pruneExtraRoles, managesAllDepartments } from "../utils/roleAccess";
+import { useErrorPopup } from "../utils/notify";
 
 
 function getInitials(name: string) {
@@ -76,7 +77,8 @@ export function UserDetailPage() {
   const allUsers = allUsersQ.data;
   const assignableRoles = assignableQ.data;
   const loading = userQ.isLoading;
-  const [actionError, setError] = useState<string | null>(null);
+  const setError = useErrorPopup(); // action errors → pop-up, the page stays
+  const actionError: string | null = null;
   const error = actionError || (userQ.error ? userQ.error.message || "Failed to load user details." : null);
 
   const [activeTab, setActiveTab] = useState<Tab>("overview");
@@ -98,7 +100,8 @@ export function UserDetailPage() {
   });
   const [editAvatarFile, setEditAvatarFile] = useState<File | null>(null);
   const [editExtrasNote, setEditExtrasNote] = useState<string | null>(null);
-  const [avatarUploadError, setAvatarUploadError] = useState<string | null>(null);
+  const setAvatarUploadError = useErrorPopup(); // → pop-up
+  const avatarUploadError: string | null = null;
 
 
   // Fill the edit form from the latest user data each time the dialog opens
@@ -124,7 +127,7 @@ export function UserDetailPage() {
   const managerOptions = allUsers.filter((u) => u.id !== Number(userId));
 
   // Only someone who manages ALL departments may grant/remove "All Departments"
-  const canGrantAllDepartments = !!currentUser?.manageAllDepartments;
+  const canGrantAllDepartments = managesAllDepartments(currentUser);
 
   // Role dropdown = roles I can assign (GET /roles/assignable). Keep the user's
   // current role visible even if I could not assign it myself.

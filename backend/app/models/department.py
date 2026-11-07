@@ -24,3 +24,8 @@ class Department(Base):
     users = relationship("User", back_populates="department", foreign_keys="User.department_id")
     projects = relationship("Project", secondary="project_department", back_populates="departments")
     head = relationship("User", foreign_keys=[head_id])
+    # A department can be part of several stations (see models/organization.py)
+    stations = relationship(
+        "Station", secondary="station_department", back_populates="departments", order_by="Station.name",
+        passive_deletes=True,
+    )

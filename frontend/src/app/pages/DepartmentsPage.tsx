@@ -1,11 +1,14 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router";
 import { Plus, AlertTriangle, Trash2, Search, MoreVertical, Eye } from "lucide-react";
-import { Department, UserType } from "../types";
+import { Department, UserType, Station } from "../types";
+import { getStations } from "../api/organization";
+import { MultiCheck } from "../components/MultiCheck";
 import { useCachedQuery, qk, FRESH, EMPTY } from "../api/queries";
 import { getDepartments, createDepartment, deleteDepartment } from "../api/departments";
 import { getUsers } from "../api/users";
 import { Dlg } from "../components/Dlg";
+import { useErrorPopup } from "../utils/notify";
 
 const COLOR_SWATCHES = [
   { name: "purple", value: "#a855f7", bg: "bg-purple-100", text: "text-purple-600" },
@@ -30,16 +33,18 @@ function getInitials(name: string) {
     .slice(0, 2);
 }
 
-export function DepartmentsPage() {
+export function DepartmentsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const navigate = useNavigate();
   // Shared store: instant when already loaded, refreshed after every save
-  const departmentsQ = useCachedQuery<Department[]>(qk.departments, getDepartments, EMPTY, { staleTime: FRESH.RARE });
+  const departmentsQ = useCachedQuery<Department[]>(qk.departments, () => getDepartments(), EMPTY, { staleTime: FRESH.RARE });
+  const stationsQ = useCachedQuery<Station[]>(qk.stations, () => getStations(), EMPTY, { staleTime: FRESH.RARE });
   const usersQ = useCachedQuery<UserType[]>(qk.users, getUsers, EMPTY, { staleTime: FRESH.NORMAL });
   const departments = departmentsQ.data;
   const setDepartments = departmentsQ.setData;
   const users = usersQ.data;
   const loading = departmentsQ.isLoading;
-  const [actionError, setError] = useState<string | null>(null);
+  const setError = useErrorPopup(); // action errors → pop-up, the page stays
+  const actionError: string | null = null;
   const error = actionError || (departmentsQ.error ? departmentsQ.error.message || "Failed to load departments." : null);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -53,6 +58,7 @@ export function DepartmentsPage() {
     headId: null as number | null,
     color: "purple",
     isActive: true,
+    stationIds: [] as number[],
   });
 
   const [deleteForm, setDeleteForm] = useState({
@@ -61,8 +67,10 @@ export function DepartmentsPage() {
   });
 
 
+  const [stationFilter, setStationFilter] = useState<number | "">("");
   const filteredDepartments = departments.filter((dept) =>
-    dept.name.toLowerCase().includes(searchQuery.toLowerCase())
+    dept.name.toLowerCase().includes(searchQuery.toLowerCase()) &&
+    (stationFilter === "" || dept.stations.some((st) => st.id === stationFilter))
   );
 
   const totalDepartments = departments.length;
@@ -80,9 +88,10 @@ export function DepartmentsPage() {
         headId: newForm.headId,
         color: newForm.color,
         isActive: newForm.isActive,
+        stationIds: newForm.stationIds,
       });
       setDepartments((prev) => [...prev, nd]);
-      setNewForm({ name: "", description: "", headId: null, color: "purple", isActive: true });
+      setNewForm({ name: "", description: "", headId: null, color: "purple", isActive: true, stationIds: [] });
       setShowNew(false);
     } catch (err: any) {
       setError(err?.message || "Failed to create department.");
@@ -130,12 +139,14 @@ export function DepartmentsPage() {
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
+    <div className={embedded ? "space-y-4" : "p-6 max-w-7xl mx-auto space-y-6"}>
       {/* Page Header */}
+      {!embedded && (
       <div>
         <h1 className="text-2xl font-bold text-foreground">Departments</h1>
         <p className="text-sm text-muted-foreground">Manage organizational departments</p>
       </div>
+      )}
 
       {error && (
         <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm">
@@ -145,7 +156,7 @@ export function DepartmentsPage() {
       )}
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className={embedded ? "hidden" : "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"}>
         <div className="bg-white rounded-xl border border-border p-5 shadow-sm">
           <p className="text-xs font-medium text-muted-foreground mb-1">Total Departments</p>
           <p className="text-2xl font-bold text-foreground">{totalDepartments}</p>
@@ -167,7 +178,8 @@ export function DepartmentsPage() {
       {/* Main Content */}
       <div className="bg-white rounded-xl border border-border overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4 border-b border-border">
+          <div className="flex flex-wrap items-center gap-3">
           <div className="relative">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <input
@@ -175,8 +187,18 @@ export function DepartmentsPage() {
               placeholder="Search departments..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 pr-4 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 w-64 text-foreground"
+              className="pl-9 pr-4 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 w-64 max-w-full text-foreground"
             />
+          </div>
+          <select
+            aria-label="Filter by station"
+            value={stationFilter}
+            onChange={(e) => setStationFilter(e.target.value ? Number(e.target.value) : "")}
+            className="px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground"
+          >
+            <option value="">All stations</option>
+            {stationsQ.data.map((st) => <option key={st.id} value={st.id}>{st.code ? `${st.code} — ${st.name}` : st.name}</option>)}
+          </select>
           </div>
           <button
             onClick={() => setShowNew(true)}
@@ -193,6 +215,9 @@ export function DepartmentsPage() {
               <tr className="bg-muted/30 border-b border-border">
                 <th className="px-6 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                   Department
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  Stations
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                   Department Head
@@ -214,7 +239,7 @@ export function DepartmentsPage() {
             <tbody className="divide-y divide-border">
               {filteredDepartments.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-sm text-muted-foreground text-center">
+                  <td colSpan={7} className="px-6 py-12 text-sm text-muted-foreground text-center">
                     {searchQuery ? "No departments match your search." : "No departments yet. Create one to get started."}
                   </td>
                 </tr>
@@ -234,6 +259,17 @@ export function DepartmentsPage() {
                           </div>
                           <span className="text-sm font-medium text-foreground">{dept.name}</span>
                         </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        {dept.stations.length === 0 ? (
+                          <span className="text-sm text-muted-foreground">Not linked</span>
+                        ) : (
+                          <div className="flex flex-wrap gap-1">
+                            {dept.stations.map((st) => (
+                              <span key={st.id} title={st.name} className="px-2 py-0.5 rounded-md text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">{st.code || st.name}</span>
+                            ))}
+                          </div>
+                        )}
                       </td>
                       <td className="px-6 py-4">
                         {dept.head ? (
@@ -321,6 +357,16 @@ export function DepartmentsPage() {
                 rows={3}
               />
             </div>
+
+            <MultiCheck
+              idPrefix="new-dept-st"
+              label="Stations"
+              help="Tick every station this department serves. A joint department can belong to several stations."
+              options={stationsQ.data.map((st) => ({ id: st.id, name: st.name, hint: st.code ? `${st.code} · ${st.area.name}` : st.area.name }))}
+              selectedIds={newForm.stationIds}
+              onChange={(ids) => setNewForm({ ...newForm, stationIds: ids })}
+              emptyText="No stations yet. Create them in the Stations tab."
+            />
 
             <div className="flex flex-col gap-1.5">
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">

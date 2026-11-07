@@ -11,12 +11,22 @@ class DepartmentHeadOut(BaseModel):
         from_attributes = True
 
 
+class DepartmentStationOut(BaseModel):
+    id: int
+    name: str
+    code: str | None = None
+
+    class Config:
+        from_attributes = True
+
+
 class DepartmentCreate(BaseModel):
     name: str
     description: str | None = None
     head_id: int | None = None
     color: str = "purple"
     is_active: bool = True
+    station_ids: list[int] = []
 
 
 class DepartmentUpdate(BaseModel):
@@ -25,6 +35,7 @@ class DepartmentUpdate(BaseModel):
     head_id: int | None = None
     color: str | None = None
     is_active: bool | None = None
+    station_ids: list[int] | None = None  # None = leave unchanged
 
 
 class DepartmentOut(BaseModel):
@@ -38,6 +49,7 @@ class DepartmentOut(BaseModel):
     member_count: int
     project_count: int
     created_at: datetime
+    stations: list[DepartmentStationOut] = []
 
     class Config:
         from_attributes = True

@@ -13,7 +13,8 @@ import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router";
 import { DepartmentScopePicker } from "../components/DepartmentScopePicker";
 import { RoleChecklist } from "../components/RoleChecklist";
-import { roleNeedsDepartments, roleCanManageUsers, filterRolesByDepartments, pruneExtraRoles } from "../utils/roleAccess";
+import { roleNeedsDepartments, roleCanManageUsers, filterRolesByDepartments, pruneExtraRoles, managesAllDepartments } from "../utils/roleAccess";
+import { useErrorPopup } from "../utils/notify";
 
 function fmtDate(d: string) {
   if (!d) return "—";
@@ -49,7 +50,8 @@ export function UsersPage() {
   const assignableRoles = assignableQ.data;
   const departments = departmentsQ.data;
   const loading = usersQ.isLoading;
-  const [actionError, setError] = useState<string | null>(null);
+  const setError = useErrorPopup(); // action errors → pop-up, the page stays
+  const actionError: string | null = null;
   const error = actionError || (usersQ.error ? usersQ.error.message || "Failed to load users data." : null);
   
   const canManage = permissions.includes("user:manage");
@@ -81,16 +83,18 @@ export function UsersPage() {
   const [createManagedIds, setCreateManagedIds] = useState<number[]>([]);
   const [createExtraRoleIds, setCreateExtraRoleIds] = useState<number[]>([]);
   const [createExtrasNote, setCreateExtrasNote] = useState<string | null>(null);
-  const [createError, setCreateError] = useState<string | null>(null);
+  const setCreateError = useErrorPopup(); // → pop-up
+  const createError: string | null = null;
   const [createAvatarFile, setCreateAvatarFile] = useState<File | null>(null);
-  const [avatarUploadError, setAvatarUploadError] = useState<string | null>(null);
+  const setAvatarUploadError = useErrorPopup(); // → pop-up
+  const avatarUploadError: string | null = null;
 
   // Delete confirmation state
   const [deleteConfirmUser, setDeleteConfirmUser] = useState<UserType | null>(null);
 
 
   // Only someone who manages ALL departments may grant "All Departments"
-  const canGrantAllDepartments = !!currentUser?.manageAllDepartments;
+  const canGrantAllDepartments = managesAllDepartments(currentUser);
 
   const selectedCreateRole = assignableRoles.find((r) => r.id === Number(createRole)) || null;
   // "Departments this user manages" only for roles with a department-based permission

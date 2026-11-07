@@ -1,7 +1,7 @@
 export type Status = "To Do" | "Review" | "Done" | "Reschedule";
 export type Priority = "Low" | "Medium" | "High";
 export type ProjectStatus = "Planning" | "Active" | "Pending Approval" | "Done" | "Archived";
-export type Page = "login" | "register" | "dashboard" | "tasks" | "taskDetail" | "users" | "roles" | "departments" | "projects" | "projectDetail";
+export type Page = "login" | "register" | "dashboard" | "tasks" | "taskDetail" | "users" | "roles" | "departments" | "organization" | "projects" | "projectDetail";
 
 export interface Department {
   id: number;
@@ -14,6 +14,42 @@ export interface Department {
   memberCount: number;
   projectCount: number;
   createdAt: string;
+  /** stations this department belongs to (many-to-many) */
+  stations: OrgRef[];
+}
+
+/** Short reference to an area / station / department / division */
+export interface OrgRef {
+  id: number;
+  name: string;
+  code?: string | null;
+}
+
+export interface Area {
+  id: number;
+  name: string;
+  code: string | null;
+  description: string | null;
+  isActive: boolean;
+  stationCount: number;
+  stations: OrgRef[];
+}
+
+export interface Station {
+  id: number;
+  name: string;
+  code: string | null;
+  description: string | null;
+  isActive: boolean;
+  area: OrgRef;
+  departments: OrgRef[];
+}
+
+export interface Division {
+  id: number;
+  name: string;
+  description: string | null;
+  isActive: boolean;
 }
 
 export interface Category {

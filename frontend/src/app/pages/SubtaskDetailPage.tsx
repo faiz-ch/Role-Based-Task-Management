@@ -18,6 +18,7 @@ import { Av } from "../components/Av";
 import { Dlg } from "../components/Dlg";
 import { DatePicker } from "../components/DatePicker";
 import { inDepartmentScope } from "../utils/roleAccess";
+import { useErrorPopup } from "../utils/notify";
 
 function fmtDate(d: string) {
   if (!d) return "—";
@@ -62,7 +63,8 @@ export function SubtaskDetailPage() {
   const attachments = attachmentsQ.data;
   const setAttachments = attachmentsQ.setData;
   const loading = subtaskQ.isLoading;
-  const [actionError, setError] = useState<string | null>(null);
+  const setError = useErrorPopup(); // action errors → pop-up, the page stays
+  const actionError: string | null = null;
   const error = !hasId
     ? "Subtask ID is required"
     : actionError || (subtaskQ.error ? subtaskQ.error.message || "Failed to load subtask." : null);

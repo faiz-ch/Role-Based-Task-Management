@@ -333,3 +333,15 @@
   .rlk-filters select, .rlk-filters input { width: 100%; min-width: 0 !important; height: 46px; font-size: 16px; }
   .rlk-filters__clear { justify-content: center; height: 44px; }
 }
+
+/* ---------------------------------------------------------------- organization tabs */
+.rlk-orgtabs { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--rlk-line); }
+.rlk-orgtabs::-webkit-scrollbar { display: none; }
+.rlk-orgtab {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px;
+  border: 0; border-bottom: 3px solid transparent; background: none; cursor: pointer;
+  font: 600 14px var(--font-ui); color: var(--rlk-muted);
+}
+.rlk-orgtab:hover { color: var(--rlk-ink); }
+.rlk-orgtab[aria-selected="true"] { color: var(--rlk-ink); font-weight: 800; border-bottom-color: var(--rlk-gold-line); }
+.rlk-orgtab:focus-visible { outline: 2px solid var(--rlk-gold-line); outline-offset: -2px; }

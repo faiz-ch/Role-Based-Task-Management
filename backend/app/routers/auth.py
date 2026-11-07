@@ -23,6 +23,9 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db)):
+    # Self-registration is switched off: accounts are created by an administrator
+    # (Users page) or, for the very first Admin, by app/bootstrap_admin.py.
+    raise HTTPException(status_code=403, detail="Self-registration is disabled. Ask an administrator for an account.")
     existing = await db.execute(select(User).where(User.email == payload.email))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=400, detail="Email already registered")

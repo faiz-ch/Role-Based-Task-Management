@@ -6,7 +6,7 @@ import type { UserType, Department, Role } from "../types";
  * A role with none of these gets nothing from a department scope, so the
  * user form hides that section for it.
  */
-export const SCOPE_PERMISSIONS = ["project:view", "project:manage", "user:view", "user:manage", "department:manage"];
+export const SCOPE_PERMISSIONS = ["project:view", "project:manage", "user:view", "user:manage"];
 
 /** Show "Departments this user manages" only for roles that use it. */
 export function roleNeedsDepartments(role: Pick<Role, "permissions"> | null | undefined): boolean {
@@ -64,13 +64,18 @@ export function pruneExtraRoles(
  * `allDepartments` is the department list the page already loaded
  * (GET /departments is itself scoped by the backend).
  */
+/** The main Admin (built-in Admin role) always covers everything, like on the server. */
+export function isMainAdmin(user: UserType | null | undefined): boolean {
+  return !!user?.role?.isSystem;
+}
+
 export function managesAllDepartments(user: UserType | null | undefined): boolean {
-  return !!user?.manageAllDepartments;
+  return !!user?.manageAllDepartments || isMainAdmin(user);
 }
 
 export function getEffectiveDepartmentIds(user: UserType | null | undefined, allDepartments: Department[]): number[] {
   if (!user) return [];
-  return user.manageAllDepartments
+  return managesAllDepartments(user)
     ? allDepartments.map((d) => d.id)
     : user.managedDepartments.map((d) => d.id);
 }
@@ -78,7 +83,7 @@ export function getEffectiveDepartmentIds(user: UserType | null | undefined, all
 /** True if the user's department scope covers at least one of the given departments. */
 export function inDepartmentScope(user: UserType | null | undefined, departmentIds: number[] | undefined): boolean {
   if (!user) return false;
-  if (user.manageAllDepartments) return true;
+  if (managesAllDepartments(user)) return true;
   const mine = new Set(user.managedDepartments.map((d) => d.id));
   return (departmentIds ?? []).some((id) => mine.has(id));
 }

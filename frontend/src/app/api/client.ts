@@ -111,7 +111,7 @@ export async function apiFetch(path: string, options: RequestInit = {}): Promise
 
 // Reference lists that rarely change. They are only refreshed when a save
 // actually touches them, instead of after every save.
-const REFERENCE_DATA = ["departments", "roles", "permissions", "categories"];
+const REFERENCE_DATA = ["departments", "roles", "permissions", "categories", "areas", "stations", "divisions"];
 let pendingRefresh: ReturnType<typeof setTimeout> | null = null;
 const touchedReferenceData = new Set<string>();
 
@@ -121,7 +121,11 @@ const touchedReferenceData = new Set<string>();
  * refresh, 250 ms after the last save.
  */
 function scheduleRefreshAfterSave(path: string) {
-  if (path.startsWith("/departments")) touchedReferenceData.add("departments");
+  if (path.startsWith("/departments")) { touchedReferenceData.add("departments"); touchedReferenceData.add("stations"); touchedReferenceData.add("areas"); }
+  // organisation structure: a station change also changes area station-lists and department station-lists
+  if (path.startsWith("/areas")) { touchedReferenceData.add("areas"); touchedReferenceData.add("stations"); }
+  if (path.startsWith("/stations")) { touchedReferenceData.add("stations"); touchedReferenceData.add("areas"); touchedReferenceData.add("departments"); }
+  if (path.startsWith("/divisions")) touchedReferenceData.add("divisions");
   if (path.startsWith("/roles")) touchedReferenceData.add("roles");
   if (path.startsWith("/categories")) touchedReferenceData.add("categories");
   // user changes affect role user-counts, "roles I can assign" and department member counts

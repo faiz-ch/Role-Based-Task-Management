@@ -1,7 +1,9 @@
 import React, { useState } from "react";
 import { useParams, useNavigate, Link } from "react-router";
 import { ArrowLeft, Edit2, Trash2, MoreVertical, ChevronDown, Users, Building2, Calendar, AlertTriangle } from "lucide-react";
-import { Department, UserType, Project } from "../types";
+import { Department, UserType, Project, Station } from "../types";
+import { getStations } from "../api/organization";
+import { MultiCheck } from "../components/MultiCheck";
 import { getDepartment, updateDepartment, deleteDepartment, getDepartmentActivity } from "../api/departments";
 import { getUsers } from "../api/users";
 import { getProjects } from "../api/projects";
@@ -10,6 +12,7 @@ import { useCachedQuery, qk, FRESH, EMPTY } from "../api/queries";
 import { Dlg } from "../components/Dlg";
 import { FldSelect } from "../components/FldSelect";
 import { Av } from "../components/Av";
+import { useErrorPopup } from "../utils/notify";
 
 const COLOR_SWATCHES = [
   { name: "purple", value: "#a855f7", bg: "bg-purple-100", text: "text-purple-600" },
@@ -78,7 +81,8 @@ export function DepartmentDetailPage() {
   const activity = activityQ.data;
   const allDepartments = allDepartmentsQ.data;
   const loading = departmentQ.isLoading;
-  const [actionError, setError] = useState<string | null>(null);
+  const setError = useErrorPopup(); // action errors → pop-up, the page stays
+  const actionError: string | null = null;
   const error = actionError || (departmentQ.error ? departmentQ.error.message || "Failed to load department details." : null);
 
   const [activeTab, setActiveTab] = useState<Tab>("overview");
@@ -92,7 +96,9 @@ export function DepartmentDetailPage() {
     headId: null as number | null,
     color: "purple",
     isActive: true,
+    stationIds: [] as number[],
   });
+  const stationsQ = useCachedQuery<Station[]>(qk.stations, () => getStations(), EMPTY, { staleTime: FRESH.RARE });
 
   const [deleteForm, setDeleteForm] = useState({
     moveUsersTo: null as number | null,
@@ -111,6 +117,7 @@ export function DepartmentDetailPage() {
       headId: department.headId,
       color: department.color,
       isActive: department.isActive,
+      stationIds: department.stations.map((st) => st.id),
     });
     setShowEdit(true);
   }
@@ -134,6 +141,7 @@ export function DepartmentDetailPage() {
         headId: editForm.headId,
         color: editForm.color,
         isActive: editForm.isActive,
+        stationIds: editForm.stationIds,
       });
       setDepartment(updated);
       setShowEdit(false);
@@ -259,7 +267,7 @@ export function DepartmentDetailPage() {
         </div>
 
         {/* Stats Row */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mt-6">
           <div className="bg-white rounded-xl border border-border p-4">
             <div className="flex items-center gap-2 mb-1">
               <Users size={16} className="text-muted-foreground" />
@@ -281,6 +289,15 @@ export function DepartmentDetailPage() {
             </div>
             <p className="text-sm font-medium text-foreground">
               {department.head ? department.head.name : "Unassigned"}
+            </p>
+          </div>
+          <div className="bg-white rounded-xl border border-border p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <Building2 size={16} className="text-muted-foreground" />
+              <span className="text-xs font-medium text-muted-foreground">Stations</span>
+            </div>
+            <p className="text-sm font-medium text-foreground">
+              {department.stations.length ? department.stations.map((st) => st.code || st.name).join(", ") : "Not linked"}
             </p>
           </div>
           <div className="bg-white rounded-xl border border-border p-4">
@@ -533,6 +550,16 @@ export function DepartmentDetailPage() {
                 rows={3}
               />
             </div>
+
+            <MultiCheck
+              idPrefix="edit-dept-st"
+              label="Stations"
+              help="Tick every station this department serves."
+              options={stationsQ.data.map((st) => ({ id: st.id, name: st.name, hint: st.code ? `${st.code} · ${st.area.name}` : st.area.name }))}
+              selectedIds={editForm.stationIds}
+              onChange={(ids) => setEditForm({ ...editForm, stationIds: ids })}
+              emptyText="No stations yet."
+            />
 
             <div className="flex flex-col gap-1.5">
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">

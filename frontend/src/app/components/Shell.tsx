@@ -14,6 +14,7 @@ import {
 import { Page } from "../types";
 import { useAuth } from "../context/AuthContext";
 import { InstitutionsFooter } from "./InstitutionsFooter";
+import { toast } from "sonner";
 
 const NAV: {
   id: Page;
@@ -26,7 +27,7 @@ const NAV: {
   { id: "tasks", label: "Tasks", Icon: CheckSquare, perm: null },
   { id: "users", label: "Users", Icon: Users, perm: "user:manage" },
   { id: "roles", label: "Roles", Icon: Shield, perm: "role:manage" },
-  { id: "departments", label: "Departments", Icon: Building2, perm: "department:manage" },
+  { id: "organization", label: "Organization", Icon: Building2, perm: "organization:manage" },
 ];
 
 function initials(name: string) {
@@ -80,14 +81,16 @@ export function Shell({ children }: { children: React.ReactNode }) {
     if (path.startsWith("/tasks") || path.startsWith("/subtasks")) return "tasks";
     if (path.startsWith("/users")) return "users";
     if (path.startsWith("/roles")) return "roles";
-    if (path.startsWith("/departments")) return "departments";
+    if (path.startsWith("/organization") || path.startsWith("/departments")) return "organization";
     return "tasks"; // default
   })();
 
-  // New page: start at the top and close the account menu
+  // New page: start at the top, close the account menu and clear old pop-ups
+  // (error pop-ups stay until closed, but they belong to the page they came from)
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 });
     setMenuOpen(false);
+    toast.dismiss();
   }, [location.pathname]);
 
   if (!currentUser) return <>{children}</>;

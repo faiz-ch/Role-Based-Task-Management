@@ -23,6 +23,7 @@ import { PriBadge } from "../components/PriBadge";
 import { DatePicker } from "../components/DatePicker";
 import { StatusBadge } from "../components/StatusBadge";
 import { inDepartmentScope } from "../utils/roleAccess";
+import { useErrorPopup } from "../utils/notify";
 
 const STATUSES: Status[] = ["To Do", "Review", "Done", "Reschedule"];
 const PRIORITIES: Priority[] = ["Low", "Medium", "High"];
@@ -93,7 +94,8 @@ export function TasksPage() {
   const departments = departmentsQ.data;
   const projects = projectsQ.data;
   const loading = tasksQ.isLoading;
-  const [actionError, setError] = useState<string | null>(null);
+  const setError = useErrorPopup(); // action errors → pop-up, the page stays
+  const actionError: string | null = null;
   const error = actionError || (tasksQ.error ? tasksQ.error.message || "Failed to load tasks." : null);
 
   const [searchQuery, setSearchQuery] = useState("");

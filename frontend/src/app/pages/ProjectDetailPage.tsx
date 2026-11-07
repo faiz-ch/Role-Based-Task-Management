@@ -22,6 +22,7 @@ import { ActivityTab } from "./project-detail/ActivityTab";
 import { SettingsTab } from "./project-detail/SettingsTab";
 import { ScheduleMeetingDialog } from "./project-detail/ScheduleMeetingDialog";
 import { inDepartmentScope } from "../utils/roleAccess";
+import { useErrorPopup } from "../utils/notify";
 
 const PROJECT_STATUS_STYLE: Record<string, { badge: string; dot: string }> = {
   Planning: {
@@ -103,7 +104,8 @@ export function ProjectDetailPage() {
   const setAttachments = attachmentsQ.setData;
   const activity = activityQ.data;
   const loading = projectQ.isLoading;
-  const [actionError, setError] = useState<string | null>(null);
+  const setError = useErrorPopup(); // action errors → pop-up, the page stays
+  const actionError: string | null = null;
   const error = !hasId
     ? "Project ID is required"
     : actionError || (projectQ.error ? projectQ.error.message || "Failed to load project." : null);

@@ -10,6 +10,7 @@ import { Dlg } from "../components/Dlg";
 import { FldInput } from "../components/FldInput";
 import { PermissionModulePicker, hasModule } from "../components/PermissionModulePicker";
 import { RoleChecklist } from "../components/RoleChecklist";
+import { useErrorPopup } from "../utils/notify";
 
 export function RolesPage() {
   const navigate = useNavigate();
@@ -24,7 +25,8 @@ export function RolesPage() {
   const categories = categoriesQ.data;
   const allPermissions = permissionsQ.data;
   const loading = rolesQ.isLoading || permissionsQ.isLoading;
-  const [actionError, setError] = useState<string | null>(null);
+  const setError = useErrorPopup(); // action errors → pop-up, the page stays
+  const actionError: string | null = null;
   const error = actionError || (rolesQ.error ? rolesQ.error.message || "Failed to load roles data." : null);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -254,15 +256,22 @@ export function RolesPage() {
                 <td className="px-4 py-3 text-sm text-foreground">{role.userCount}</td>
                 <td className="px-4 py-3 text-sm text-foreground">{role.permissions.length}</td>
                 <td className="px-4 py-3 text-right">
+                  {role.isSystem ? (
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700" title="The main Admin role cannot be deleted">
+                      <Shield size={14} aria-hidden="true" /> Protected
+                    </span>
+                  ) : (
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       setDeleteConfirmRole(role);
                     }}
+                    aria-label={`Delete ${role.name}`}
                     className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
                   >
                     <Trash2 size={16} />
                   </button>
+                  )}
                 </td>
               </tr>
             ))}

@@ -3,7 +3,8 @@ from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.deps import require_permission, get_current_user, get_scoped_department_ids
+from app.core.deps import require_permission, get_current_user, get_scoped_department_ids, has_permission
+from app.models.organization import Station, station_department
 from app.database import get_db
 from app.models.department import Department
 from app.models.user import User
@@ -43,6 +44,7 @@ def _build_department_out(department: Department, member_count: int, project_cou
         member_count=member_count,
         project_count=project_count,
         created_at=department.created_at,
+        stations=[{"id": st.id, "name": st.name, "code": st.code} for st in department.stations],
     )
 
 
@@ -69,25 +71,44 @@ async def _department_counts(db: AsyncSession, dept_ids: list[int]) -> tuple[dic
 async def _department_to_out(db: AsyncSession, department: Department) -> DepartmentOut:
     """DepartmentOut for ONE department (used after get / create / update)."""
     result = await db.execute(
-        select(Department).options(selectinload(Department.head)).where(Department.id == department.id)
+        select(Department).options(selectinload(Department.head), selectinload(Department.stations))
+        .where(Department.id == department.id)
+        .execution_options(populate_existing=True)
     )
     department = result.scalar_one()
     members, projects = await _department_counts(db, [department.id])
     return _build_department_out(department, members.get(department.id, 0), projects.get(department.id, 0))
 
 
+async def _load_stations(db: AsyncSession, station_ids: list[int]) -> list[Station]:
+    ids = list(dict.fromkeys(station_ids or []))
+    if not ids:
+        return []
+    found = (await db.execute(select(Station).where(Station.id.in_(ids)))).scalars().all()
+    if len(found) != len(ids):
+        raise HTTPException(status_code=400, detail="One or more stations do not exist")
+    return list(found)
+
+
 @router.get("", response_model=list[DepartmentOut])
 async def list_departments(
+    station_id: int | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List departments, scoped to the departments the caller manages unless they have manage_all_departments."""
-    result = await db.execute(
-        select(Department).options(selectinload(Department.head))
-    )
+    """
+    List departments. Organization managers see all of them; everyone else sees
+    the departments they manage. ?station_id=N returns only that station's departments.
+    """
+    query = select(Department).options(selectinload(Department.head), selectinload(Department.stations)).order_by(Department.name)
+    if station_id is not None:
+        query = query.where(Department.id.in_(
+            select(station_department.c.department_id).where(station_department.c.station_id == station_id)
+        ))
+    result = await db.execute(query)
     departments = result.scalars().all()
 
-    scoped_dept_ids = get_scoped_department_ids(current_user)
+    scoped_dept_ids = None if has_permission(current_user, "organization:manage") else get_scoped_department_ids(current_user)
     if scoped_dept_ids is None:
         filtered_departments = departments
     elif not scoped_dept_ids:
@@ -107,11 +128,11 @@ async def list_departments(
 async def get_department(
     department_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_permission("department:manage")),
+    _: User = Depends(require_permission("organization:manage")),
 ):
-    """Get a single department by ID. Requires department:manage permission."""
+    """Get a single department by ID. Requires organization:manage permission."""
     result = await db.execute(
-        select(Department).options(selectinload(Department.head)).where(Department.id == department_id)
+        select(Department).options(selectinload(Department.head), selectinload(Department.stations)).where(Department.id == department_id)
     )
     department = result.scalar_one_or_none()
     if department is None:
@@ -124,9 +145,9 @@ async def get_department(
 async def get_department_activity(
     department_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_permission("department:manage")),
+    _: User = Depends(require_permission("organization:manage")),
 ):
-    """Get activity log for a department. Requires department:manage."""
+    """Get activity log for a department. Requires organization:manage."""
     result = await db.execute(select(Department).where(Department.id == department_id))
     department = result.scalar_one_or_none()
     if department is None:
@@ -144,9 +165,9 @@ async def get_department_activity(
 async def create_department(
     payload: DepartmentCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_permission("department:manage")),
+    current_user: User = Depends(require_permission("organization:manage")),
 ):
-    """Create a new department. Requires department:manage permission."""
+    """Create a new department. Requires organization:manage permission."""
     existing = await db.execute(select(Department).where(Department.name == payload.name))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=400, detail="Department name already exists")
@@ -157,6 +178,7 @@ async def create_department(
         if head_result.scalar_one_or_none() is None:
             raise HTTPException(status_code=404, detail="Department head user not found")
 
+    stations = await _load_stations(db, payload.station_ids)
     department = Department(
         name=payload.name,
         description=payload.description,
@@ -164,6 +186,7 @@ async def create_department(
         color=payload.color,
         is_active=payload.is_active,
     )
+    department.stations = stations
     db.add(department)
     await db.commit()
     await db.refresh(department)
@@ -185,16 +208,25 @@ async def update_department(
     department_id: int,
     payload: DepartmentUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_permission("department:manage")),
+    current_user: User = Depends(require_permission("organization:manage")),
 ):
-    """Update a department. Requires department:manage permission."""
-    result = await db.execute(select(Department).where(Department.id == department_id))
+    """Update a department. Requires organization:manage permission."""
+    result = await db.execute(
+        select(Department).options(selectinload(Department.stations)).where(Department.id == department_id)
+    )
     department = result.scalar_one_or_none()
     if department is None:
         raise HTTPException(status_code=404, detail="Department not found")
 
     # Track changed fields for activity log
     changed_fields = []
+    if payload.station_ids is not None:
+        department.stations = await _load_stations(db, payload.station_ids)
+        changed_fields.append("stations")
+    if payload.name is not None and payload.name != department.name:
+        clash = await db.execute(select(Department.id).where(Department.name == payload.name, Department.id != department_id))
+        if clash.scalar_one_or_none() is not None:
+            raise HTTPException(status_code=400, detail="Department name already exists")
 
     # Apply only fields that are present (partial update)
     if payload.name is not None:
@@ -243,10 +275,10 @@ async def delete_department(
     department_id: int,
     payload: DepartmentDeleteRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_permission("department:manage")),
+    current_user: User = Depends(require_permission("organization:manage")),
 ):
     """
-    Delete a department. Requires department:manage permission.
+    Delete a department. Requires organization:manage permission.
     Accepts move_users_to and move_projects_to to reassign members and projects before deletion.
     """
     result = await db.execute(

@@ -1,90 +1,75 @@
 """
-One-time setup script for a brand new system: creates an "Admin" role
-with ALL permissions, and assigns it to a user you specify by email.
+Creates (or repairs) the main Admin for a brand-new system.
 
-This solves the chicken-and-egg problem: normally only someone with
-'user:manage' or 'role:manage' permission can assign roles — but when
-the system is brand new, NO ONE has any permission yet. This script is
-the one time we bypass the API and go straight to the database.
+Self-registration is switched off, so this script is how the first account is made.
 
-Usage:
-    python -m app.bootstrap_admin your-email@example.com
+Usage (inside the backend container):
+    python -m app.bootstrap_admin --email hr@rlmc.edu.pk --name "Faisal Khalid" --password "hr@12345"
 
-(Run this AFTER you've registered that user via POST /auth/register)
+What it does (safe to run more than once):
+  - creates the built-in "Admin" role if missing, marks it as the protected system role
+    (is_system=True) and gives it every permission and "assign all roles";
+  - creates the user if the email does not exist yet (or resets the password if
+    --password is given for an existing user) and gives it the Admin role.
 
-Safe to run more than once: if the Admin role/category already exist,
-they will be updated with all permissions and all_roles=True, and the
-user is given manage_all_departments=True (department scope lives on User).
+Only users with this role are "the main Admin": every permission, every department,
+every role. Nobody can create another role with these powers through the app.
 """
+import argparse
 import asyncio
-import sys
 
 from sqlalchemy import select
 
+from app.core.security import hash_password
 from app.database import AsyncSessionLocal
 from app.models.role import Role, Permission
-from app.models.category import Category
-from app.models.department import Department
 from app.models.user import User
 
 
-async def bootstrap_admin(email: str):
+async def bootstrap_admin(email: str, name: str | None, password: str | None) -> None:
+    email = email.strip().lower()
     async with AsyncSessionLocal() as db:
-        user_result = await db.execute(select(User).where(User.email == email))
-        user = user_result.scalar_one_or_none()
-        if user is None:
-            print(f"No user found with email {email}. Register this user first via /auth/register.")
-            return
-
-        # Always fetch all permissions up front so it's available regardless
-        # of whether the Admin category/role already exist.
         all_permissions = (await db.execute(select(Permission))).scalars().all()
 
-        # Admin category: all permissions (no departments or assignable categories - those live on Role now)
-        cat_result = await db.execute(
-            select(Category).where(Category.name == "Admin")
-        )
-        admin_category = cat_result.scalar_one_or_none()
-
-        if admin_category is None:
-            admin_category = Category(
-                name="Admin",
-                permissions=list(all_permissions),
-            )
-            db.add(admin_category)
-            await db.flush()  # get admin_category.id
-        else:
-            # Update existing category with all permissions
-            admin_category.permissions = list(all_permissions)
-
-        role_result = await db.execute(select(Role).where(Role.name == "Admin"))
-        admin_role = role_result.scalar_one_or_none()
-
+        admin_role = (await db.execute(select(Role).where(Role.is_system.is_(True)))).scalars().first()
         if admin_role is None:
-            admin_role = Role(
-                name="Admin",
-                category_id=admin_category.id,
-                all_roles=True,
-                permissions=list(all_permissions)
-            )
+            admin_role = (await db.execute(select(Role).where(Role.name == "Admin"))).scalar_one_or_none()
+        if admin_role is None:
+            admin_role = Role(name="Admin", description="Main administrator (protected)")
             db.add(admin_role)
-            await db.flush()  # get admin_role.id
+            await db.flush()
+        await db.refresh(admin_role, ["permissions"])
+        admin_role.is_system = True
+        admin_role.all_roles = True
+        admin_role.is_active = True
+        admin_role.permissions = list(all_permissions)
+
+        user = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+        if user is None:
+            if not name or not password:
+                print("This email has no account yet: give --name and --password to create it.")
+                return
+            user = User(name=name.strip(), email=email, hashed_password=hash_password(password), is_active=True)
+            db.add(user)
+            print(f"Created account for {email}.")
         else:
-            if admin_role.category_id != admin_category.id:
-                admin_role.category_id = admin_category.id
-            if not admin_role.all_roles:
-                admin_role.all_roles = True
-            # Always update direct permissions
-            admin_role.permissions = list(all_permissions)
+            if name:
+                user.name = name.strip()
+            if password:
+                user.hashed_password = hash_password(password)
+                print("Password updated.")
+            user.is_active = True
 
         user.role_id = admin_role.id
         user.manage_all_departments = True
         await db.commit()
-        print(f"'{email}' is now an Admin.")
+        print(f"'{email}' is now the main Admin.")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python -m app.bootstrap_admin <email>")
-        sys.exit(1)
-    asyncio.run(bootstrap_admin(sys.argv[1]))
+    parser = argparse.ArgumentParser(description="Create or repair the main Admin account.")
+    parser.add_argument("--email", required=True)
+    parser.add_argument("--name")
+    parser.add_argument("--password")
+    args = parser.parse_args()
+    asyncio.run(bootstrap_admin(args.email, args.name, args.password))

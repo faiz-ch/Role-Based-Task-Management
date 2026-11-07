@@ -107,6 +107,16 @@ async def get_current_user(
     return user
 
 
+def is_admin(user: User | None) -> bool:
+    """
+    The main Admin: a user whose role is the built-in Admin role (is_system=True,
+    created only by bootstrap_admin.py). Admin implicitly has every permission,
+    every department in scope and may assign every role. No other role can ever
+    gain these powers, however many permissions it has.
+    """
+    return user is not None and user.role is not None and bool(user.role.is_system)
+
+
 def require_permission(permission_name: str):
     """
     Usage in a route:
@@ -116,7 +126,9 @@ def require_permission(permission_name: str):
 
     async def checker(current_user: User = Depends(get_current_user)) -> User:
         if current_user.role is None:
-            raise HTTPException(status_code=403, detail="User has no role assigned")
+            raise HTTPException(status_code=403, detail="Your account has no role yet. Ask an administrator to assign one.")
+        if is_admin(current_user):
+            return current_user
 
         user_permissions = {p.name for p in current_user.role.permissions}
         if permission_name not in user_permissions:
@@ -133,6 +145,8 @@ def has_permission(user: User, permission_name: str) -> bool:
     """Check if a user has a specific permission."""
     if user.role is None:
         return False
+    if is_admin(user):
+        return True
     return any(p.name == permission_name for p in user.role.permissions)
 
 
@@ -142,7 +156,7 @@ def get_scoped_department_ids(user: User) -> set[int] | None:
     caller should skip department filtering entirely in that case.
     Returns a (possibly empty) set of department ids otherwise.
     """
-    if user.manage_all_departments:
+    if user.manage_all_departments or is_admin(user):
         return None
     return {d.id for d in user.managed_departments}
 
@@ -155,7 +169,7 @@ def get_assignable_role_ids(user: User) -> set[int] | None:
     """
     if user.role is None:
         return set()
-    if user.role.all_roles:
+    if user.role.all_roles or is_admin(user):
         return None
     return {r.id for r in user.role.assignable_roles} | {r.id for r in user.extra_assignable_roles}
 
@@ -171,6 +185,9 @@ def role_in_department_scope(user: User, role: Role) -> bool:
 def can_assign_role(user: User, role: Role) -> bool:
     """Base list + personal extras, then the department-tag filter."""
     if user.role is None:
+        return False
+    # The Admin role can only ever be given by the main Admin
+    if role.is_system and not is_admin(user):
         return False
     allowed = get_assignable_role_ids(user)
     if allowed is not None and role.id not in allowed:

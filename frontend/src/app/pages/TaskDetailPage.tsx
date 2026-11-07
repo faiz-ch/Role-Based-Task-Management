@@ -19,6 +19,7 @@ import { Dlg } from "../components/Dlg";
 import { Av } from "../components/Av";
 import { DatePicker } from "../components/DatePicker";
 import { inDepartmentScope } from "../utils/roleAccess";
+import { useErrorPopup } from "../utils/notify";
 
 function fmtDate(d: string) {
   if (!d) return "—";
@@ -67,7 +68,8 @@ export function TaskDetailPage() {
   const attachments = attachmentsQ.data;
   const setAttachments = attachmentsQ.setData;
   const loading = taskQ.isLoading;
-  const [actionError, setError] = useState<string | null>(null);
+  const setError = useErrorPopup(); // action errors → pop-up, the page stays
+  const actionError: string | null = null;
   const error = !hasId
     ? "Task ID is required"
     : actionError || (taskQ.error ? taskQ.error.message || "Failed to load task." : null);

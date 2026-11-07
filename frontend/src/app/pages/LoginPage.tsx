@@ -1,10 +1,9 @@
-import React, { useState } from "react";
-import { useNavigate } from "react-router";
+import React, { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { AuthLayout } from "../components/AuthLayout";
+import { notifyError } from "../utils/notify";
 
 export function LoginPage() {
-  const navigate = useNavigate();
   const { login, loading, error } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -20,7 +19,11 @@ export function LoginPage() {
     }
   }
 
+  // Errors (e.g. wrong password) appear as a pop-up; the form stays as it is
   const displayError = error || localError;
+  useEffect(() => {
+    if (displayError) notifyError(displayError);
+  }, [displayError]);
 
   return (
     <AuthLayout>
@@ -55,16 +58,10 @@ export function LoginPage() {
             disabled={loading}
           />
         </div>
-        {displayError && <p className="rlk-error" role="alert">{displayError}</p>}
         <button type="submit" className="rlk-btn-gold" disabled={loading}>
           {loading ? "Signing in…" : "Sign in"}
         </button>
-        <p className="rlk-card__alt">
-          New to RLKG PMS?{" "}
-          <button type="button" className="rlk-link" onClick={() => navigate("/register")} disabled={loading}>
-            Create an account
-          </button>
-        </p>
+        <p className="rlk-card__alt">Accounts are created by your administrator.</p>
       </form>
     </AuthLayout>
   );

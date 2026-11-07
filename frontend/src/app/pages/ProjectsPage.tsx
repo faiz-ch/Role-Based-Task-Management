@@ -13,6 +13,7 @@ import { FldInput } from "../components/FldInput";
 import { FldSelect } from "../components/FldSelect";
 import { PriBadge } from "../components/PriBadge";
 import { DatePicker } from "../components/DatePicker";
+import { useErrorPopup } from "../utils/notify";
 
 const PROJECT_STATUSES: ProjectStatus[] = ["Planning", "Active", "Done", "Archived"];
 const PRIORITIES: Priority[] = ["Low", "Medium", "High"];
@@ -96,7 +97,8 @@ export function ProjectsPage() {
   const departments = departmentsQ.data;
   const users = usersQ.data;
   const loading = projectsQ.isLoading;
-  const [actionError, setError] = useState<string | null>(null);
+  const setError = useErrorPopup(); // action errors → pop-up, the page stays
+  const actionError: string | null = null;
   const error = actionError || (projectsQ.error ? projectsQ.error.message || "Failed to load projects." : null);
 
   const [searchQuery, setSearchQuery] = useState("");

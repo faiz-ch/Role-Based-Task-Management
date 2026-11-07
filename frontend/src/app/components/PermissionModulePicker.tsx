@@ -2,13 +2,13 @@ import React, { useEffect, useMemo, useRef } from "react";
 import { PermDef } from "../types";
 
 /**
- * One tick box per MODULE (Department, Project, Role, Task, User).
+ * One tick box per MODULE (Organization, Project, Role, Task, User).
  * Ticking a module grants every permission in it (e.g. Project = view + manage).
  * The backend still stores the individual permissions, so nothing changes there.
  */
 
 const MODULE_INFO: Record<string, { label: string; description: string }> = {
-  department: { label: "Departments", description: "Create, edit and delete departments" },
+  organization: { label: "Organization", description: "Manage areas, stations, departments and divisions" },
   project: { label: "Projects", description: "View and manage projects, teams, meetings and files" },
   role: { label: "Roles", description: "Create and edit roles and their permissions" },
   task: { label: "Tasks", description: "Create and manage tasks" },

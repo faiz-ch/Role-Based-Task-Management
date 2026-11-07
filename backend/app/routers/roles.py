@@ -3,7 +3,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.deps import require_permission, get_current_user, can_assign_role, load_assign_context
+from app.core.deps import require_permission, get_current_user, can_assign_role, load_assign_context, is_admin, get_assignable_role_ids
 from app.database import get_db
 from app.models.role import Role, Permission, role_permission, role_assignable_role
 from app.models.category import Category
@@ -71,6 +71,47 @@ async def _role_to_out(db: AsyncSession, role: Role) -> RoleOut:
     )).scalar_one()
     return _build_role_out(role, user_count)
 
+
+
+# ---------------------------------------------------------------------------
+# Admin protection (no one can create or become "another Admin")
+# ---------------------------------------------------------------------------
+async def _check_role_grant(
+    db: AsyncSession,
+    current_user: User,
+    permission_ids: list[int] | None,
+    all_roles: bool | None,
+    assignable_role_ids: list[int] | None,
+) -> None:
+    """
+    Rules for everyone except the main Admin:
+      - you may only put permissions you hold yourself into a role;
+      - a role with EVERY permission can only be made by the main Admin;
+      - "can assign all roles" only if your own role can assign all roles;
+      - assignable roles only from the roles you can assign yourself.
+    """
+    if permission_ids:
+        total = (await db.execute(select(func.count()).select_from(Permission))).scalar() or 0
+        if len(set(permission_ids)) >= total and not is_admin(current_user):
+            raise HTTPException(status_code=403, detail="Only the main Admin can create a role with every permission.")
+    if is_admin(current_user):
+        return
+    await load_assign_context(db, current_user)  # loads the assignable lists used below
+    own = {p.id for p in current_user.role.permissions} if current_user.role else set()
+    if permission_ids and not set(permission_ids) <= own:
+        raise HTTPException(status_code=403, detail="You can only give a role the permissions you have yourself.")
+    own_assignable = get_assignable_role_ids(current_user)
+    if all_roles and own_assignable is not None:
+        raise HTTPException(status_code=403, detail="You cannot let a role assign all roles, because your own role cannot.")
+    if assignable_role_ids and own_assignable is not None and not set(assignable_role_ids) <= own_assignable:
+        raise HTTPException(status_code=403, detail="You can only let a role assign roles that you can assign yourself.")
+
+
+def _check_role_editable(current_user: User, role: Role) -> None:
+    if role.is_system:
+        raise HTTPException(status_code=403, detail="The Admin role is protected and cannot be changed or deleted.")
+    if not is_admin(current_user) and current_user.role_id == role.id:
+        raise HTTPException(status_code=403, detail="You cannot change or delete your own role. Ask an administrator.")
 
 @router.get("", response_model=list[RoleOut])
 async def list_roles(
@@ -170,22 +211,7 @@ async def create_role(
     if payload.department_tag_id is not None and await db.get(Department, payload.department_tag_id) is None:
         raise HTTPException(status_code=404, detail="Department for tag not found")
 
-    role = Role(
-        name=payload.name,
-        description=payload.description,
-        color=payload.color,
-        is_active=payload.is_active,
-        is_system=payload.is_system,
-        category_id=payload.category_id,
-        department_tag_id=payload.department_tag_id,
-        all_roles=payload.all_roles,
-        created_by=current_user.id,
-    )
-    db.add(role)
-    await db.commit()
-    await db.refresh(role)
-
-    # Resolve permissions: use explicit permission_ids if provided, otherwise copy from category
+    # Permissions: explicit list, or copied from the category preset
     resolved_permission_ids = payload.permission_ids
     if not resolved_permission_ids and payload.category_id is not None:
         category_result = await db.execute(
@@ -194,6 +220,22 @@ async def create_role(
         category = category_result.scalar_one_or_none()
         if category is not None:
             resolved_permission_ids = [p.id for p in category.permissions]
+    await _check_role_grant(db, current_user, resolved_permission_ids, payload.all_roles, payload.assignable_role_ids)
+
+    role = Role(
+        name=payload.name,
+        description=payload.description,
+        color=payload.color,
+        is_active=payload.is_active,
+        is_system=False,  # the Admin role is created only by bootstrap_admin.py
+        category_id=payload.category_id,
+        department_tag_id=payload.department_tag_id,
+        all_roles=payload.all_roles,
+        created_by=current_user.id,
+    )
+    db.add(role)
+    await db.commit()
+    await db.refresh(role)
 
     # Insert permission associations
     if resolved_permission_ids:
@@ -237,6 +279,8 @@ async def update_role(
     role = result.scalar_one_or_none()
     if role is None:
         raise HTTPException(status_code=404, detail="Role not found")
+    _check_role_editable(current_user, role)
+    await _check_role_grant(db, current_user, payload.permission_ids, payload.all_roles, payload.assignable_role_ids)
 
     # Track changed fields for activity log
     changed_fields = []
@@ -254,9 +298,7 @@ async def update_role(
     if payload.is_active is not None:
         role.is_active = payload.is_active
         changed_fields.append("is_active")
-    if payload.is_system is not None:
-        role.is_system = payload.is_system
-        changed_fields.append("is_system")
+    # is_system cannot be changed through the API (only bootstrap_admin.py sets it)
 
     # Handle permissions update
     if payload.permission_ids is not None:
@@ -323,6 +365,7 @@ async def delete_role(
     role = result.scalar_one_or_none()
     if role is None:
         raise HTTPException(status_code=404, detail="Role not found")
+    _check_role_editable(current_user, role)
 
     # Capture affected user count before unassigning
     users_result = await db.execute(select(User).where(User.role_id == role_id))

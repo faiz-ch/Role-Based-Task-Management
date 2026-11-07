@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.deps import (
     require_permission, get_current_user, has_permission, get_scoped_department_ids,
-    user_load_options, can_assign_role, load_assign_context,
+    user_load_options, can_assign_role, load_assign_context, is_admin,
 )
 from app.core.security import hash_password
 from app.database import get_db
@@ -33,6 +33,17 @@ UPLOAD_DIR = "uploads"
 ALLOWED_AVATAR_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 MAX_AVATAR_SIZE = 2 * 1024 * 1024  # 2MB
 
+
+
+async def _protect_admin_account(db: AsyncSession, current_user: User, user_id: int) -> None:
+    """Only the main Admin may change, deactivate or delete an Admin account."""
+    if is_admin(current_user):
+        return
+    target_is_admin = (await db.execute(
+        select(Role.is_system).join(User, User.role_id == Role.id).where(User.id == user_id)
+    )).scalar()
+    if target_is_admin:
+        raise HTTPException(status_code=403, detail="Only the main Admin can change an Admin account.")
 
 @router.get("", response_model=list[UserOut])
 async def list_users(
@@ -127,7 +138,7 @@ async def _replace_extra_roles(db: AsyncSession, user_id: int, roles: list[Role]
 # ---------------------------------------------------------------------------
 # Permissions whose reach is limited by "Departments this user manages".
 # A role with none of these gets no benefit from a department scope.
-SCOPE_PERMISSIONS = {"project:view", "project:manage", "user:view", "user:manage", "department:manage"}
+SCOPE_PERMISSIONS = {"project:view", "project:manage", "user:view", "user:manage"}
 
 
 def role_uses_department_scope(role: Role | None) -> bool:
@@ -436,6 +447,7 @@ async def update_user(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    await _protect_admin_account(db, current_user, user_id)
     if not has_permission(current_user, "user:manage"):
         raise HTTPException(status_code=403, detail="You do not have permission to manage users")
 
@@ -571,6 +583,7 @@ async def assign_role(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    await _protect_admin_account(db, current_user, user_id)
     if not has_permission(current_user, "user:manage"):
         raise HTTPException(status_code=403, detail="You do not have permission to manage users")
 
@@ -620,6 +633,7 @@ async def delete_user(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    await _protect_admin_account(db, current_user, user_id)
     if not has_permission(current_user, "user:manage"):
         raise HTTPException(status_code=403, detail="You do not have permission to manage users")
     
@@ -799,6 +813,7 @@ async def assign_department(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    await _protect_admin_account(db, current_user, user_id)
     """
     Assign a user to a department. Mirrors the assign_role endpoint pattern.
     Validates the department exists if not null, sets user.department_id,
@@ -874,6 +889,7 @@ async def upload_avatar(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    await _protect_admin_account(db, current_user, user_id)
     if current_user.id != user_id and not has_permission(current_user, "user:manage"):
         raise HTTPException(status_code=403, detail="Not allowed to change this user's picture")
 
@@ -918,6 +934,7 @@ async def delete_avatar(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    await _protect_admin_account(db, current_user, user_id)
     if current_user.id != user_id and not has_permission(current_user, "user:manage"):
         raise HTTPException(status_code=403, detail="Not allowed to change this user's picture")
 

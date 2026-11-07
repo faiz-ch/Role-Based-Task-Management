@@ -140,8 +140,8 @@ async def notify_project_completed(project_id: int) -> None:
         # Email all users with Admin role
         result = await db.execute(
             select(User)
-            .join(Role)
-            .where(Role.name == "Admin")
+            .join(Role, User.role_id == Role.id)
+            .where(Role.is_system.is_(True), User.is_active.is_(True))
         )
         admin_users = result.scalars().all()
         for admin in admin_users:
@@ -155,12 +155,11 @@ async def notify_project_pending_approval(project_id: int) -> None:
             return
         subject, body = email_templates.project_pending_approval_email(project)
         
-        # Email every user whose role's category name is "Admin"
+        # Email every active user with the built-in Admin role
         result = await db.execute(
             select(User)
             .join(Role, User.role_id == Role.id)
-            .join(Category, Role.category_id == Category.id)
-            .where(Category.name == "Admin")
+            .where(Role.is_system.is_(True), User.is_active.is_(True))
         )
         admin_users = result.scalars().all()
         for admin in admin_users:

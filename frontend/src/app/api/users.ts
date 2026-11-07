@@ -34,6 +34,7 @@ function mapDepartmentBrief(d: any): Department {
     memberCount: d.member_count || 0,
     projectCount: d.project_count || 0,
     createdAt: d.created_at || "",
+    stations: Array.isArray(d.stations) ? d.stations.map((st: any) => ({ id: st.id, name: st.name, code: st.code })) : [],
   };
 }
 

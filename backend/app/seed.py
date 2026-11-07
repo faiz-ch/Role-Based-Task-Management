@@ -1,5 +1,5 @@
 """
-Seeds the 6 fixed permissions into the database if they don't already
+Seeds the 8 fixed permissions into the database if they don't already
 exist. Safe to run multiple times (won't create duplicates).
 
 Run manually with: python -m app.seed
@@ -19,9 +19,10 @@ PERMISSIONS = [
     # User permissions
     "user:view",
     "user:manage",
-    # Role & Department permissions
+    # Role permission
     "role:manage",
-    "department:manage",
+    # Organization: manage Areas, Stations, Departments and Divisions
+    "organization:manage",
     # Task permissions
     "task:create",
     "task:manage",

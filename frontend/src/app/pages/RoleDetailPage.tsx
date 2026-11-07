@@ -11,6 +11,7 @@ import { FldInput } from "../components/FldInput";
 import { PermissionModulePicker, hasModule } from "../components/PermissionModulePicker";
 import { RoleChecklist } from "../components/RoleChecklist";
 import { roleNeedsDepartments } from "../utils/roleAccess";
+import { useErrorPopup } from "../utils/notify";
 
 const COLOR_SWATCHES = [
   { name: "purple", value: "#a855f7", bg: "bg-purple-100", text: "text-purple-600" },
@@ -81,7 +82,8 @@ export function RoleDetailPage() {
   const allRoles = rolesQ.data;
   const allUsers = usersQ.data;
   const loading = roleQ.isLoading;
-  const [actionError, setError] = useState<string | null>(null);
+  const setError = useErrorPopup(); // action errors → pop-up, the page stays
+  const actionError: string | null = null;
   const error = actionError || (roleQ.error ? roleQ.error.message || "Failed to load role details." : null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -95,7 +97,8 @@ export function RoleDetailPage() {
   const [editDescription, setEditDescription] = useState("");
   const [editColor, setEditColor] = useState("blue");
   const [editDepartmentTagId, setEditDepartmentTagId] = useState("");
-  const [editError, setEditError] = useState<string | null>(null);
+  const setEditError = useErrorPopup(); // → pop-up
+  const editError: string | null = null;
 
   // Filter out the current role from the list for assignable roles
   const otherRoles = useMemo(() => {
@@ -278,6 +281,11 @@ export function RoleDetailPage() {
               )}
             </div>
           </div>
+          {role.isSystem ? (
+            <span className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+              <Shield size={16} aria-hidden="true" /> Protected: main Admin role
+            </span>
+          ) : (
           <button
             onClick={openEditDialog}
             className="flex items-center gap-2 px-4 py-2 bg-[#15171C] text-white text-sm font-semibold rounded-lg hover:bg-[#2A2D35] transition-colors cursor-pointer"
@@ -285,6 +293,7 @@ export function RoleDetailPage() {
             <Edit2 size={16} />
             Edit Role
           </button>
+          )}
         </div>
       </div>
 
@@ -379,6 +388,13 @@ export function RoleDetailPage() {
             </div>
           )}
           <div className="bg-white rounded-xl border border-border p-4 space-y-4">
+            {role?.isSystem && (
+              <div className="flex items-start gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-xs text-blue-800">
+                <Shield size={14} className="flex-shrink-0 mt-0.5" aria-hidden="true" />
+                <span>The main Admin role always has every permission, every department and every role. It cannot be changed or deleted.</span>
+              </div>
+            )}
+            <fieldset disabled={!!role?.isSystem} className="space-y-4 disabled:opacity-60">
             {/* One box per module */}
             <PermissionModulePicker
               allPermissions={allPermissions}
@@ -426,6 +442,7 @@ export function RoleDetailPage() {
                 Save Changes
               </button>
             </div>
+            </fieldset>
           </div>
         </div>
       )}

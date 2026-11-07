@@ -5,13 +5,12 @@ import { Page } from "./types";
 import { Shell } from "./components/Shell";
 import { NoRoleView } from "./components/NoRoleView";
 import { LoginPage } from "./pages/LoginPage";
-import { RegisterPage } from "./pages/RegisterPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { TasksPage } from "./pages/TasksPage";
 import { UsersPage } from "./pages/UsersPage";
 import { RolesPage } from "./pages/RolesPage";
 import { RoleDetailPage } from "./pages/RoleDetailPage";
-import { DepartmentsPage } from "./pages/DepartmentsPage";
+import { OrganizationPage } from "./pages/OrganizationPage";
 import { TaskDetailPage } from "./pages/TaskDetailPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { ProjectDetailPage } from "./pages/ProjectDetailPage";
@@ -19,6 +18,7 @@ import { SubtaskDetailPage } from "./pages/SubtaskDetailPage";
 import { DepartmentDetailPage } from "./pages/DepartmentDetailPage";
 import { UserDetailPage } from "./pages/UserDetailPage";
 import { OverdueViewAllPage } from "./pages/OverdueViewAllPage";
+import { Toaster } from "sonner";
 
 function FullPageSpinner() {
   return (
@@ -83,14 +83,8 @@ function AppContent() {
           </PublicRoute>
         }
       />
-      <Route
-        path="/register"
-        element={
-          <PublicRoute>
-            <RegisterPage />
-          </PublicRoute>
-        }
-      />
+      {/* Self-registration is switched off: old /register links go to sign-in */}
+      <Route path="/register" element={<Navigate to="/login" replace />} />
 
       {/* Protected routes */}
       <Route
@@ -156,19 +150,21 @@ function AppContent() {
                     }
                   />
                   <Route
-                    path="/departments"
+                    path="/organization"
                     element={
-                      permissions.includes("department:manage") ? (
-                        <DepartmentsPage />
+                      permissions.includes("organization:manage") ? (
+                        <OrganizationPage />
                       ) : (
                         <Navigate to="/tasks" replace />
                       )
                     }
                   />
+                  {/* old address of the Departments page */}
+                  <Route path="/departments" element={<Navigate to="/organization?tab=departments" replace />} />
                   <Route
                     path="/departments/:departmentId"
                     element={
-                      permissions.includes("department:manage") ? (
+                      permissions.includes("organization:manage") ? (
                         <DepartmentDetailPage />
                       ) : (
                         <Navigate to="/tasks" replace />
@@ -192,6 +188,8 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <AppContent />
+        {/* Pop-up notifications for every page (errors stay until closed) */}
+        <Toaster position="top-right" richColors closeButton expand visibleToasts={4} toastOptions={{ style: { fontFamily: "var(--font-ui)" } }} />
       </AuthProvider>
     </BrowserRouter>
   );

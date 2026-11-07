@@ -26,6 +26,7 @@ class RoleBrief(BaseModel):
     name: str
     color: str
     is_active: bool
+    is_system: bool = False  # True = the built-in main Admin role
     permissions: list[PermissionOut] = []
     all_roles: bool = False
     assignable_roles: list[RoleBriefMinimal] = []

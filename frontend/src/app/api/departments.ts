@@ -13,11 +13,12 @@ function mapDepartment(d: any): Department {
     memberCount: d.member_count,
     projectCount: d.project_count,
     createdAt: d.created_at,
+    stations: Array.isArray(d.stations) ? d.stations.map((st: any) => ({ id: st.id, name: st.name, code: st.code })) : [],
   };
 }
 
-export async function getDepartments(): Promise<Department[]> {
-  const data = await apiFetch("/departments");
+export async function getDepartments(stationId?: number): Promise<Department[]> {
+  const data = await apiFetch(typeof stationId === "number" ? `/departments?station_id=${stationId}` : "/departments");
   return Array.isArray(data) ? data.map(mapDepartment) : [];
 }
 
@@ -32,8 +33,10 @@ export async function createDepartment(input: {
   headId?: number | null;
   color?: string;
   isActive?: boolean;
+  stationIds?: number[];
 }): Promise<Department> {
   const payload: any = { name: input.name };
+  if (input.stationIds !== undefined) payload.station_ids = input.stationIds;
   if (input.description !== undefined) payload.description = input.description || null;
   if (input.headId !== undefined) payload.head_id = input.headId;
   if (input.color !== undefined) payload.color = input.color;
@@ -51,8 +54,10 @@ export async function updateDepartment(id: number, input: Partial<{
   headId: number | null;
   color: string;
   isActive: boolean;
+  stationIds: number[];
 }>): Promise<Department> {
   const payload: any = {};
+  if (input.stationIds !== undefined) payload.station_ids = input.stationIds;
   if (input.name !== undefined) payload.name = input.name;
   if (input.description !== undefined) payload.description = input.description || null;
   if (input.headId !== undefined) payload.head_id = input.headId;

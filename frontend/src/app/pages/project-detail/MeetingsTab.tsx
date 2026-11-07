@@ -3,6 +3,7 @@ import { Video, Calendar, Clock, Users, Download, RefreshCw, X, Loader2 } from "
 import { Meeting, MeetingDetail, InviteeAttendance, Participant, Recording } from "../../types";
 import { Dlg } from "../../components/Dlg";
 import { getProjectMeetings, getMeeting, syncMeeting, cancelMeeting, downloadRecording } from "../../api/meetings";
+import { useErrorPopup } from "../../utils/notify";
 
 interface MeetingsTabProps {
   projectId: number;
@@ -70,7 +71,8 @@ export function MeetingsTab({ projectId, canScheduleMeeting }: MeetingsTabProps)
   const [selectedMeeting, setSelectedMeeting] = useState<MeetingDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [syncError, setSyncError] = useState<string | null>(null);
+  const setSyncError = useErrorPopup(); // → pop-up
+  const syncError: string | null = null;
   const [cancelling, setCancelling] = useState(false);
 
   useEffect(() => {

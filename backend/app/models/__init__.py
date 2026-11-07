@@ -8,6 +8,7 @@ from app.models.user import User
 from app.models.role import Role, Permission, role_permission, role_assignable_role
 from app.models.task import Task, TaskStatus, TaskPriority, TaskTeam
 from app.models.department import Department
+from app.models.organization import Area, Station, Division, station_department
 from app.models.category import Category, category_permission
 from app.models.attachment import Attachment
 from app.models.project import Project, ProjectStatus, ProjectPriority, ProjectTeam, project_department
