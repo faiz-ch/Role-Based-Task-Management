@@ -100,6 +100,29 @@ async def update_area(area_id: int, payload: AreaUpdate, db: AsyncSession = Depe
     return _area_out(await _get_area(db, area_id))
 
 
+async def _block_if_projects_use(db: AsyncSession, st, d) -> None:
+    """A project that runs at this station with this department keeps the link."""
+    from sqlalchemy import func as _f
+    from app.models.project import project_station, project_department
+    n = (await db.execute(
+        select(_f.count()).select_from(project_station)
+        .join(project_department, project_department.c.project_id == project_station.c.project_id)
+        .where(project_station.c.station_id == st.id, project_department.c.department_id == d.id)
+    )).scalar() or 0
+    if n:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{n} project(s) use '{d.name}' at '{st.name}'. Change those projects first.",
+        )
+
+
+async def _drop_managed_pair(db: AsyncSession, station_id: int, department_id: int) -> None:
+    """'Manages <department> at <station>' no longer means anything once the link is gone."""
+    from app.models.user import UserManagedPair
+    t = UserManagedPair.__table__
+    await db.execute(t.delete().where(t.c.station_id == station_id, t.c.department_id == department_id))
+
+
 async def _people_count(db: AsyncSession, *conds) -> int:
     from sqlalchemy import func as _f
     return (await db.execute(select(_f.count(User.id)).where(*conds))).scalar() or 0
@@ -213,6 +236,9 @@ async def update_station(station_id: int, payload: StationUpdate, db: AsyncSessi
                     status_code=400,
                     detail=f"{n} person(s) work in '{d.name}' at '{st.name}'. Move them to another department first.",
                 )
+            await _block_if_projects_use(db, st, d)
+        for d in removed:
+            await _drop_managed_pair(db, st.id, d.id)
         st.departments = new_depts
     if payload.is_active is not None:
         st.is_active = payload.is_active
@@ -227,6 +253,11 @@ async def delete_station(station_id: int, db: AsyncSession = Depends(get_db), us
     n = await _people_count(db, User.station_id == st.id)
     if n:
         raise HTTPException(status_code=400, detail=f"{n} person(s) work at '{st.name}'. Move them to another station first.")
+    from sqlalchemy import func as _f
+    from app.models.project import project_station
+    np_ = (await db.execute(select(_f.count()).select_from(project_station).where(project_station.c.station_id == st.id))).scalar() or 0
+    if np_:
+        raise HTTPException(status_code=400, detail=f"{np_} project(s) run at '{st.name}'. Change those projects first.")
     name = st.name
     await db.delete(st)  # its department links are removed by the database
     await log_activity(db, user.id, "station_deleted", "station", station_id, detail=f"Deleted station '{name}'")

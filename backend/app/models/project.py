@@ -34,6 +34,21 @@ project_department = Table(
 )
 
 
+# Phase 3: a project runs at one or more Stations and can belong to several Divisions.
+project_station = Table(
+    "project_station",
+    Base.metadata,
+    Column("project_id", Integer, ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True),
+    Column("station_id", Integer, ForeignKey("stations.id", ondelete="CASCADE"), primary_key=True),
+)
+project_division = Table(
+    "project_division",
+    Base.metadata,
+    Column("project_id", Integer, ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True),
+    Column("division_id", Integer, ForeignKey("divisions.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
 class ProjectTeam(Base):
     """
     Association table for project team members with metadata.
@@ -83,6 +98,9 @@ class Project(Base):
 
     # Many-to-many relationships
     departments = relationship("Department", secondary=project_department, back_populates="projects")
+    # Always loaded with the project ("selectin"): every scope check needs the stations.
+    stations = relationship("Station", secondary=project_station, lazy="selectin", order_by="Station.name", passive_deletes=True)
+    divisions = relationship("Division", secondary=project_division, lazy="selectin", order_by="Division.name", passive_deletes=True)
     team_members = relationship("ProjectTeam", back_populates="project", cascade="all, delete-orphan")
 
     # One-to-many relationship with tasks

@@ -113,7 +113,7 @@ export function ProjectDetailPage() {
   const [showScheduleDialog, setShowScheduleDialog] = useState(false);
 
   // Department scope lives on the user (manageAllDepartments / managedDepartments)
-  const canManage = permissions.includes("project:manage") && inDepartmentScope(currentUser, project?.departmentIds);
+  const canManage = permissions.includes("project:manage") && inDepartmentScope(currentUser, project);
   const isLead = currentUser?.id === project?.leadId;
   const canScheduleMeeting = canManage || isLead;
 
@@ -408,6 +408,20 @@ export function ProjectDetailPage() {
         {project.description && (
           <p className="text-sm text-muted-foreground">{project.description}</p>
         )}
+        <dl className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm" data-testid="project-org-info">
+          <div>
+            <dt className="text-xs text-muted-foreground uppercase tracking-wider">Stations</dt>
+            <dd className="text-foreground">{project.stations.map((st) => st.code ? `${st.name} (${st.code})` : st.name).join(", ") || "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground uppercase tracking-wider">Departments</dt>
+            <dd className="text-foreground">{projectDepts.map((d) => d.name).join(", ") || "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground uppercase tracking-wider">Divisions</dt>
+            <dd className="text-foreground">{project.divisions.map((d) => d.name).join(", ") || "None"}</dd>
+          </div>
+        </dl>
       </div>
 
       {/* Tab Navigation */}

@@ -5,7 +5,8 @@ import { useCachedQuery, qk, FRESH } from "../api/queries";
 import { getDashboardFilterOptions, DashboardFilterOptions, DashboardParams } from "../api/dashboard";
 
 /**
- * Dashboard filters: [Department] [Project] [Time period] [Clear]
+ * Dashboard filters: [Area] [Station] [Division] [Department] [Project] [Time period] [Clear]
+ * (Area / Station / Division appear only when the person has more than one to choose from.)
  *
  * - Options come from GET /dashboard/filter-options, so each person only sees
  *   departments / projects they are already allowed to see. The server also
@@ -19,6 +20,9 @@ import { getDashboardFilterOptions, DashboardFilterOptions, DashboardParams } fr
 export type Period = "all" | "week" | "month" | "overdue" | "custom";
 
 export interface DashFilters {
+  areaId: number | null;
+  stationId: number | null;
+  divisionId: number | null;
   departmentId: number | null;
   projectId: number | null;
   period: Period;
@@ -26,7 +30,7 @@ export interface DashFilters {
   to: string;   // YYYY-MM-DD (custom only)
 }
 
-const DEFAULT_FILTERS: DashFilters = { departmentId: null, projectId: null, period: "all", from: "", to: "" };
+const DEFAULT_FILTERS: DashFilters = { areaId: null, stationId: null, divisionId: null, departmentId: null, projectId: null, period: "all", from: "", to: "" };
 
 const PERIOD_OPTIONS: { value: Period; label: string }[] = [
   { value: "all", label: "Any time" },
@@ -74,6 +78,9 @@ function parseDay(value: string): Date | null {
 /** Turn the UI choice into the query the server understands. */
 export function filtersToParams(f: DashFilters): DashboardParams {
   const params: DashboardParams = {};
+  if (f.areaId != null) params.area_id = f.areaId;
+  if (f.stationId != null) params.station_id = f.stationId;
+  if (f.divisionId != null) params.division_id = f.divisionId;
   if (f.departmentId != null) params.department_id = f.departmentId;
   if (f.projectId != null) params.project_id = f.projectId;
   const today = new Date();
@@ -98,7 +105,7 @@ export function filtersToParams(f: DashFilters): DashboardParams {
 }
 
 export function isFiltered(f: DashFilters): boolean {
-  return f.departmentId != null || f.projectId != null || f.period !== "all";
+  return f.areaId != null || f.stationId != null || f.divisionId != null || f.departmentId != null || f.projectId != null || f.period !== "all";
 }
 
 /**
@@ -135,12 +142,16 @@ export function useDashboardFilters() {
     if (next.projectId != null && !options.projects.some((p) => p.id === next.projectId)) {
       next = { ...next, projectId: null };
     }
+    if (next.areaId != null && !(options.areas ?? []).some((a) => a.id === next.areaId)) next = { ...next, areaId: null };
+    if (next.stationId != null && !(options.stations ?? []).some((s) => s.id === next.stationId)) next = { ...next, stationId: null };
+    if (next.divisionId != null && !(options.divisions ?? []).some((d) => d.id === next.divisionId)) next = { ...next, divisionId: null };
     if (next !== filters) setFilters(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [options]);
 
   // Don't send filters until we know they are allowed (prevents a 403 flash)
-  const ready = options !== null || (filters.departmentId == null && filters.projectId == null);
+  const ready = options !== null || (filters.departmentId == null && filters.projectId == null
+    && filters.areaId == null && filters.stationId == null && filters.divisionId == null);
   const params = useMemo(() => filtersToParams(filters), [filters]);
 
   return { filters, setFilters, params, options, ready, isFiltered: isFiltered(filters) };
@@ -160,20 +171,25 @@ export function DashboardFilters({
   if (!options) return null;
   const isManager = options.user_type === "manager";
 
-  // Project list follows the chosen department
-  const projectChoices =
-    filters.departmentId == null
-      ? options.projects
-      : options.projects.filter((p) => p.department_ids.includes(filters.departmentId!));
+  const areas = options.areas ?? [], stations = options.stations ?? [], divisions = options.divisions ?? [];
+  const stationArea = new Map(stations.map((s) => [s.id, s.area_id]));
+  const stationChoices = filters.areaId == null ? stations : stations.filter((s) => s.area_id === filters.areaId);
 
+  // Project list follows the chosen area / station / division / department
+  const fits = (p: DashboardFilterOptions["projects"][number], f: DashFilters) =>
+    (f.departmentId == null || p.department_ids.includes(f.departmentId)) &&
+    (f.stationId == null || (p.station_ids ?? []).includes(f.stationId)) &&
+    (f.areaId == null || (p.station_ids ?? []).some((s) => stationArea.get(s) === f.areaId)) &&
+    (f.divisionId == null || (p.division_ids ?? []).includes(f.divisionId));
+  const projectChoices = options.projects.filter((p) => fits(p, filters));
+
+  // keep the chosen project only if it still fits the other filters
+  function change(next: DashFilters) {
+    const keep = next.projectId != null && options!.projects.some((p) => p.id === next.projectId && fits(p, next));
+    setFilters({ ...next, projectId: keep ? next.projectId : null });
+  }
   function changeDepartment(value: string) {
-    const departmentId = value ? Number(value) : null;
-    // keep the project only if it belongs to the new department
-    const keepProject =
-      filters.projectId != null &&
-      (departmentId == null ||
-        options!.projects.some((p) => p.id === filters.projectId && p.department_ids.includes(departmentId)));
-    setFilters({ ...filters, departmentId, projectId: keepProject ? filters.projectId : null });
+    change({ ...filters, departmentId: value ? Number(value) : null });
   }
 
   return (
@@ -182,6 +198,41 @@ export function DashboardFilters({
         <Filter size={14} />
         Filters
       </div>
+
+      {isManager && areas.length > 1 && (
+        <label className="rlk-filters__field">
+          <span>Area</span>
+          <select aria-label="Area filter" value={filters.areaId ?? ""}
+            onChange={(e) => { const areaId = e.target.value ? Number(e.target.value) : null;
+              const keepSt = filters.stationId != null && (areaId == null || stationArea.get(filters.stationId) === areaId);
+              change({ ...filters, areaId, stationId: keepSt ? filters.stationId : null }); }}>
+            <option value="">All areas</option>
+            {areas.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+        </label>
+      )}
+
+      {isManager && stations.length > 1 && (
+        <label className="rlk-filters__field">
+          <span>Station</span>
+          <select aria-label="Station filter" value={filters.stationId ?? ""}
+            onChange={(e) => change({ ...filters, stationId: e.target.value ? Number(e.target.value) : null })}>
+            <option value="">All stations</option>
+            {stationChoices.map((s) => <option key={s.id} value={s.id}>{s.code || s.name}</option>)}
+          </select>
+        </label>
+      )}
+
+      {isManager && divisions.length > 0 && (
+        <label className="rlk-filters__field">
+          <span>Division</span>
+          <select aria-label="Division filter" value={filters.divisionId ?? ""}
+            onChange={(e) => change({ ...filters, divisionId: e.target.value ? Number(e.target.value) : null })}>
+            <option value="">All divisions</option>
+            {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+        </label>
+      )}
 
       {isManager && (
         <label className="rlk-filters__field rlk-filters__dept">

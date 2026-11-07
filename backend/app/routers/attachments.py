@@ -82,9 +82,8 @@ async def upload_project_attachment(
     has_view_perm = has_permission(current_user, "project:view") or has_permission(current_user, "project:manage")
     in_scope = False
     if has_view_perm:
-        from app.core.deps import get_scoped_department_ids
-        scoped_dept_ids = get_scoped_department_ids(current_user)
-        if scoped_dept_ids is None or any(d.id in scoped_dept_ids for d in project.departments):
+        from app.core.deps import project_in_scope
+        if project_in_scope(current_user, project):
             in_scope = True
 
     is_lead = is_project_lead(current_user, project)
@@ -130,9 +129,8 @@ async def list_project_attachments(
     has_view_perm = has_permission(current_user, "project:view") or has_permission(current_user, "project:manage")
     in_scope = False
     if has_view_perm:
-        from app.core.deps import get_scoped_department_ids
-        scoped_dept_ids = get_scoped_department_ids(current_user)
-        if scoped_dept_ids is None or any(d.id in scoped_dept_ids for d in project.departments):
+        from app.core.deps import project_in_scope
+        if project_in_scope(current_user, project):
             in_scope = True
 
     is_lead = is_project_lead(current_user, project)
@@ -168,9 +166,8 @@ async def download_attachment(
         has_view_perm = has_permission(current_user, "project:view") or has_permission(current_user, "project:manage")
         in_scope = False
         if has_view_perm:
-            from app.core.deps import get_scoped_department_ids
-            scoped_dept_ids = get_scoped_department_ids(current_user)
-            if scoped_dept_ids is None or any(d.id in scoped_dept_ids for d in project.departments):
+            from app.core.deps import project_in_scope
+            if project_in_scope(current_user, project):
                 in_scope = True
 
         is_lead = is_project_lead(current_user, project)
@@ -228,9 +225,8 @@ async def delete_attachment(
         has_view_perm = has_permission(current_user, "project:view") or has_permission(current_user, "project:manage")
         in_scope = False
         if has_view_perm:
-            from app.core.deps import get_scoped_department_ids
-            scoped_dept_ids = get_scoped_department_ids(current_user)
-            if scoped_dept_ids is None or any(d.id in scoped_dept_ids for d in project.departments):
+            from app.core.deps import project_in_scope
+            if project_in_scope(current_user, project):
                 in_scope = True
 
         is_lead = is_project_lead(current_user, project)
@@ -302,9 +298,8 @@ async def preview_attachment(
         has_view_perm = has_permission(current_user, "project:view") or has_permission(current_user, "project:manage")
         in_scope = False
         if has_view_perm:
-            from app.core.deps import get_scoped_department_ids
-            scoped_dept_ids = get_scoped_department_ids(current_user)
-            if scoped_dept_ids is None or any(d.id in scoped_dept_ids for d in project.departments):
+            from app.core.deps import project_in_scope
+            if project_in_scope(current_user, project):
                 in_scope = True
 
         is_lead = is_project_lead(current_user, project)

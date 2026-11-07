@@ -169,7 +169,7 @@ export function TaskDetailPage() {
   const projectDepts = departments.filter((d) => project?.departmentIds.includes(d.id));
 
   // Department scope lives on the user (manageAllDepartments / managedDepartments)
-  const canManage = permissions.includes("project:manage") && inDepartmentScope(currentUser, project?.departmentIds);
+  const canManage = permissions.includes("project:manage") && inDepartmentScope(currentUser, project);
 
   function canManageTask(): boolean {
     if (!task || !project) return false;

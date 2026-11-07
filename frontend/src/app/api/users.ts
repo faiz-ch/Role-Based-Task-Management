@@ -56,7 +56,13 @@ export function mapUser(u: any): UserType {
     managedStations: Array.isArray(u.managed_stations)
       ? u.managed_stations.map((st: any) => ({ id: st.id, name: st.name, code: st.code, areaId: st.area_id }))
       : [],
-    managedDepartments: Array.isArray(u.managed_departments) ? u.managed_departments.map(mapDepartmentBrief) : [],
+    managedPairs: Array.isArray(u.managed_pairs)
+      ? u.managed_pairs.map((p: any) => ({
+          station: { id: p.station.id, name: p.station.name, code: p.station.code, areaId: p.station.area_id },
+          department: { id: p.department.id, name: p.department.name },
+        }))
+      : [],
+    scopePairs: Array.isArray(u.scope_pairs) ? u.scope_pairs : [],
     scopeDepartmentIds: Array.isArray(u.scope_department_ids) ? u.scope_department_ids : [],
     extraAssignableRoles: Array.isArray(u.extra_assignable_roles)
       ? u.extra_assignable_roles.map((r: any) => ({ id: r.id, name: r.name }))
@@ -76,12 +82,20 @@ export type PlacementFields = {
   division_id?: number | null;
   managed_area_ids?: number[];
   managed_station_ids?: number[];
+  /** single departments at a station, as "stationId:departmentId" */
+  managed_pairs?: string[];
 };
 
 function pickPlacement(data: PlacementFields): any {
   const out: any = {};
   for (const k of ["employee_code", "joining_date", "area_id", "station_id", "division_id", "managed_area_ids", "managed_station_ids"] as const) {
     if (data[k] !== undefined) out[k] = data[k];
+  }
+  if (data.managed_pairs !== undefined) {
+    out.managed_pairs = data.managed_pairs.map((k) => {
+      const [s, d] = k.split(":").map(Number);
+      return { station_id: s, department_id: d };
+    });
   }
   return out;
 }
@@ -151,7 +165,6 @@ export async function updateUser(id: number, data: {
   department_id?: number | null;
   manager_id?: number | null;
   manage_all_departments?: boolean;
-  managed_department_ids?: number[];
   extra_assignable_role_ids?: number[];
 } & PlacementFields): Promise<UserType> {
   const payload: any = pickPlacement(data);
@@ -162,7 +175,6 @@ export async function updateUser(id: number, data: {
   if (data.department_id !== undefined) payload.department_id = data.department_id;
   if (data.manager_id !== undefined) payload.manager_id = data.manager_id;
   if (data.manage_all_departments !== undefined) payload.manage_all_departments = data.manage_all_departments;
-  if (data.managed_department_ids !== undefined) payload.managed_department_ids = data.managed_department_ids;
   if (data.extra_assignable_role_ids !== undefined) payload.extra_assignable_role_ids = data.extra_assignable_role_ids;
 
   const res = await apiFetch(`/users/${id}`, {
@@ -188,7 +200,6 @@ export async function createUser(data: {
   department_id?: number;
   isActive?: boolean;
   manage_all_departments?: boolean;
-  managed_department_ids?: number[];
   extra_assignable_role_ids?: number[];
   sendWelcomeEmail?: boolean;
 } & PlacementFields): Promise<UserType> {
@@ -200,7 +211,6 @@ export async function createUser(data: {
   if (data.department_id !== undefined) payload.department_id = data.department_id;
   if (data.isActive !== undefined) payload.is_active = data.isActive;
   if (data.manage_all_departments !== undefined) payload.manage_all_departments = data.manage_all_departments;
-  if (data.managed_department_ids !== undefined) payload.managed_department_ids = data.managed_department_ids;
   if (data.extra_assignable_role_ids !== undefined) payload.extra_assignable_role_ids = data.extra_assignable_role_ids;
   if (data.sendWelcomeEmail !== undefined) payload.send_welcome_email = data.sendWelcomeEmail;
 

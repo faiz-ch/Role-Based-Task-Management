@@ -27,6 +27,20 @@ class StationBrief(OrgBrief):
     area_id: int
 
 
+class PairIn(BaseModel):
+    """One department AT one station."""
+    station_id: int
+    department_id: int
+
+
+class ManagedPairOut(BaseModel):
+    station: StationBrief
+    department: OrgBrief
+
+    class Config:
+        from_attributes = True
+
+
 _CODE_RE = re.compile(r"^\d{1,20}$")
 
 
@@ -95,8 +109,9 @@ class UserOut(BaseModel):
     manage_all_departments: bool = False
     managed_areas: list[OrgBrief] = []
     managed_stations: list[StationBrief] = []
-    managed_departments: list[DepartmentBrief] = []
-    scope_department_ids: list[int] = []  # everything the above covers, as department ids
+    managed_pairs: list[ManagedPairOut] = []  # single departments, each at a station
+    scope_pairs: list[str] = []  # everything the above covers, as "station:department"
+    scope_department_ids: list[int] = []
     extra_assignable_roles: list[RoleBriefMinimal] = []
     created_at: datetime
     manager: UserBrief | None = None
@@ -128,7 +143,7 @@ class UserUpdate(BaseModel):
     manage_all_departments: bool | None = None
     managed_area_ids: list[int] | None = None
     managed_station_ids: list[int] | None = None
-    managed_department_ids: list[int] | None = None
+    managed_pairs: list[PairIn] | None = None
     extra_assignable_role_ids: list[int] | None = None
 
     @field_validator("employee_code", mode="before")
@@ -168,7 +183,7 @@ class UserCreate(BaseModel):
     manage_all_departments: bool = False
     managed_area_ids: list[int] = []
     managed_station_ids: list[int] = []
-    managed_department_ids: list[int] = []
+    managed_pairs: list[PairIn] = []
     extra_assignable_role_ids: list[int] = []
     send_welcome_email: bool = True
 

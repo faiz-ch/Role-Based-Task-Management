@@ -4,6 +4,14 @@ import { Project, Department, Task } from "../../types";
 import { Dlg } from "../../components/Dlg";
 import { FldSelect } from "../../components/FldSelect";
 import { DatePicker } from "../../components/DatePicker";
+import { Area, Station, Division } from "../../types";
+import { useCachedQuery, qk, FRESH, EMPTY } from "../../api/queries";
+import { getAreas, getStations, getDivisions } from "../../api/organization";
+import { ProjectOrgPicker, projectOrgProblem } from "../../components/ProjectOrgPicker";
+import { useAuth } from "../../context/AuthContext";
+import { managesAllDepartments } from "../../utils/roleAccess";
+import { grantableFor } from "../../utils/orgScope";
+import { notifyError } from "../../utils/notify";
 
 interface SettingsTabProps {
   project: Project;
@@ -21,6 +29,8 @@ interface EditForm {
   priority: string;
   dueDate: string;
   departmentIds: number[];
+  stationIds: number[];
+  divisionIds: number[];
 }
 
 function fmtDate(d: string) {
@@ -53,12 +63,27 @@ export function SettingsTab({
     priority: "Medium",
     dueDate: "",
     departmentIds: [],
+    stationIds: [],
+    divisionIds: [],
   });
+  const { currentUser } = useAuth();
+  const areas = useCachedQuery<Area[]>(qk.areas, getAreas, EMPTY, { staleTime: FRESH.RARE }).data;
+  const stations = useCachedQuery<Station[]>(qk.stations, () => getStations(), EMPTY, { staleTime: FRESH.RARE }).data;
+  const divisions = useCachedQuery<Division[]>(qk.divisions, getDivisions, EMPTY, { staleTime: FRESH.RARE }).data;
+  // What I may choose: what I manage, plus what the project already has (kept as is)
+  const allowedPairs = managesAllDepartments(currentUser)
+    ? null
+    : [...new Set([
+        ...grantableFor(currentUser, stations).pairs,
+        ...project.stationIds.flatMap((s) => project.departmentIds.map((d) => `${s}:${d}`)),
+      ])];
   const [closingNotes, setClosingNotes] = useState("");
   const [reopenReason, setReopenReason] = useState("");
 
   async function handleEditProject() {
     if (!editForm.name.trim()) return;
+    const problem = projectOrgProblem(editForm, stations, allowedPairs);
+    if (problem) { notifyError(problem); return; }
     try {
       await onEditProject(editForm);
       setShowEditProject(false);
@@ -104,6 +129,8 @@ export function SettingsTab({
       priority: project.priority,
       dueDate: project.dueDate,
       departmentIds: project.departmentIds,
+      stationIds: project.stationIds,
+      divisionIds: project.divisionIds,
     });
     setShowEditProject(true);
   }
@@ -267,7 +294,7 @@ export function SettingsTab({
 
       {/* Edit Project Dialog */}
       {showEditProject && (
-        <Dlg title="Edit Project" onClose={() => setShowEditProject(false)}>
+        <Dlg title="Edit Project" onClose={() => setShowEditProject(false)} size="lg">
           <div className="space-y-4">
             <div>
               <label className="block text-xs font-medium text-muted-foreground mb-1.5">Name</label>
@@ -308,27 +335,14 @@ export function SettingsTab({
                 min={new Date().toISOString().slice(0, 16)}
               />
             </div>
-            <div className="flex flex-col gap-2">
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                Departments
-              </span>
-              <div className="grid grid-cols-2 gap-2">
-                {departments.map((dept) => (
-                  <label
-                    key={dept.id}
-                    className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg hover:bg-muted/30 cursor-pointer"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={editForm.departmentIds.includes(dept.id)}
-                      onChange={() => toggleEditDepartment(dept.id)}
-                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                    />
-                    <span className="text-sm text-foreground">{dept.name}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
+            <ProjectOrgPicker
+              areas={areas}
+              stations={stations}
+              divisions={divisions}
+              value={editForm}
+              onChange={(v) => setEditForm((f) => ({ ...f, ...v }))}
+              allowedPairs={allowedPairs}
+            />
           </div>
           <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-border">
             <button

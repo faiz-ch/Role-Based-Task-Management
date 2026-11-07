@@ -10,12 +10,13 @@ from sqlalchemy.orm import selectinload
 from app.core.deps import (
     require_permission, get_current_user, has_permission, get_scoped_department_ids,
     user_load_options, can_assign_role, load_assign_context, is_admin,
-    scope_load_options, effective_department_ids, covers_area, covers_station,
+    scope_load_options, effective_pairs, covers_area, covers_station,
+    get_scope_pairs, placement_in_scope,
 )
 from app.core.security import hash_password
 from app.database import get_db
 from app.models.user import (
-    User, user_managed_department, user_managed_area, user_managed_station, user_extra_assignable_role,
+    User, UserManagedPair, user_managed_department, user_managed_area, user_managed_station, user_extra_assignable_role,
 )
 from app.models.organization import Area, Station, Division
 from app.models.role import Role
@@ -60,11 +61,13 @@ async def list_users(
     
     query = select(User).options(*user_load_options())
     
-    scoped_dept_ids = get_scoped_department_ids(current_user)
-    if scoped_dept_ids is not None:
-        if not scoped_dept_ids:
+    my_pairs = get_scope_pairs(current_user)
+    if my_pairs is not None:
+        if not my_pairs:
             return []  # Empty scope = no users visible
-        query = query.where(User.department_id.in_(scoped_dept_ids))
+        # Station-aware: people who work at a department-at-station I manage
+        from sqlalchemy import tuple_
+        query = query.where(tuple_(User.station_id, User.department_id).in_(list(my_pairs)))
     
     result = await db.execute(query)
     return result.scalars().all()
@@ -131,21 +134,43 @@ async def _validate_division(db: AsyncSession, division_id: int | None) -> None:
 # What a user manages: whole Areas, whole Stations, single Departments
 # ---------------------------------------------------------------------------
 class Scope:
-    def __init__(self, areas: list[Area], stations: list[Station], departments: list[Department]):
-        self.areas, self.stations, self.departments = areas, stations, departments
+    """What a user manages: whole areas, whole stations, and single departments AT a
+    station (pairs of (station_id, department_id))."""
+    def __init__(self, areas: list[Area], stations: list[Station], pairs: list[tuple[int, int]]):
+        self.areas, self.stations, self.pairs = areas, stations, pairs
+
+    @property
+    def all_pairs(self) -> set[tuple[int, int]]:
+        out = set(self.pairs)
+        for st in self.stations:
+            out |= {(st.id, d.id) for d in st.departments}
+        for a in self.areas:
+            for st in a.stations:
+                out |= {(st.id, d.id) for d in st.departments}
+        return out
 
     @property
     def department_ids(self) -> set[int]:
-        return effective_department_ids(self.areas, self.stations, self.departments)
+        return {d for _, d in self.all_pairs}
 
     @property
     def is_empty(self) -> bool:
-        return not (self.areas or self.stations or self.departments)
+        return not (self.areas or self.stations or self.pairs)
 
 
-async def _load_scope(db: AsyncSession, area_ids, station_ids, dept_ids) -> Scope:
+def _pair_keys(items) -> list[tuple[int, int]]:
+    out = []
+    for it in items or []:
+        sid, did = (it.station_id, it.department_id) if hasattr(it, "station_id") else (it["station_id"], it["department_id"])
+        if (sid, did) not in out:
+            out.append((sid, did))
+    return out
+
+
+async def _load_scope(db: AsyncSession, area_ids, station_ids, pairs) -> Scope:
     """Load and validate the ticked items, and drop ticks already covered by a wider tick."""
-    area_ids, station_ids, dept_ids = (list(dict.fromkeys(x or [])) for x in (area_ids, station_ids, dept_ids))
+    area_ids, station_ids = (list(dict.fromkeys(x or [])) for x in (area_ids, station_ids))
+    pairs = _pair_keys(pairs)
     areas = (await db.execute(
         select(Area).options(selectinload(Area.stations).selectinload(Station.departments)).where(Area.id.in_(area_ids))
     )).scalars().all() if area_ids else []
@@ -156,24 +181,32 @@ async def _load_scope(db: AsyncSession, area_ids, station_ids, dept_ids) -> Scop
     )).scalars().all() if station_ids else []
     if len(stations) != len(station_ids):
         raise HTTPException(status_code=404, detail="One of the selected stations was not found")
-    depts = (await db.execute(select(Department).where(Department.id.in_(dept_ids)))).scalars().all() if dept_ids else []
-    if len(depts) != len(dept_ids):
-        raise HTTPException(status_code=404, detail="One of the selected departments was not found")
+    if pairs:
+        pair_stations = {st.id: st for st in (await db.execute(
+            select(Station).options(selectinload(Station.departments)).where(Station.id.in_({s for s, _ in pairs}))
+        )).scalars().all()}
+        for sid, did in pairs:
+            st = pair_stations.get(sid)
+            if st is None:
+                raise HTTPException(status_code=404, detail="One of the selected stations was not found")
+            if did not in {d.id for d in st.departments}:
+                raise HTTPException(status_code=400, detail=f"A selected department is not at station '{st.name}'")
     whole_area_ids = {a.id for a in areas}
     stations = [st for st in stations if st.area_id not in whole_area_ids]
-    covered = effective_department_ids(areas, stations, [])
-    depts = [d for d in depts if d.id not in covered]
-    return Scope(list(areas), stations, depts)
+    covered = Scope(list(areas), stations, []).all_pairs
+    pairs = [p for p in pairs if p not in covered]
+    return Scope(list(areas), stations, pairs)
 
 
 def _check_scope_grant(current_user: User, manage_all: bool | None, scope: Scope | None) -> None:
     """
     No-escalation rule: someone who does not manage everything cannot grant "All",
     can give a whole Area only if they manage that whole Area, a whole Station only
-    if they manage it (or its whole Area), and single Departments only inside their scope.
+    if they manage it (or its whole Area), and a department at a station only if
+    they manage that department at that station.
     """
-    scoped = get_scoped_department_ids(current_user)
-    if scoped is None:
+    mine = get_scope_pairs(current_user)
+    if mine is None:
         return
     if manage_all:
         raise HTTPException(status_code=403, detail="Only users who manage everything can grant 'All'")
@@ -185,9 +218,8 @@ def _check_scope_grant(current_user: User, manage_all: bool | None, scope: Scope
     for st in scope.stations:
         if not covers_station(current_user, st):
             raise HTTPException(status_code=403, detail=f"You can only give the whole station '{st.name}' if you manage all of it yourself")
-    outside = {d.id for d in scope.departments} - scoped
-    if outside:
-        raise HTTPException(status_code=403, detail="You can only grant departments that you manage yourself")
+    if set(scope.pairs) - mine:
+        raise HTTPException(status_code=403, detail="You can only grant departments (at a station) that you manage yourself")
 
 
 async def _write_scope(db: AsyncSession, user_id: int, scope: Scope) -> None:
@@ -196,11 +228,13 @@ async def _write_scope(db: AsyncSession, user_id: int, scope: Scope) -> None:
         await db.execute(user_managed_area.insert().values(user_id=user_id, area_id=a.id))
     for st in scope.stations:
         await db.execute(user_managed_station.insert().values(user_id=user_id, station_id=st.id))
-    for d in scope.departments:
-        await db.execute(user_managed_department.insert().values(user_id=user_id, department_id=d.id))
+    for sid, did in scope.pairs:
+        await db.execute(UserManagedPair.__table__.insert().values(user_id=user_id, station_id=sid, department_id=did))
 
 
 async def _clear_scope(db: AsyncSession, user_id: int) -> None:
+    pt = UserManagedPair.__table__
+    await db.execute(pt.delete().where(pt.c.user_id == user_id))
     await db.execute(user_managed_area.delete().where(user_managed_area.c.user_id == user_id))
     await db.execute(user_managed_station.delete().where(user_managed_station.c.user_id == user_id))
     await db.execute(user_managed_department.delete().where(user_managed_department.c.user_id == user_id))
@@ -305,14 +339,14 @@ async def _enforce_form_rules(db: AsyncSession, user_id: int) -> list[str]:
     cleared: list[str] = []
 
     if not role_uses_department_scope(user.role):
-        if user.manage_all_departments or user.managed_departments or user.managed_stations or user.managed_areas:
+        if user.manage_all_departments or user.managed_pairs or user.managed_stations or user.managed_areas:
             user.manage_all_departments = False
             await _clear_scope(db, user_id)
             cleared.append("managed_scope")
         managed_ids: set[int] = set()
         manage_all = False
     else:
-        managed_ids = effective_department_ids(user.managed_areas, user.managed_stations, user.managed_departments)
+        managed_ids = {d for _, d in effective_pairs(user.managed_areas, user.managed_stations, user.managed_pairs)}
         manage_all = user.manage_all_departments
 
     if not role_can_manage_users(user.role):
@@ -352,18 +386,18 @@ async def create_user(
 
     # ---- Validate EVERYTHING before writing anything ----
     await load_assign_context(db, current_user)   # needed by can_assign_role()
-    scoped_dept_ids = get_scoped_department_ids(current_user)
+    my_pairs = get_scope_pairs(current_user)
 
-    # Placement: a department-scoped creator must place the user in one of the
-    # departments they manage (otherwise they could not see the user).
-    if scoped_dept_ids is not None:
-        if not scoped_dept_ids:
+    # Placement: a scoped creator must place the user at a department-at-station
+    # they manage (otherwise they could not see the user).
+    if my_pairs is not None:
+        if not my_pairs:
             raise HTTPException(
                 status_code=403,
                 detail="You cannot create users because you do not manage any department",
             )
-        if payload.department_id not in scoped_dept_ids:
-            raise HTTPException(status_code=403, detail="You can only add users to departments you manage")
+        if (payload.station_id, payload.department_id) not in my_pairs:
+            raise HTTPException(status_code=403, detail="You can only add users to departments (at a station) you manage")
     await _validate_placement(db, payload.area_id, payload.station_id, payload.department_id, required=True)
     await _validate_division(db, payload.division_id)
 
@@ -383,7 +417,7 @@ async def create_user(
     if role_uses_department_scope(role):
         manage_all = payload.manage_all_departments
         scope = Scope([], [], []) if manage_all else await _load_scope(
-            db, payload.managed_area_ids, payload.managed_station_ids, payload.managed_department_ids
+            db, payload.managed_area_ids, payload.managed_station_ids, payload.managed_pairs
         )
     else:
         manage_all = False
@@ -464,10 +498,9 @@ async def get_user(
         raise HTTPException(status_code=404, detail="User not found")
     
     # Department-tier users can only view users in their scoped departments
-    scoped_dept_ids = get_scoped_department_ids(current_user)
-    if scoped_dept_ids is not None:
-        if user.department_id not in scoped_dept_ids:
-            raise HTTPException(status_code=404, detail="User not found")
+    my_pairs = get_scope_pairs(current_user)
+    if not placement_in_scope(current_user, user):
+        raise HTTPException(status_code=404, detail="User not found")
     
     return user
 
@@ -486,10 +519,9 @@ async def get_user_performance(
     if target_user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    scoped_dept_ids = get_scoped_department_ids(current_user)
-    if scoped_dept_ids is not None:
-        if target_user.department_id not in scoped_dept_ids:
-            raise HTTPException(status_code=404, detail="User not found")
+    my_pairs = get_scope_pairs(current_user)
+    if not placement_in_scope(current_user, target_user):
+        raise HTTPException(status_code=404, detail="User not found")
 
     now = datetime.now(timezone.utc)
 
@@ -571,10 +603,9 @@ async def update_user(
         raise HTTPException(status_code=404, detail="User not found")
 
     # Department-tier users can only edit users in their scoped departments
-    scoped_dept_ids = get_scoped_department_ids(current_user)
-    if scoped_dept_ids is not None:
-        if user.department_id not in scoped_dept_ids:
-            raise HTTPException(status_code=404, detail="User not found")
+    my_pairs = get_scope_pairs(current_user)
+    if not placement_in_scope(current_user, user):
+        raise HTTPException(status_code=404, detail="User not found")
 
     # Only fields the client actually sent are applied
     sent = payload.model_fields_set
@@ -618,8 +649,8 @@ async def update_user(
         new_area = (payload.area_id or None) if "area_id" in sent else user.area_id
         new_station = (payload.station_id or None) if "station_id" in sent else user.station_id
         new_dept = (payload.department_id or None) if "department_id" in sent else user.department_id
-        if scoped_dept_ids is not None and new_dept not in scoped_dept_ids:
-            raise HTTPException(status_code=403, detail="You can only place users in departments you manage")
+        if my_pairs is not None and (new_station, new_dept) not in my_pairs:
+            raise HTTPException(status_code=403, detail="You can only place users in departments (at a station) you manage")
         await _validate_placement(db, new_area, new_station, new_dept, required=not target_is_admin)
         if (new_area, new_station, new_dept) != (user.area_id, user.station_id, user.department_id):
             user.area_id, user.station_id, user.department_id = new_area, new_station, new_dept
@@ -650,40 +681,43 @@ async def update_user(
 
     # "All" toggle — only someone who manages everything may change it
     if uses_scope and payload.manage_all_departments is not None and payload.manage_all_departments != user.manage_all_departments:
-        if scoped_dept_ids is not None:
+        if my_pairs is not None:
             raise HTTPException(status_code=403, detail="Only users who manage everything can change 'All'")
         user.manage_all_departments = payload.manage_all_departments
         changed_fields.append("manage_all_departments")
 
-    # What this user manages: whole areas, whole stations, single departments
-    final_managed_ids = effective_department_ids(user.managed_areas, user.managed_stations, user.managed_departments)
-    scope_sent = sent & {"managed_area_ids", "managed_station_ids", "managed_department_ids"}
+    # What this user manages: whole areas, whole stations, departments at a station
+    final_managed_ids = {d for _, d in effective_pairs(user.managed_areas, user.managed_stations, user.managed_pairs)}
+    scope_sent = sent & {"managed_area_ids", "managed_station_ids", "managed_pairs"}
     if uses_scope and scope_sent and not user.manage_all_departments:
+        old_p = [(x.station_id, x.department_id) for x in user.managed_pairs]
         requested = await _load_scope(
             db,
             payload.managed_area_ids if "managed_area_ids" in sent else [a.id for a in user.managed_areas],
             payload.managed_station_ids if "managed_station_ids" in sent else [x.id for x in user.managed_stations],
-            payload.managed_department_ids if "managed_department_ids" in sent else [d.id for d in user.managed_departments],
+            payload.managed_pairs if "managed_pairs" in sent else [{"station_id": s_, "department_id": d_} for s_, d_ in old_p],
         )
         # Only check what is NEW; keep what the editor cannot see or give
         # (granted earlier by someone with wider authority).
         old_a = {a.id for a in user.managed_areas}
         old_s = {x.id for x in user.managed_stations}
-        old_d = {d.id for d in user.managed_departments}
         _check_scope_grant(current_user, None, Scope(
             [a for a in requested.areas if a.id not in old_a],
             [x for x in requested.stations if x.id not in old_s],
-            [d for d in requested.departments if d.id not in old_d],
+            [p for p in requested.pairs if p not in set(old_p)],
         ))
-        if scoped_dept_ids is not None:
+        if my_pairs is not None:
             req_a = {a.id for a in requested.areas}
             req_s = {x.id for x in requested.stations}
-            req_d = {d.id for d in requested.departments}
+            req_p = set(requested.pairs)
             keep_a = [a.id for a in user.managed_areas if a.id not in req_a and not covers_area(current_user, a.id)]
             keep_s = [x.id for x in user.managed_stations if x.id not in req_s and not covers_station(current_user, x)]
-            keep_d = [d.id for d in user.managed_departments if d.id not in req_d and d.id not in scoped_dept_ids]
-            if keep_a or keep_s or keep_d:
-                requested = await _load_scope(db, list(req_a) + keep_a, list(req_s) + keep_s, list(req_d) + keep_d)
+            keep_p = [p for p in old_p if p not in req_p and p not in my_pairs]
+            if keep_a or keep_s or keep_p:
+                requested = await _load_scope(
+                    db, list(req_a) + keep_a, list(req_s) + keep_s,
+                    [{"station_id": s_, "department_id": d_} for s_, d_ in list(req_p) + keep_p],
+                )
         await _write_scope(db, user.id, requested)
         final_managed_ids = requested.department_ids
         changed_fields.append("managed_scope")
@@ -741,10 +775,9 @@ async def assign_role(
         raise HTTPException(status_code=404, detail="User not found")
 
     # Department-tier users can only edit users in their scoped departments
-    scoped_dept_ids = get_scoped_department_ids(current_user)
-    if scoped_dept_ids is not None:
-        if user.department_id not in scoped_dept_ids:
-            raise HTTPException(status_code=404, detail="User not found")
+    my_pairs = get_scope_pairs(current_user)
+    if not placement_in_scope(current_user, user):
+        raise HTTPException(status_code=404, detail="User not found")
 
     role = None
     if payload.role_id is None:
@@ -791,10 +824,9 @@ async def delete_user(
         raise HTTPException(status_code=404, detail="User not found")
     
     # Department-tier users can only delete users in their scoped departments
-    scoped_dept_ids = get_scoped_department_ids(current_user)
-    if scoped_dept_ids is not None:
-        if user.department_id not in scoped_dept_ids:
-            raise HTTPException(status_code=404, detail="User not found")
+    my_pairs = get_scope_pairs(current_user)
+    if not placement_in_scope(current_user, user):
+        raise HTTPException(status_code=404, detail="User not found")
 
     # Prevent self-deletion
     if user.id == current_user.id:
@@ -976,18 +1008,17 @@ async def assign_department(
         raise HTTPException(status_code=404, detail="User not found")
 
     # Department-tier users can only edit users in their scoped departments
-    scoped_dept_ids = get_scoped_department_ids(current_user)
-    if scoped_dept_ids is not None:
-        if user.department_id not in scoped_dept_ids:
-            raise HTTPException(status_code=404, detail="User not found")
+    my_pairs = get_scope_pairs(current_user)
+    if not placement_in_scope(current_user, user):
+        raise HTTPException(status_code=404, detail="User not found")
 
     department = None
     if payload.department_id is None:
-        if scoped_dept_ids is not None:
+        if my_pairs is not None:
             raise HTTPException(status_code=403, detail="You cannot remove a user from your departments")
         user.department_id = None
     else:
-        if scoped_dept_ids is not None and payload.department_id not in scoped_dept_ids:
+        if my_pairs is not None and (user.station_id, payload.department_id) not in my_pairs:
             raise HTTPException(status_code=403, detail="You can only assign users to departments you manage")
         dept_result = await db.execute(select(Department).where(Department.id == payload.department_id))
         department = dept_result.scalar_one_or_none()
@@ -1017,10 +1048,9 @@ async def get_user_activity(
     if target_user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    scoped_dept_ids = get_scoped_department_ids(current_user)
-    if scoped_dept_ids is not None:
-        if target_user.department_id not in scoped_dept_ids:
-            raise HTTPException(status_code=404, detail="User not found")
+    my_pairs = get_scope_pairs(current_user)
+    if not placement_in_scope(current_user, target_user):
+        raise HTTPException(status_code=404, detail="User not found")
 
     logs_result = await db.execute(
         select(ActivityLog)

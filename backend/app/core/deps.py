@@ -51,7 +51,7 @@ def scope_load_options():
     """What get_scoped_department_ids() needs: managed areas/stations/departments,
     down to the departments they cover."""
     return [
-        selectinload(User.managed_departments),
+        selectinload(User.managed_pairs),
         selectinload(User.managed_stations).selectinload(Station.departments),
         selectinload(User.managed_areas).selectinload(Area.stations).selectinload(Station.departments),
     ]
@@ -164,26 +164,53 @@ def has_permission(user: User, permission_name: str) -> bool:
     return any(p.name == permission_name for p in user.role.permissions)
 
 
-def get_scoped_department_ids(user: User) -> set[int] | None:
+Pair = tuple[int, int]  # (station_id, department_id): "this department AT this station"
+
+
+def get_scope_pairs(user: User) -> set[Pair] | None:
     """
-    Returns None if the user has global (manage_all_departments=True) scope —
-    caller should skip department filtering entirely in that case.
-    Returns a (possibly empty) set of department ids otherwise.
+    Station-aware scope (Phase 3). None = everything (Admin / "Everything").
+    Otherwise the (station, department) pairs the user manages:
+    whole areas -> every station in them -> their departments; whole stations ->
+    their departments; plus single departments at a station.
     """
     if user.manage_all_departments or is_admin(user):
         return None
-    return effective_department_ids(user.managed_areas, user.managed_stations, user.managed_departments)
+    return effective_pairs(user.managed_areas, user.managed_stations, user.managed_pairs)
 
 
-def effective_department_ids(areas, stations, departments) -> set[int]:
-    """A whole area covers all its stations; a whole station covers all its departments."""
-    ids = {d.id for d in departments}
+def effective_pairs(areas, stations, pairs) -> set[Pair]:
+    out = {(p.station_id, p.department_id) for p in pairs}
     for st in stations:
-        ids |= {d.id for d in st.departments}
+        out |= {(st.id, d.id) for d in st.departments}
     for area in areas:
         for st in area.stations:
-            ids |= {d.id for d in st.departments}
-    return ids
+            out |= {(st.id, d.id) for d in st.departments}
+    return out
+
+
+def get_scoped_department_ids(user: User) -> set[int] | None:
+    """Department ids appearing in the user's scope (at any of their stations).
+    Only for department-level questions (department lists, role tags); use
+    project_in_scope() / placement_in_scope() for projects and people."""
+    pairs = get_scope_pairs(user)
+    return None if pairs is None else {d for _, d in pairs}
+
+
+def project_pairs(project) -> set[Pair]:
+    """A project covers each of its departments at each of its stations."""
+    return {(st.id, d.id) for st in project.stations for d in project.departments}
+
+
+def project_in_scope(user: User, project) -> bool:
+    pairs = get_scope_pairs(user)
+    return pairs is None or bool(project_pairs(project) & pairs)
+
+
+def placement_in_scope(user: User, target) -> bool:
+    """Is this person's workplace (station + department) inside the user's scope?"""
+    pairs = get_scope_pairs(user)
+    return pairs is None or (target.station_id, target.department_id) in pairs
 
 
 def covers_area(user: User, area_id: int) -> bool:
@@ -258,8 +285,7 @@ def can_create_task_in_project(user: User, project: Project) -> bool:
     if is_project_lead(user, project):
         return True
     if has_permission(user, "project:manage"):
-        scoped = get_scoped_department_ids(user)
-        if scoped is None or any(d.id in scoped for d in project.departments):
+        if project_in_scope(user, project):
             return True
     return False
 
@@ -284,8 +310,7 @@ def can_manage_task(user: User, task: Task) -> bool:
         return False
 
     if has_permission(user, "project:manage"):
-        scoped = get_scoped_department_ids(user)
-        if scoped is None or any(d.id in scoped for d in task.project.departments):
+        if project_in_scope(user, task.project):
             return True
     if is_project_lead(user, task.project):
         return True
@@ -309,13 +334,12 @@ def can_edit_delete_task(user: User, task: Task) -> bool:
             if scoped is None:  # Global scope
                 return True
             # Check if task creator is within the user's department scope
-            if task.creator and task.creator.department_id in scoped:
+            if task.creator and placement_in_scope(user, task.creator):
                 return True
         return False
 
     if has_permission(user, "project:manage"):
-        scoped = get_scoped_department_ids(user)
-        if scoped is None or any(d.id in scoped for d in task.project.departments):
+        if project_in_scope(user, task.project):
             return True
     return is_project_lead(user, task.project)
 
@@ -344,8 +368,7 @@ def can_view_task(user: User, task: Task) -> bool:
         return False
 
     if has_permission(user, "project:view"):
-        scoped = get_scoped_department_ids(user)
-        if scoped is None or any(d.id in scoped for d in task.project.departments):
+        if project_in_scope(user, task.project):
             return True
     if is_project_lead(user, task.project):
         return True
@@ -376,19 +399,17 @@ def can_create_subtask_in_task(user: User, task: Task) -> bool:
     if is_project_lead(user, task.project):
         return True
     if has_permission(user, "project:manage"):
-        scoped = get_scoped_department_ids(user)
-        if scoped is None or any(d.id in scoped for d in task.project.departments):
+        if project_in_scope(user, task.project):
             return True
     return False
 
 
-def get_assignable_user_pool(db_users: list[User], department_ids: set[int]) -> list[User]:
+def get_assignable_user_pool(db_users: list[User], pairs: set[Pair]) -> list[User]:
     """
-    Given a list of candidate users, return those in the given department_ids.
-    Team/lead eligibility for projects, tasks, and subtasks is based purely on
-    department membership.
+    Given candidate users, return those who work at one of the project's
+    (station, department) pairs. Team/lead eligibility is based on where people work.
     """
-    return [u for u in db_users if u.department_id in department_ids]
+    return [u for u in db_users if (u.station_id, u.department_id) in pairs]
 
 
 def can_view_subtask(user: User, subtask: SubTask) -> bool:
@@ -431,8 +452,7 @@ def can_view_project(user: User, project: Project) -> bool:
     has_view_perm = has_permission(user, "project:view") or has_permission(user, "project:manage")
     in_scope = False
     if has_view_perm:
-        scoped_dept_ids = get_scoped_department_ids(user)
-        if scoped_dept_ids is None or any(d.id in scoped_dept_ids for d in project.departments):
+        if project_in_scope(user, project):
             in_scope = True
 
     is_lead = is_project_lead(user, project)

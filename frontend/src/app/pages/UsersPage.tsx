@@ -117,7 +117,7 @@ export function UsersPage() {
 
   // What I may hand out (whole areas / stations / departments), and where I may place people
   const grantable = grantableFor(currentUser, stations);
-  const placeableDeptIds = managesAllDepartments(currentUser) ? null : [...grantable.departmentIds];
+  const placeablePairs = managesAllDepartments(currentUser) ? null : [...grantable.pairs];
 
   const selectedCreateRole = assignableRoles.find((r) => r.id === Number(createRole)) || null;
   // "Departments this user manages" only for roles with a department-based permission
@@ -240,7 +240,7 @@ export function UsersPage() {
         manage_all_departments: showCreateScope && createManageAll,
         managed_area_ids: showCreateScope && !createManageAll ? createScope.areaIds : [],
         managed_station_ids: showCreateScope && !createManageAll ? createScope.stationIds : [],
-        managed_department_ids: showCreateScope && !createManageAll ? createScope.departmentIds : [],
+        managed_pairs: showCreateScope && !createManageAll ? createScope.pairs : [],
         extra_assignable_role_ids: showCreateExtras
           ? createExtraRoleIds.filter((id) => createExtraCandidates.some((r) => r.id === id))
           : [],
@@ -739,7 +739,7 @@ export function UsersPage() {
               divisions={divisions}
               value={createPlacement}
               onChange={setCreatePlacement}
-              allowedDepartmentIds={placeableDeptIds}
+              allowedPairs={placeablePairs}
             />
 
             <FldSelect

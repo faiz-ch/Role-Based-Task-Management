@@ -29,9 +29,23 @@ class ProjectCreate(BaseModel):
     start_date: datetime | None = None
     due_date: datetime | None = None
     color: str | None = None
+    station_ids: List[int] = Field(..., min_length=1, description="At least one station is required")
     department_ids: List[int] = Field(..., min_length=1, description="At least one department is required")
+    division_ids: List[int] = []
     lead_id: int | None = None
     team_user_ids: List[int] | None = None
+
+
+class ProjectStationOut(BaseModel):
+    id: int
+    name: str
+    code: str | None = None
+    area_id: int
+
+
+class ProjectDivisionOut(BaseModel):
+    id: int
+    name: str
 
 
 class ProjectOut(BaseModel):
@@ -51,6 +65,10 @@ class ProjectOut(BaseModel):
     created_at: datetime
     completed_at: datetime | None
     department_ids: List[int]
+    station_ids: List[int] = []
+    stations: List[ProjectStationOut] = []
+    division_ids: List[int] = []
+    divisions: List[ProjectDivisionOut] = []
     team_user_ids: List[int]
     team_members: List[TeamMemberOut] = []
     closing_notes: str | None
@@ -77,7 +95,9 @@ class ProjectUpdate(BaseModel):
     start_date: datetime | None = None
     due_date: datetime | None = None
     color: str | None = None
+    station_ids: List[int] | None = None
     department_ids: List[int] | None = None
+    division_ids: List[int] | None = None
 
 
 class ProjectRejectRequest(BaseModel):

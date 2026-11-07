@@ -9,7 +9,7 @@ from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.deps import require_permission, get_current_user, has_permission, get_scoped_department_ids, can_view_task, can_manage_task, can_edit_delete_task, can_create_task_in_project, is_project_lead, is_task_lead
+from app.core.deps import require_permission, get_current_user, has_permission, get_scoped_department_ids, project_in_scope, placement_in_scope, can_view_task, can_manage_task, can_edit_delete_task, can_create_task_in_project, is_project_lead, is_task_lead
 from app.database import get_db
 from app.models.task import Task, TaskStatus, TaskTeam
 from app.models.subtask import SubTask
@@ -169,8 +169,7 @@ async def create_task(
                 raise HTTPException(status_code=404, detail="Assignee user not found")
             
             # Check if assignee is within user's department scope
-            scoped = get_scoped_department_ids(current_user)
-            if scoped is not None and assignee.department_id not in scoped:
+            if not placement_in_scope(current_user, assignee):
                 raise HTTPException(
                     status_code=403,
                     detail="You can only assign standalone tasks to users within your department scope"
@@ -304,8 +303,7 @@ async def update_task_status(
         if is_project_lead(current_user, task.project):
             can_approve = True
         elif has_permission(current_user, "project:manage"):
-            scoped = get_scoped_department_ids(current_user)
-            if scoped is None or any(d.id in scoped for d in task.project.departments):
+            if project_in_scope(current_user, task.project):
                 can_approve = True
 
     # Handle submit transition (To Do/Reschedule -> Review)
@@ -525,8 +523,7 @@ async def update_task_team(
     if is_project_lead(current_user, task.project):
         pass  # Authorized
     elif has_permission(current_user, "project:manage"):
-        scoped = get_scoped_department_ids(current_user)
-        if scoped is not None and not any(d.id in scoped for d in task.project.departments):
+        if not project_in_scope(current_user, task.project):
             raise HTTPException(
                 status_code=403,
                 detail="You do not have permission to assign task team members"

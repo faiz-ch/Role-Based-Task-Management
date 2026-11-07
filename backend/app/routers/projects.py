@@ -11,7 +11,7 @@ from app.core.deps import (
     require_permission,
     get_current_user,
     has_permission,
-    get_scoped_department_ids,
+    get_scoped_department_ids, project_in_scope, placement_in_scope, get_scope_pairs, project_pairs,
     is_project_lead,
     can_manage_project,
     get_assignable_user_pool,
@@ -26,7 +26,7 @@ from app.models.attachment import Attachment
 from app.models.role import Role
 from app.models.report import Report
 from app.models.activity_log import ActivityLog
-from app.schemas.project import ProjectCreate, ProjectOut, ProjectTeamUpdate, ProjectUpdate, ProjectRejectRequest, LeadOut, TeamMemberOut
+from app.schemas.project import ProjectCreate, ProjectOut, ProjectTeamUpdate, ProjectUpdate, ProjectRejectRequest, LeadOut, TeamMemberOut, ProjectStationOut, ProjectDivisionOut
 from app.schemas.user import UserOut
 from app.schemas.report import ReportCreate, ReportOut
 from app.schemas.activity_log import ActivityLogOut
@@ -42,28 +42,11 @@ async def create_project(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission("project:manage")),
 ):
-    # Validate all department_ids exist
-    dept_result = await db.execute(
-        select(Department).where(Department.id.in_(payload.department_ids))
+    # Stations -> departments (each at one of the stations) -> divisions, inside my scope
+    stations, departments, divisions, pairs = await _resolve_project_org(
+        db, payload.station_ids, payload.department_ids, payload.division_ids
     )
-    departments = dept_result.scalars().all()
-    if len(departments) != len(payload.department_ids):
-        raise HTTPException(status_code=400, detail="One or more departments not found")
-
-    # Check department scope authorization
-    scoped_dept_ids = get_scoped_department_ids(current_user)
-    if scoped_dept_ids is not None:
-        if not scoped_dept_ids:
-            raise HTTPException(
-                status_code=403,
-                detail="You cannot create projects because your role has no departments assigned."
-            )
-        out_of_scope = [dept_id for dept_id in payload.department_ids if dept_id not in scoped_dept_ids]
-        if out_of_scope:
-            raise HTTPException(
-                status_code=403,
-                detail=f"The following department_ids are outside your scope: {out_of_scope}"
-            )
+    _check_pairs_in_scope(current_user, pairs)
 
     # Validate due date is not in the past
     if payload.due_date:
@@ -109,11 +92,8 @@ async def create_project(
     await db.refresh(project)
     await log_activity(db, current_user.id, "project_created", "project", project.id, detail=payload.name)
 
-    # Insert project_department associations
-    for dept_id in payload.department_ids:
-        await db.execute(
-            project_department.insert().values(project_id=project.id, department_id=dept_id)
-        )
+    # Insert department / station / division associations
+    await _write_project_org(db, project.id, stations, departments, divisions)
     await db.commit()
     await db.refresh(project)
 
@@ -150,16 +130,9 @@ async def list_projects(
 
     if has_permission(current_user, "project:view") or has_permission(current_user, "project:manage"):
         # Filter by department scope
-        scoped_dept_ids = get_scoped_department_ids(current_user)
-        if scoped_dept_ids is not None:
-            # Filter to projects in scoped departments
-            visible_projects = [
-                p for p in projects
-                if any(d.id in scoped_dept_ids for d in p.departments)
-            ]
-        else:
-            # Global scope - see all projects
-            visible_projects = list(projects)
+        # Station-aware scope: a project is visible if one of its departments at one
+        # of its stations is something this person manages
+        visible_projects = [p for p in projects if project_in_scope(current_user, p)]
     else:
         # No project:view permission - only see projects where user is lead or team member
         visible_projects = [
@@ -208,8 +181,7 @@ async def get_project(
     has_view_perm = has_permission(current_user, "project:view") or has_permission(current_user, "project:manage")
     in_scope = False
     if has_view_perm:
-        scoped_dept_ids = get_scoped_department_ids(current_user)
-        if scoped_dept_ids is None or any(d.id in scoped_dept_ids for d in project.departments):
+        if project_in_scope(current_user, project):
             in_scope = True
 
     is_lead = is_project_lead(current_user, project)
@@ -235,8 +207,7 @@ async def get_project_activity(
     has_view_perm = has_permission(current_user, "project:view") or has_permission(current_user, "project:manage")
     in_scope = False
     if has_view_perm:
-        scoped_dept_ids = get_scoped_department_ids(current_user)
-        if scoped_dept_ids is None or any(d.id in scoped_dept_ids for d in project.departments):
+        if project_in_scope(current_user, project):
             in_scope = True
 
     is_lead = is_project_lead(current_user, project)
@@ -267,8 +238,7 @@ async def get_project_candidates(
     has_view_perm = has_permission(current_user, "project:view") or has_permission(current_user, "project:manage")
     in_scope = False
     if has_view_perm:
-        scoped_dept_ids = get_scoped_department_ids(current_user)
-        if scoped_dept_ids is None or any(d.id in scoped_dept_ids for d in project.departments):
+        if project_in_scope(current_user, project):
             in_scope = True
 
     is_lead = is_project_lead(current_user, project)
@@ -284,17 +254,14 @@ async def get_project_candidates(
         raise HTTPException(status_code=403, detail="You do not have permission to view this project")
 
     # Get candidate users from project's departments
-    project_dept_ids = {d.id for d in project.departments}
-    from app.models.category import Category
+    pairs = project_pairs(project)
     candidates_result = await db.execute(
-        select(User).options(*user_load_options()).where(User.department_id.in_(project_dept_ids))
+        select(User).options(*user_load_options()).where(_works_at(pairs))
     )
     candidates = candidates_result.scalars().all()
 
-    # Filter through assignable categories
-    assignable_pool = get_assignable_user_pool(
-        list(candidates), project_dept_ids
-    )
+    # People who work at one of the project's departments at one of its stations
+    assignable_pool = get_assignable_user_pool(list(candidates), pairs)
 
     # Return as UserOut
     return [UserOut.model_validate(u) for u in assignable_pool]
@@ -310,10 +277,8 @@ async def update_project(
     project = await _get_project_or_404_with_loads(db, project_id)
 
     # Verify manager's department scope covers this project
-    scoped_dept_ids = get_scoped_department_ids(current_user)
-    project_dept_ids = {d.id for d in project.departments}
-    if scoped_dept_ids is not None and not (project_dept_ids & scoped_dept_ids):
-        raise HTTPException(status_code=403, detail="This project is outside your department scope")
+    if not project_in_scope(current_user, project):
+        raise HTTPException(status_code=403, detail="This project is outside what you manage")
 
     # Validate due date is not in the past
     if payload.due_date is not None:
@@ -357,26 +322,15 @@ async def update_project(
     if payload.color is not None:
         project.color = payload.color
 
-    # If department_ids is provided, validate and replace
-    if payload.department_ids is not None:
-        # Validate all department_ids exist
-        dept_result = await db.execute(
-            select(Department).where(Department.id.in_(payload.department_ids))
-        )
-        departments = dept_result.scalars().all()
-        if len(departments) != len(payload.department_ids):
-            raise HTTPException(status_code=400, detail="One or more departments not found")
-
-        # Delete existing project_department associations
-        await db.execute(
-            delete(project_department).where(project_department.c.project_id == project_id)
-        )
-
-        # Insert new project_department associations
-        for dept_id in payload.department_ids:
-            await db.execute(
-                project_department.insert().values(project_id=project_id, department_id=dept_id)
-            )
+    # Stations / departments / divisions: any of them may be sent; the rest keep their value
+    if payload.station_ids is not None or payload.department_ids is not None or payload.division_ids is not None:
+        st_ids = payload.station_ids if payload.station_ids is not None else [x.id for x in project.stations]
+        d_ids = payload.department_ids if payload.department_ids is not None else [d.id for d in project.departments]
+        dv_ids = payload.division_ids if payload.division_ids is not None else [x.id for x in project.divisions]
+        stations, departments, divisions, pairs = await _resolve_project_org(db, st_ids, d_ids, dv_ids)
+        # Only what is NEW has to be inside my scope (others may have added wider things)
+        _check_pairs_in_scope(current_user, pairs - project_pairs(project))
+        await _write_project_org(db, project_id, stations, departments, divisions, replace=True)
 
     await db.commit()
     await db.refresh(project)
@@ -623,10 +577,8 @@ async def delete_project(
     project = await _get_project_or_404_with_loads(db, project_id)
 
     # Verify manager's department scope covers this project
-    scoped_dept_ids = get_scoped_department_ids(current_user)
-    project_dept_ids = {d.id for d in project.departments}
-    if scoped_dept_ids is not None and not (project_dept_ids & scoped_dept_ids):
-        raise HTTPException(status_code=403, detail="This project is outside your department scope")
+    if not project_in_scope(current_user, project):
+        raise HTTPException(status_code=403, detail="This project is outside what you manage")
 
     # Delete attachments for this project's tasks first (no DB-level cascade for attachments)
     task_ids_subquery = select(Task.id).where(Task.project_id == project_id)
@@ -670,10 +622,9 @@ async def update_project_team(
     project = await _get_project_or_404_with_loads(db, project_id)
 
     # Verify manager's department scope covers this project
-    scoped_dept_ids = get_scoped_department_ids(current_user)
-    project_dept_ids = {d.id for d in project.departments}
-    if scoped_dept_ids is not None and not (project_dept_ids & scoped_dept_ids):
-        raise HTTPException(status_code=403, detail="This project is outside your department scope")
+    if not project_in_scope(current_user, project):
+        raise HTTPException(status_code=403, detail="This project is outside what you manage")
+    project_pairs_set = project_pairs(project)
 
     # Get candidate pool: users in project's departments
     from app.models.category import Category
@@ -682,17 +633,13 @@ async def update_project_team(
             selectinload(User.role)
             .selectinload(Role.category)
             .selectinload(Category.permissions),
-            selectinload(User.managed_departments),
             selectinload(User.role).selectinload(Role.permissions),
             selectinload(User.role).selectinload(Role.assignable_roles),
-        ).where(User.department_id.in_(project_dept_ids))
+        ).where(_works_at(project_pairs_set))
     )
     candidates = candidates_result.scalars().all()
 
-    # Filter through assignable categories
-    assignable_pool = get_assignable_user_pool(
-        list(candidates), project_dept_ids
-    )
+    assignable_pool = get_assignable_user_pool(list(candidates), project_pairs_set)
     assignable_user_ids = {u.id for u in assignable_pool}
 
     # Validate all requested user_ids are in the filtered pool
@@ -823,8 +770,7 @@ async def list_project_reports(
     has_view_perm = has_permission(current_user, "project:view") or has_permission(current_user, "project:manage")
     in_scope = False
     if has_view_perm:
-        scoped_dept_ids = get_scoped_department_ids(current_user)
-        if scoped_dept_ids is None or any(d.id in scoped_dept_ids for d in project.departments):
+        if project_in_scope(current_user, project):
             in_scope = True
 
     is_lead = is_project_lead(current_user, project)
@@ -853,12 +799,13 @@ async def _validate_and_set_project_team(
     current_user: User
 ):
     """Validate and set project team (lead and members). Reuses validation logic from update_project_team."""
-    # Query department_ids directly from the join table to avoid lazy-loading the relationship
-    from app.models.project import project_department
-    dept_ids_result = await db.execute(
-        select(project_department.c.department_id).where(project_department.c.project_id == project.id)
-    )
-    project_dept_ids = {row[0] for row in dept_ids_result}
+    # Read the project's departments and stations from the link tables (no lazy loading)
+    from app.models.project import project_department, project_station
+    dept_ids = {r[0] for r in await db.execute(
+        select(project_department.c.department_id).where(project_department.c.project_id == project.id))}
+    station_ids = {r[0] for r in await db.execute(
+        select(project_station.c.station_id).where(project_station.c.project_id == project.id))}
+    project_pairs_set = {(s, d) for s in station_ids for d in dept_ids}
 
     # Get candidate pool: users in project's departments
     from app.models.category import Category
@@ -867,17 +814,13 @@ async def _validate_and_set_project_team(
             selectinload(User.role)
             .selectinload(Role.category)
             .selectinload(Category.permissions),
-            selectinload(User.managed_departments),
             selectinload(User.role).selectinload(Role.permissions),
             selectinload(User.role).selectinload(Role.assignable_roles),
-        ).where(User.department_id.in_(project_dept_ids))
+        ).where(_works_at(project_pairs_set))
     )
     candidates = candidates_result.scalars().all()
 
-    # Filter through assignable categories
-    assignable_pool = get_assignable_user_pool(
-        list(candidates), project_dept_ids
-    )
+    assignable_pool = get_assignable_user_pool(list(candidates), project_pairs_set)
     assignable_user_ids = {u.id for u in assignable_pool}
 
     # Validate all requested user_ids are in the filtered pool
@@ -987,6 +930,10 @@ def _project_to_out(project: Project) -> ProjectOut:
         created_at=project.created_at,
         completed_at=project.completed_at,
         department_ids=[d.id for d in project.departments],
+        station_ids=[st.id for st in project.stations],
+        stations=[ProjectStationOut(id=st.id, name=st.name, code=st.code, area_id=st.area_id) for st in project.stations],
+        division_ids=[dv.id for dv in project.divisions],
+        divisions=[ProjectDivisionOut(id=dv.id, name=dv.name) for dv in project.divisions],
         team_user_ids=[tm.user_id for tm in project.team_members],
         team_members=[
             TeamMemberOut(id=tm.user.id, name=tm.user.name)
@@ -1010,3 +957,77 @@ def _report_to_out(report: Report) -> ReportOut:
         created_by=report.created_by,
         created_at=report.created_at,
     )
+
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: stations, departments and divisions on a project
+# ---------------------------------------------------------------------------
+def _works_at(pairs):
+    """SQL condition: the user works at one of these (station, department) pairs."""
+    from sqlalchemy import tuple_, false
+    if not pairs:
+        return false()
+    return tuple_(User.station_id, User.department_id).in_(list(pairs))
+
+
+async def _resolve_project_org(db: AsyncSession, station_ids, department_ids, division_ids):
+    """Validate the project's stations, departments and divisions.
+    Every department must be at one of the chosen stations. Returns the objects and
+    the project's (station, department) pairs."""
+    from app.models.organization import Station, Division
+    station_ids = list(dict.fromkeys(station_ids or []))
+    department_ids = list(dict.fromkeys(department_ids or []))
+    division_ids = list(dict.fromkeys(division_ids or []))
+    if not station_ids:
+        raise HTTPException(status_code=400, detail="Please select at least one station for this project")
+    if not department_ids:
+        raise HTTPException(status_code=400, detail="Please select at least one department for this project")
+    stations = (await db.execute(
+        select(Station).options(selectinload(Station.departments)).where(Station.id.in_(station_ids))
+    )).scalars().all()
+    if len(stations) != len(station_ids):
+        raise HTTPException(status_code=400, detail="One or more stations not found")
+    departments = (await db.execute(select(Department).where(Department.id.in_(department_ids)))).scalars().all()
+    if len(departments) != len(department_ids):
+        raise HTTPException(status_code=400, detail="One or more departments not found")
+    divisions = (await db.execute(select(Division).where(Division.id.in_(division_ids)))).scalars().all() if division_ids else []
+    if len(divisions) != len(division_ids):
+        raise HTTPException(status_code=400, detail="One or more divisions not found")
+    pairs = set()
+    for d in departments:
+        at = [st for st in stations if d.id in {x.id for x in st.departments}]
+        if not at:
+            raise HTTPException(status_code=400, detail=f"Department '{d.name}' is not at any of the selected stations")
+        pairs |= {(st.id, d.id) for st in at}
+    return list(stations), list(departments), list(divisions), pairs
+
+
+def _check_pairs_in_scope(current_user: User, pairs) -> None:
+    """No escalation: every department-at-station the project covers must be one I manage."""
+    mine = get_scope_pairs(current_user)
+    if mine is None or not pairs:
+        return
+    if not mine:
+        raise HTTPException(status_code=403, detail="You cannot create projects because you do not manage any department")
+    outside = pairs - mine
+    if outside:
+        raise HTTPException(
+            status_code=403,
+            detail="Some of the selected departments/stations are outside what you manage. "
+                   "Choose only departments at stations you manage.",
+        )
+
+
+async def _write_project_org(db: AsyncSession, project_id: int, stations, departments, divisions, replace: bool = False):
+    from app.models.project import project_station, project_division
+    if replace:
+        await db.execute(delete(project_department).where(project_department.c.project_id == project_id))
+        await db.execute(delete(project_station).where(project_station.c.project_id == project_id))
+        await db.execute(delete(project_division).where(project_division.c.project_id == project_id))
+    for d in departments:
+        await db.execute(project_department.insert().values(project_id=project_id, department_id=d.id))
+    for st in stations:
+        await db.execute(project_station.insert().values(project_id=project_id, station_id=st.id))
+    for dv in divisions:
+        await db.execute(project_division.insert().values(project_id=project_id, division_id=dv.id))

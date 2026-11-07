@@ -35,6 +35,17 @@ user_managed_station = Table(
     Column("station_id", Integer, ForeignKey("stations.id", ondelete="CASCADE"), primary_key=True),
 )
 
+class UserManagedPair(Base):
+    """One department AT one station that a user manages (Phase 3: station-aware).
+    "HR at RLMC" does not cover "HR at AMTH"."""
+    __tablename__ = "user_managed_station_department"
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    station_id = Column(Integer, ForeignKey("stations.id", ondelete="CASCADE"), primary_key=True)
+    department_id = Column(Integer, ForeignKey("departments.id", ondelete="CASCADE"), primary_key=True)
+    station = relationship("Station", lazy="joined")
+    department = relationship("Department", lazy="joined")
+
+
 # Per-user EXTRA roles this user may assign, on top of their role's base
 # assignable list. Lets one Department Head assign e.g. "Lab Technician"
 # without every Department Head getting that ability.
@@ -75,7 +86,8 @@ class User(Base):
     division = relationship("Division", foreign_keys=[division_id])
 
     manage_all_departments = Column(Boolean, nullable=False, default=False, server_default=false())
-    managed_departments = relationship("Department", secondary=user_managed_department)
+    managed_departments = relationship("Department", secondary=user_managed_department)  # no longer used (kept for old data)
+    managed_pairs = relationship("UserManagedPair", cascade="all, delete-orphan", passive_deletes=True)
     managed_areas = relationship("Area", secondary=user_managed_area, passive_deletes=True)
     managed_stations = relationship("Station", secondary=user_managed_station, passive_deletes=True)
     extra_assignable_roles = relationship("Role", secondary=user_extra_assignable_role)
@@ -86,16 +98,20 @@ class User(Base):
     avatar_path = Column(String, nullable=True)
 
     @property
-    def scope_department_ids(self) -> list[int]:
-        """Departments covered by what this user manages (whole areas, whole stations,
-        single departments). Needs scope_load_options() loaded."""
-        ids = {d.id for d in self.managed_departments}
+    def scope_pairs(self) -> list[str]:
+        """Every "station:department" covered by what this user manages (whole areas,
+        whole stations, single departments at a station). Needs scope_load_options()."""
+        pairs = {(p.station_id, p.department_id) for p in self.managed_pairs}
         for st in self.managed_stations:
-            ids |= {d.id for d in st.departments}
+            pairs |= {(st.id, d.id) for d in st.departments}
         for area in self.managed_areas:
             for st in area.stations:
-                ids |= {d.id for d in st.departments}
-        return sorted(ids)
+                pairs |= {(st.id, d.id) for d in st.departments}
+        return [f"{s}:{d}" for s, d in sorted(pairs)]
+
+    @property
+    def scope_department_ids(self) -> list[int]:
+        return sorted({int(p.split(":")[1]) for p in self.scope_pairs})
 
     @property
     def has_avatar(self) -> bool:

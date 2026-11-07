@@ -51,6 +51,9 @@ export interface DashboardSummary {
 
 /** Filters sent to every dashboard address (see backend/app/routers/dashboard.py). */
 export interface DashboardParams {
+  area_id?: number;
+  station_id?: number;
+  division_id?: number;
   department_id?: number;
   project_id?: number;
   due_from?: string; // ISO date-time
@@ -60,12 +63,18 @@ export interface DashboardParams {
 
 export interface DashboardFilterOptions {
   user_type: "employee" | "manager";
+  areas: { id: number; name: string }[];
+  stations: { id: number; name: string; code: string | null; area_id: number }[];
+  divisions: { id: number; name: string }[];
   departments: { id: number; name: string }[];
-  projects: { id: number; name: string; department_ids: number[] }[];
+  projects: { id: number; name: string; department_ids: number[]; station_ids?: number[]; division_ids?: number[] }[];
 }
 
 function toQuery(params: DashboardParams = {}): string {
   const q = new URLSearchParams();
+  if (params.area_id != null) q.set("area_id", String(params.area_id));
+  if (params.station_id != null) q.set("station_id", String(params.station_id));
+  if (params.division_id != null) q.set("division_id", String(params.division_id));
   if (params.department_id != null) q.set("department_id", String(params.department_id));
   if (params.project_id != null) q.set("project_id", String(params.project_id));
   if (params.due_from) q.set("due_from", params.due_from);

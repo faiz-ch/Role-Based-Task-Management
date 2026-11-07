@@ -80,7 +80,7 @@ export function SubtaskDetailPage() {
   const [rescheduleComment, setRescheduleComment] = useState("");
 
   // Department scope lives on the user (manageAllDepartments / managedDepartments)
-  const canManage = permissions.includes("project:manage") && inDepartmentScope(currentUser, project?.departmentIds);
+  const canManage = permissions.includes("project:manage") && inDepartmentScope(currentUser, project);
 
   function canManageSubtask(): boolean {
     if (!subtask || !task || !project) return false;

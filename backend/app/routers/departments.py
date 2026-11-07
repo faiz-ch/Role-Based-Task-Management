@@ -232,6 +232,9 @@ async def update_department(
                         status_code=400,
                         detail=f"{n} person(s) work in '{department.name}' at '{st.name}'. Move them first, then remove the station.",
                     )
+                from app.routers.organization import _block_if_projects_use, _drop_managed_pair
+                await _block_if_projects_use(db, st, department)
+                await _drop_managed_pair(db, st.id, department.id)
         department.stations = new_stations
         changed_fields.append("stations")
     if payload.name is not None and payload.name != department.name:
@@ -349,6 +352,16 @@ async def delete_department(
         if payload.move_projects_to == department_id:
             raise HTTPException(status_code=400, detail="Cannot move projects to the same department being deleted")
 
+        # The new department must be at one of each project's stations
+        target_station_ids = {st.id for st in (await db.execute(
+            select(Station).join(Station.departments).where(Department.id == payload.move_projects_to)
+        )).scalars().all()}
+        stuck = [p.name for p in department.projects if p.stations and not ({st.id for st in p.stations} & target_station_ids)]
+        if stuck:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{target_dept.name}' is not at the stations of project(s): {', '.join(stuck[:5])}. Choose another department.",
+            )
         # For each project, remove this department and add target department if not already present
         for project in department.projects:
             # Remove this department from the project

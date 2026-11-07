@@ -23,6 +23,10 @@ function mapProject(p: any): Project {
     dueDate: p.due_date ? toDatetimeLocalValue(p.due_date) : "",
     createdAt: p.created_at ? p.created_at.slice(0, 10) : "",
     departmentIds: p.department_ids || [],
+    stationIds: p.station_ids || [],
+    stations: Array.isArray(p.stations) ? p.stations.map((st: any) => ({ id: st.id, name: st.name, code: st.code, areaId: st.area_id })) : [],
+    divisionIds: p.division_ids || [],
+    divisions: Array.isArray(p.divisions) ? p.divisions.map((d: any) => ({ id: d.id, name: d.name })) : [],
     teamUserIds: p.team_user_ids || [],
     teamMembers: Array.isArray(p.team_members) ? p.team_members.map((tm: any) => ({ id: tm.id, name: tm.name })) : [],
     startDate: p.start_date ? toDatetimeLocalValue(p.start_date) : null,
@@ -53,6 +57,8 @@ export async function createProject(input: {
   priority: string;
   dueDate: string;
   departmentIds: number[];
+  stationIds: number[];
+  divisionIds?: number[];
   startDate?: string;
   color?: string;
   leadId?: number;
@@ -64,6 +70,8 @@ export async function createProject(input: {
     priority: input.priority,
     due_date: input.dueDate ? new Date(input.dueDate).toISOString() : null,
     department_ids: input.departmentIds,
+    station_ids: input.stationIds,
+    division_ids: input.divisionIds ?? [],
   };
   if (input.startDate !== undefined) payload.start_date = input.startDate ? new Date(input.startDate).toISOString() : null;
   if (input.color !== undefined) payload.color = input.color;
@@ -82,6 +90,8 @@ export async function updateProject(id: number, input: Partial<{
   priority: string;
   dueDate: string;
   departmentIds: number[];
+  stationIds: number[];
+  divisionIds: number[];
 }>): Promise<Project> {
   const payload: any = {};
   if (input.name !== undefined) payload.name = input.name;
@@ -89,6 +99,8 @@ export async function updateProject(id: number, input: Partial<{
   if (input.priority !== undefined) payload.priority = input.priority;
   if (input.dueDate !== undefined) payload.due_date = input.dueDate ? new Date(input.dueDate).toISOString() : null;
   if (input.departmentIds !== undefined) payload.department_ids = input.departmentIds;
+  if (input.stationIds !== undefined) payload.station_ids = input.stationIds;
+  if (input.divisionIds !== undefined) payload.division_ids = input.divisionIds;
   const data = await apiFetch(`/projects/${id}`, {
     method: "PATCH",
     body: JSON.stringify(payload),

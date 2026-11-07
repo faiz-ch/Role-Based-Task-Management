@@ -129,7 +129,7 @@ export function TasksPage() {
     const project = projectsById[task.projectId];
     if (!project) return false;
     // Department scope lives on the user (manageAllDepartments / managedDepartments)
-    const hasProjectManagePermission = permissions.includes("project:manage") && inDepartmentScope(currentUser, project.departmentIds);
+    const hasProjectManagePermission = permissions.includes("project:manage") && inDepartmentScope(currentUser, project);
     return (
       hasProjectManagePermission ||
       currentUser?.id === project.leadId ||

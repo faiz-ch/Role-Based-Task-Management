@@ -28,11 +28,12 @@ from sqlalchemy import select, func, or_, and_, true
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.deps import get_current_user, has_permission, get_scoped_department_ids, can_view_task, can_view_subtask
+from app.core.deps import get_current_user, has_permission, get_scoped_department_ids, can_view_task, can_view_subtask, project_in_scope, get_scope_pairs
 from app.database import get_db
 from app.models.task import Task, TaskStatus, TaskTeam
-from app.models.project import Project, ProjectStatus, project_department
+from app.models.project import Project, ProjectStatus, project_department, project_station, project_division
 from app.models.department import Department
+from app.models.organization import Area, Station, Division
 from app.models.user import User
 from app.models.subtask import SubTask, SubTaskAssignee
 
@@ -79,10 +80,13 @@ class DashFilter:
     due_from: datetime | None = None
     due_to: datetime | None = None
     overdue: bool = False
+    area_id: int | None = None
+    station_id: int | None = None
+    division_id: int | None = None
 
     @property
     def narrows_projects(self) -> bool:
-        return self.department_id is not None or self.project_id is not None
+        return any(x is not None for x in (self.department_id, self.project_id, self.area_id, self.station_id, self.division_id))
 
 
 def _aware(dt: datetime | None) -> datetime | None:
@@ -97,8 +101,11 @@ def dash_filter(
     due_from: datetime | None = Query(None),
     due_to: datetime | None = Query(None),
     overdue: bool = Query(False),
+    area_id: int | None = Query(None),
+    station_id: int | None = Query(None),
+    division_id: int | None = Query(None),
 ) -> DashFilter:
-    f = DashFilter(department_id, project_id, _aware(due_from), _aware(due_to), overdue)
+    f = DashFilter(department_id, project_id, _aware(due_from), _aware(due_to), overdue, area_id, station_id, division_id)
     if f.due_from and f.due_to and f.due_from > f.due_to:
         raise HTTPException(status_code=400, detail="'From' date must be before 'To' date")
     return f
@@ -106,6 +113,22 @@ def dash_filter(
 
 def _project_ids_in_department(department_id: int):
     return select(project_department.c.project_id).where(project_department.c.department_id == department_id)
+
+
+def _org_project_ids(f: DashFilter) -> list:
+    """Sub-queries of project ids for the Area / Station / Division filters."""
+    out = []
+    if f.station_id is not None:
+        out.append(select(project_station.c.project_id).where(project_station.c.station_id == f.station_id))
+    if f.area_id is not None:
+        out.append(
+            select(project_station.c.project_id)
+            .join(Station, Station.id == project_station.c.station_id)
+            .where(Station.area_id == f.area_id)
+        )
+    if f.division_id is not None:
+        out.append(select(project_division.c.project_id).where(project_division.c.division_id == f.division_id))
+    return out
 
 
 def _date_conditions(column, status_column, done_values, f: DashFilter, now: datetime) -> list:
@@ -128,6 +151,8 @@ def _task_filter_conditions(f: DashFilter, now: datetime) -> list:
         conds.append(Task.project_id == f.project_id)
     if f.department_id is not None:
         conds.append(Task.project_id.in_(_project_ids_in_department(f.department_id)))
+    for sub in _org_project_ids(f):
+        conds.append(Task.project_id.in_(sub))
     return conds
 
 
@@ -355,6 +380,8 @@ async def get_manager_projects(db: AsyncSession, current_user: User, f: DashFilt
         conds.append(Project.id == f.project_id)
     if f.department_id is not None:
         conds.append(Project.id.in_(_project_ids_in_department(f.department_id)))
+    for sub in _org_project_ids(f):
+        conds.append(Project.id.in_(sub))
     conds += _date_conditions(Project.due_date, Project.status, list(FINISHED_PROJECT_STATUSES), f, now)
     result = await db.execute(
         select(Project)
@@ -362,7 +389,13 @@ async def get_manager_projects(db: AsyncSession, current_user: User, f: DashFilt
         .where(*conds)
         .order_by(Project.name)
     )
-    return list(result.scalars().all()), project_scope(current_user) is None
+    projects = list(result.scalars().all())
+    is_global = project_scope(current_user) is None
+    if not is_global:
+        # The SQL above is department-level; keep only what is in scope AT the right station
+        view = has_project_view(current_user)
+        projects = [p for p in projects if p.lead_id == current_user.id or (view and project_in_scope(current_user, p))]
+    return projects, is_global
 
 
 # ---------------------------------------------------------------------------
@@ -381,17 +414,35 @@ async def _filter_options(db: AsyncSession, current_user: User, is_manager: bool
             if ids:
                 dept_result = await db.execute(select(Department).where(Department.id.in_(ids)).order_by(Department.name))
                 departments = list(dept_result.scalars().all())
+        # Areas / stations / divisions to filter by: everything for a global view,
+        # otherwise those of the visible projects and of what the person manages
+        if is_global:
+            stations = list((await db.execute(select(Station).order_by(Station.name))).scalars().all())
+            divisions = list((await db.execute(select(Division).order_by(Division.name))).scalars().all())
+        else:
+            pairs = get_scope_pairs(current_user) if has_project_view(current_user) else set()
+            st_ids = {sid for sid, _ in (pairs or set())} | {st.id for p in projects for st in p.stations}
+            stations = list((await db.execute(select(Station).where(Station.id.in_(st_ids)).order_by(Station.name))).scalars().all()) if st_ids else []
+            dv = {dv.id: dv for p in projects for dv in p.divisions}
+            divisions = sorted(dv.values(), key=lambda x: x.name)
+        area_ids = {st.area_id for st in stations}
+        areas = list((await db.execute(select(Area).where(Area.id.in_(area_ids)).order_by(Area.name))).scalars().all()) if area_ids else []
         return {
             "user_type": "manager",
+            "areas": [{"id": a.id, "name": a.name} for a in areas],
+            "stations": [{"id": st.id, "name": st.name, "code": st.code, "area_id": st.area_id} for st in stations],
+            "divisions": [{"id": dv.id, "name": dv.name} for dv in divisions],
             "departments": [{"id": d.id, "name": d.name} for d in departments],
             "projects": [
-                {"id": p.id, "name": p.name, "department_ids": [d.id for d in p.departments]}
+                {"id": p.id, "name": p.name, "department_ids": [d.id for d in p.departments],
+                 "station_ids": [st.id for st in p.stations], "division_ids": [dv.id for dv in p.divisions]}
                 for p in projects
             ],
         }
     projects = await get_employee_projects(db, current_user)
     return {
         "user_type": "employee",
+        "areas": [], "stations": [], "divisions": [],
         "departments": [],
         "projects": [{"id": p.id, "name": p.name, "department_ids": []} for p in projects],
     }
@@ -404,6 +455,9 @@ async def _validate_filter(db: AsyncSession, current_user: User, is_manager: boo
     options = await _filter_options(db, current_user, is_manager)
     if f.department_id is not None and f.department_id not in {d["id"] for d in options["departments"]}:
         raise HTTPException(status_code=403, detail="Not allowed: that department is outside your dashboard view")
+    for key, val, label in (("areas", f.area_id, "area"), ("stations", f.station_id, "station"), ("divisions", f.division_id, "division")):
+        if val is not None and val not in {x["id"] for x in options[key]}:
+            raise HTTPException(status_code=403, detail=f"Not allowed: that {label} is outside your dashboard view")
     if f.project_id is not None and f.project_id not in {p["id"] for p in options["projects"]}:
         raise HTTPException(status_code=403, detail="Not allowed: that project is outside your dashboard view")
 

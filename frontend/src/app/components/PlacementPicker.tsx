@@ -16,7 +16,8 @@ const lblCls = "block text-xs font-semibold text-muted-foreground uppercase trac
 
 /**
  * Where the person works: Area → Station (in that area) → Department (at that station), plus Division.
- * `allowedDepartmentIds` (optional) limits the choice to departments the signed-in person manages.
+ * `allowedPairs` (optional, "stationId:departmentId") limits the choice to departments,
+ * at a station, that the signed-in person manages.
  */
 export function PlacementPicker({
   areas,
@@ -24,7 +25,7 @@ export function PlacementPicker({
   divisions,
   value,
   onChange,
-  allowedDepartmentIds,
+  allowedPairs,
   required = true,
 }: {
   areas: Area[];
@@ -32,11 +33,11 @@ export function PlacementPicker({
   divisions: Division[];
   value: PlacementValue;
   onChange: (v: PlacementValue) => void;
-  allowedDepartmentIds?: number[] | null;
+  allowedPairs?: string[] | null;
   required?: boolean;
 }) {
-  const allowed = allowedDepartmentIds ? new Set(allowedDepartmentIds) : null;
-  const deptsOf = (st: Station) => st.departments.filter((d) => !allowed || allowed.has(d.id));
+  const allowed = allowedPairs ? new Set(allowedPairs) : null;
+  const deptsOf = (st: Station) => st.departments.filter((d) => !allowed || allowed.has(`${st.id}:${d.id}`));
   const usableStations = stations.filter((st) => deptsOf(st).length > 0);
   const areaOptions = areas.filter((a) => usableStations.some((st) => st.area.id === a.id));
   const stationOptions = usableStations.filter((st) => st.area.id === value.areaId);

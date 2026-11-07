@@ -1,7 +1,11 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router";
 import { Plus, Search, ChevronDown, ChevronRight, Trash2, Check, ChevronLeft, ArrowRight } from "lucide-react";
-import { Project, UserType, ProjectStatus, Priority, Department } from "../types";
+import { Project, UserType, ProjectStatus, Priority, Department, Area, Station, Division } from "../types";
+import { getAreas, getStations, getDivisions } from "../api/organization";
+import { ProjectOrgPicker, projectOrgProblem, worksOnProjectOrg } from "../components/ProjectOrgPicker";
+import { grantableFor } from "../utils/orgScope";
+import { managesAllDepartments } from "../utils/roleAccess";
 import { useAuth } from "../context/AuthContext";
 import { getProjects, createProject, deleteProject } from "../api/projects";
 import { getUsers } from "../api/users";
@@ -65,6 +69,8 @@ interface PForm {
   startDate: string;
   dueDate: string;
   departmentIds: number[];
+  stationIds: number[];
+  divisionIds: number[];
   color: string;
   leadId: string;
   teamUserIds: number[];
@@ -90,6 +96,12 @@ export function ProjectsPage() {
   // re-checked every 60 s and when returning to the tab.
   const projectsQ = useCachedQuery<Project[]>(qk.projects, getProjects, EMPTY, { staleTime: FRESH.LIVE, poll: true });
   const departmentsQ = useCachedQuery<Department[]>(qk.departments, getDepartments, EMPTY, { staleTime: FRESH.RARE });
+  const areasQ = useCachedQuery<Area[]>(qk.areas, getAreas, EMPTY, { staleTime: FRESH.RARE });
+  const stationsQ = useCachedQuery<Station[]>(qk.stations, () => getStations(), EMPTY, { staleTime: FRESH.RARE });
+  const divisionsQ = useCachedQuery<Division[]>(qk.divisions, getDivisions, EMPTY, { staleTime: FRESH.RARE });
+  const areas = areasQ.data, stations = stationsQ.data, divisions = divisionsQ.data;
+  // Where I may place a project: departments at stations I manage (null = everything)
+  const allowedPairs = managesAllDepartments(currentUser) ? null : [...grantableFor(currentUser, stations).pairs];
   // Users are only needed for the "New Project" lead/team picker
   const usersQ = useCachedQuery<UserType[]>(qk.users, getUsers, EMPTY, { staleTime: FRESH.NORMAL, enabled: canCreate });
   const projects = projectsQ.data;
@@ -103,6 +115,26 @@ export function ProjectsPage() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("");
+  const [fArea, setFArea] = useState("");
+  const [fStation, setFStation] = useState("");
+  const [fDept, setFDept] = useState("");
+  const [fDivision, setFDivision] = useState("");
+  const [fPriority, setFPriority] = useState("");
+  const [fLead, setFLead] = useState("");
+  const [fDueFrom, setFDueFrom] = useState("");
+  const [fDueTo, setFDueTo] = useState("");
+  const filtersOn = !!(searchQuery || filterStatus || fArea || fStation || fDept || fDivision || fPriority || fLead || fDueFrom || fDueTo);
+  function clearFilters() {
+    setSearchQuery(""); setFilterStatus(""); setFArea(""); setFStation(""); setFDept(""); setFDivision("");
+    setFPriority(""); setFLead(""); setFDueFrom(""); setFDueTo("");
+  }
+  // Filter lists come from the projects I can see
+  const seenStations = [...new Map(projects.flatMap((p) => p.stations).map((s) => [s.id, s])).values()].sort((a, b) => a.name.localeCompare(b.name));
+  const seenAreaIds = new Set(seenStations.map((s) => s.areaId));
+  const seenAreas = areas.filter((a) => seenAreaIds.has(a.id));
+  const seenDivisions = [...new Map(projects.flatMap((p) => p.divisions).map((d) => [d.id, d])).values()].sort((a, b) => a.name.localeCompare(b.name));
+  const seenDeptIds = new Set(projects.flatMap((p) => p.departmentIds));
+  const seenLeads = [...new Map(projects.filter((p) => p.lead).map((p) => [p.lead!.id, p.lead!])).values()].sort((a, b) => a.name.localeCompare(b.name));
 
   const [showNew, setShowNew] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -116,6 +148,8 @@ export function ProjectsPage() {
     startDate: "",
     dueDate: "",
     departmentIds: [],
+    stationIds: [],
+    divisionIds: [],
     color: "blue",
     leadId: "",
     teamUserIds: [],
@@ -123,6 +157,15 @@ export function ProjectsPage() {
 
   const filteredProjects = projects.filter((project) => {
     if (filterStatus && project.status !== filterStatus) return false;
+    if (fArea && !project.stations.some((s) => s.areaId === Number(fArea))) return false;
+    if (fStation && !project.stationIds.includes(Number(fStation))) return false;
+    if (fDept && !project.departmentIds.includes(Number(fDept))) return false;
+    if (fDivision && !(fDivision === "none" ? project.divisionIds.length === 0 : project.divisionIds.includes(Number(fDivision)))) return false;
+    if (fPriority && project.priority !== fPriority) return false;
+    if (fLead && !(fLead === "none" ? !project.leadId : project.leadId === Number(fLead))) return false;
+    const due = project.dueDate ? project.dueDate.slice(0, 10) : "";
+    if (fDueFrom && (!due || due < fDueFrom)) return false;
+    if (fDueTo && (!due || due > fDueTo)) return false;
     
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
@@ -143,6 +186,8 @@ export function ProjectsPage() {
       startDate: "",
       dueDate: "",
       departmentIds: [],
+      stationIds: [],
+      divisionIds: [],
       color: "blue",
       leadId: "",
       teamUserIds: [],
@@ -152,26 +197,25 @@ export function ProjectsPage() {
     setShowNew(true);
   }
 
+  const orgProblem = projectOrgProblem(form, stations, allowedPairs);
   function canProceedToStep2() {
-    return form.name.trim() !== "" && form.dueDate !== "";
+    return form.name.trim() !== "" && form.dueDate !== "" && !orgProblem;
   }
 
   function canProceedToStep3() {
     return form.leadId !== "";
   }
 
+  // Leaders and team members: people who work at one of the project's departments at one of its stations
   function getEligibleLeaders() {
-    return users.filter((u) => 
-      u.role?.permissions?.includes("task:manage") || u.role?.permissions?.includes("task:create")
+    return users.filter((u) =>
+      (u.role?.permissions?.includes("task:manage") || u.role?.permissions?.includes("task:create")) && worksOnProjectOrg(u, form)
     );
   }
 
   function getEligibleTeamMembers() {
-    const eligibleDepts = form.departmentIds;
-    if (eligibleDepts.length === 0) return [];
-    return users.filter((u) => 
-      u.department && eligibleDepts.includes(u.department.id)
-    );
+    if (form.departmentIds.length === 0) return [];
+    return users.filter((u) => worksOnProjectOrg(u, form));
   }
 
   function toggleTeamMember(userId: number) {
@@ -185,8 +229,8 @@ export function ProjectsPage() {
 
   async function saveNew() {
     if (!form.name.trim()) return;
-    if (form.departmentIds.length === 0) {
-      setError("Please select at least one department");
+    if (orgProblem) {
+      setError(orgProblem);
       return;
     }
     try {
@@ -197,6 +241,8 @@ export function ProjectsPage() {
         priority: form.priority,
         dueDate: form.dueDate,
         departmentIds: form.departmentIds,
+        stationIds: form.stationIds,
+        divisionIds: form.divisionIds,
         startDate: form.startDate,
         color: form.color,
         leadId: form.leadId ? Number(form.leadId) : undefined,
@@ -272,29 +318,64 @@ export function ProjectsPage() {
       )}
 
       {/* Filter bar */}
-      <div className="flex items-center gap-3 mb-6 flex-shrink-0 flex-wrap">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Search projects..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground"
-          />
+      <div className="bg-white border border-border rounded-xl p-3 mb-6 flex-shrink-0 space-y-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              aria-label="Search projects"
+              placeholder="Search projects..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground"
+            />
+          </div>
+          {filtersOn && (
+            <button type="button" onClick={clearFilters} className="px-3 py-2 text-sm border border-border rounded-lg hover:bg-muted cursor-pointer">Clear filters</button>
+          )}
+          <span className="text-xs text-muted-foreground" data-testid="projects-count">Showing {filteredProjects.length} of {projects.length}</span>
         </div>
-        <select
-          value={filterStatus}
-          onChange={(e) => setFilterStatus(e.target.value)}
-          className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground"
-        >
-          <option value="">All statuses</option>
-          {PROJECT_STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-9 gap-2 pt-1">
+          <select aria-label="Filter by area" value={fArea} onChange={(e) => { setFArea(e.target.value); setFStation(""); }} className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground">
+            <option value="">All areas</option>
+            {seenAreas.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+          <select aria-label="Filter by station" value={fStation} onChange={(e) => setFStation(e.target.value)} className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground">
+            <option value="">All stations</option>
+            {seenStations.filter((s) => !fArea || s.areaId === Number(fArea)).map((s) => <option key={s.id} value={s.id}>{s.code || s.name}</option>)}
+          </select>
+          <select aria-label="Filter by department" value={fDept} onChange={(e) => setFDept(e.target.value)} className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground">
+            <option value="">All departments</option>
+            {departments.filter((d) => seenDeptIds.has(d.id)).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+          <select aria-label="Filter by division" value={fDivision} onChange={(e) => setFDivision(e.target.value)} className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground">
+            <option value="">All divisions</option>
+            <option value="none">No division</option>
+            {seenDivisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+          <select aria-label="Filter by status" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground">
+            <option value="">All statuses</option>
+            {PROJECT_STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
+          </select>
+          <select aria-label="Filter by priority" value={fPriority} onChange={(e) => setFPriority(e.target.value)} className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground">
+            <option value="">All priorities</option>
+            {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+          <select aria-label="Filter by lead" value={fLead} onChange={(e) => setFLead(e.target.value)} className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground">
+            <option value="">All leads</option>
+            <option value="none">No lead yet</option>
+            {seenLeads.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+          </select>
+          <label className="relative flex flex-col">
+            <span className="absolute -top-2 left-2 px-1 bg-white text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Due from</span>
+            <input type="date" aria-label="Due from" value={fDueFrom} onChange={(e) => setFDueFrom(e.target.value)} className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground" />
+          </label>
+          <label className="relative flex flex-col">
+            <span className="absolute -top-2 left-2 px-1 bg-white text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Due to</span>
+            <input type="date" aria-label="Due to" value={fDueTo} onChange={(e) => setFDueTo(e.target.value)} className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground" />
+          </label>
+        </div>
       </div>
 
       {/* Project list */}
@@ -332,9 +413,17 @@ export function ProjectsPage() {
               <div className="pr-8">
                 <ProjectStatusBadge status={project.status} />
                 
-                <h3 className="text-base font-semibold text-foreground mt-2 mb-3">
+                <h3 className="text-base font-semibold text-foreground mt-2 mb-1">
                   {project.name}
                 </h3>
+                <div className="flex flex-wrap gap-1 mb-3" data-testid="project-org-tags">
+                  {project.stations.map((st) => (
+                    <span key={st.id} className="px-1.5 py-0.5 rounded bg-[#15171C] text-[#E8D9B0] text-[11px] font-semibold">{st.code || st.name}</span>
+                  ))}
+                  {project.divisions.map((dv) => (
+                    <span key={dv.id} className="px-1.5 py-0.5 rounded border border-border text-[11px] text-muted-foreground">{dv.name}</span>
+                  ))}
+                </div>
                 
                 {hasTasks ? (
                   <div className="mb-4">
@@ -395,7 +484,7 @@ export function ProjectsPage() {
       </div>
 
       {showNew && (
-        <Dlg title="New Project" onClose={() => setShowNew(false)}>
+        <Dlg title="New Project" onClose={() => setShowNew(false)} size="lg">
           {/* Step Indicator */}
           <div className="flex items-center justify-center gap-4 mb-6">
             {[1, 2, 3].map((step) => (
@@ -477,27 +566,18 @@ export function ProjectsPage() {
                 onChange={(value) => setForm((f) => ({ ...f, dueDate: value }))}
                 min={form.startDate || new Date().toISOString().slice(0, 16)}
               />
-              <div className="flex flex-col gap-2">
-                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                  Departments
-                </span>
-                <div className="grid grid-cols-2 gap-2">
-                  {departments.map((dept) => (
-                    <label
-                      key={dept.id}
-                      className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg hover:bg-muted/30 cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={form.departmentIds.includes(dept.id)}
-                        onChange={() => toggleDepartment(dept.id)}
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
-                      <span className="text-sm text-foreground">{dept.name}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
+              <ProjectOrgPicker
+                areas={areas}
+                stations={stations}
+                divisions={divisions}
+                value={form}
+                onChange={(v) => setForm((f) => {
+                  // team and lead must still work at the project's stations/departments
+                  const keep = (id: number) => { const u = users.find((x) => x.id === id); return !!u && worksOnProjectOrg(u, v); };
+                  return { ...f, ...v, teamUserIds: f.teamUserIds.filter(keep), leadId: f.leadId && keep(Number(f.leadId)) ? f.leadId : "" };
+                })}
+                allowedPairs={allowedPairs}
+              />
               <div className="flex flex-col gap-2">
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                   Project Color
@@ -603,6 +683,14 @@ export function ProjectsPage() {
                     <p className="text-sm text-foreground mt-1">{fmtDate(form.startDate)}</p>
                   </div>
                 )}
+                <div>
+                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Stations</span>
+                  <p className="text-sm text-foreground mt-1">{stations.filter((st) => form.stationIds.includes(st.id)).map((st) => st.name).join(", ") || "—"}</p>
+                </div>
+                <div>
+                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Divisions</span>
+                  <p className="text-sm text-foreground mt-1">{divisions.filter((d) => form.divisionIds.includes(d.id)).map((d) => d.name).join(", ") || "None"}</p>
+                </div>
                 <div>
                   <span className="text-xs text-muted-foreground uppercase tracking-wider">Departments</span>
                   <div className="flex flex-wrap gap-1 mt-1">

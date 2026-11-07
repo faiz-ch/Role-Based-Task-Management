@@ -80,10 +80,16 @@ export function getEffectiveDepartmentIds(user: UserType | null | undefined, all
     : user.scopeDepartmentIds;
 }
 
-/** True if the user's department scope covers at least one of the given departments. */
-export function inDepartmentScope(user: UserType | null | undefined, departmentIds: number[] | undefined): boolean {
-  if (!user) return false;
+/**
+ * True if the project is inside what the user manages. Station-aware (Phase 3):
+ * one of the project's departments, at one of its stations, must be managed.
+ */
+export function inDepartmentScope(
+  user: UserType | null | undefined,
+  project: { stationIds: number[]; departmentIds: number[] } | null | undefined
+): boolean {
+  if (!user || !project) return false;
   if (managesAllDepartments(user)) return true;
-  const mine = new Set(user.scopeDepartmentIds);
-  return (departmentIds ?? []).some((id) => mine.has(id));
+  const mine = new Set(user.scopePairs);
+  return project.stationIds.some((s) => project.departmentIds.some((d) => mine.has(`${s}:${d}`)));
 }

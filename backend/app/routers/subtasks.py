@@ -16,7 +16,7 @@ from app.core.deps import (
     is_task_lead,
     is_project_lead,
     has_permission,
-    get_scoped_department_ids,
+    get_scoped_department_ids, project_in_scope, placement_in_scope, get_scope_pairs, project_pairs,
 )
 from app.database import get_db
 from app.models.user import User
@@ -329,8 +329,7 @@ async def update_subtask_status(
         if is_project_lead(current_user, subtask.task.project):
             can_approve = True
         elif has_permission(current_user, "project:manage"):
-            scoped = get_scoped_department_ids(current_user)
-            if scoped is None or any(d.id in scoped for d in subtask.task.project.departments):
+            if project_in_scope(current_user, subtask.task.project):
                 can_approve = True
 
     # Handle submit transition (To Do/Reschedule -> Review)

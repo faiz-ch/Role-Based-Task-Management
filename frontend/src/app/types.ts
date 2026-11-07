@@ -93,8 +93,11 @@ export interface UserType {
   manageAllDepartments: boolean;
   managedAreas: OrgRef[];
   managedStations: (OrgRef & { areaId: number })[];
-  managedDepartments: Department[];
-  /** every department covered by what the person manages (from the server) */
+  /** single departments the person manages, each AT a station */
+  managedPairs: { station: OrgRef & { areaId: number }; department: OrgRef }[];
+  /** everything covered by what the person manages, as "stationId:departmentId" (from the server) */
+  scopePairs: string[];
+  /** departments appearing in scopePairs */
   scopeDepartmentIds: number[];
   extraAssignableRoles: { id: number; name: string }[];
   createdAt: string;
@@ -116,6 +119,10 @@ export interface Project {
   dueDate: string;
   createdAt: string;
   departmentIds: number[];
+  stationIds: number[];
+  stations: (OrgRef & { areaId: number })[];
+  divisionIds: number[];
+  divisions: OrgRef[];
   teamUserIds: number[];
   teamMembers: { id: number; name: string }[];
   startDate: string | null;

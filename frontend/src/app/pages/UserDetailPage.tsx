@@ -142,7 +142,7 @@ export function UserDetailPage() {
   // What I may hand out, and where I may place people
   const grantable = grantableFor(currentUser, stations);
   const canGrantAllDepartments = grantable.all;
-  const placeableDeptIds = grantable.all ? null : [...grantable.departmentIds];
+  const placeablePairs = grantable.all ? null : [...grantable.pairs];
   const targetIsAdmin = !!user?.role?.isSystem; // the main Admin may stay without code / placement
   const editManagedIds = effectiveDepartmentIds(editForm.scope, stations);
 
@@ -235,10 +235,11 @@ export function UserDetailPage() {
         const before = scopeOf(user), now = editForm.scope;
         const same = (a: number[], b: number[]) => [...a].sort().join(",") === [...b].sort().join(",");
         if (now.manageAll !== before.manageAll) updateData.manage_all_departments = now.manageAll;
-        if (!now.manageAll && (!same(now.areaIds, before.areaIds) || !same(now.stationIds, before.stationIds) || !same(now.departmentIds, before.departmentIds))) {
+        const sameS = (a: string[], b: string[]) => [...a].sort().join(",") === [...b].sort().join(",");
+        if (!now.manageAll && (!same(now.areaIds, before.areaIds) || !same(now.stationIds, before.stationIds) || !sameS(now.pairs, before.pairs))) {
           updateData.managed_area_ids = now.areaIds;
           updateData.managed_station_ids = now.stationIds;
-          updateData.managed_department_ids = now.departmentIds;
+          updateData.managed_pairs = now.pairs;
         }
       }
       if (showEditExtras) {
@@ -814,7 +815,7 @@ export function UserDetailPage() {
               divisions={divisions}
               value={editForm.placement}
               onChange={(placement) => setEditForm({ ...editForm, placement })}
-              allowedDepartmentIds={placeableDeptIds}
+              allowedPairs={placeablePairs}
               required={!targetIsAdmin}
             />
             <FldSelect

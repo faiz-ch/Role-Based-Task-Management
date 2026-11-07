@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { Area, Station } from "../types";
 import {
-  ScopeValue, Grantable, canGiveArea, canGiveStation, canGiveDepartment, effectiveDepartmentIds, normaliseScope,
+  ScopeValue, Grantable, canGiveArea, canGiveStation, canGivePair, effectivePairs, normaliseScope, pairKey,
 } from "../utils/orgScope";
 
 /**
@@ -22,36 +22,36 @@ export function ScopeTreePicker({
 }: {
   areas: Area[];
   stations: Station[];
-  /** all departments; those not linked to any station are listed at the end */
+  /** not used any more (departments always belong to a station); kept so callers need no change */
   departments?: { id: number; name: string }[];
   value: ScopeValue;
   onChange: (v: ScopeValue) => void;
   grantable: Grantable;
 }) {
   const [openAreas, setOpenAreas] = useState<Set<number>>(() => new Set(
-    stations.filter((st) => value.stationIds.includes(st.id) || st.departments.some((d) => value.departmentIds.includes(d.id))).map((st) => st.area.id)
+    stations.filter((st) => value.stationIds.includes(st.id) || st.departments.some((d) => value.pairs.includes(pairKey(st.id, d.id)))).map((st) => st.area.id)
   ));
   const [openStations, setOpenStations] = useState<Set<number>>(() => new Set(
-    stations.filter((st) => st.departments.some((d) => value.departmentIds.includes(d.id))).map((st) => st.id)
+    stations.filter((st) => st.departments.some((d) => value.pairs.includes(pairKey(st.id, d.id)))).map((st) => st.id)
   ));
   const toggleSet = (set: Set<number>, id: number) => { const n = new Set(set); n.has(id) ? n.delete(id) : n.add(id); return n; };
 
   const areaSet = new Set(value.areaIds);
   const stationSet = new Set(value.stationIds);
-  const deptSet = new Set(value.departmentIds);
+  const pairSet = new Set(value.pairs);
   const emit = (v: ScopeValue) => onChange(normaliseScope(v, stations));
 
-  const visibleStation = (st: Station) => canGiveStation(grantable, st.id) || st.departments.some((d) => canGiveDepartment(grantable, d.id));
+  const visibleStation = (st: Station) => canGiveStation(grantable, st.id) || st.departments.some((d) => canGivePair(grantable, st.id, d.id));
   const visibleAreas = areas.filter((a) => canGiveArea(grantable, a.id) || stations.some((st) => st.area.id === a.id && visibleStation(st)));
-  const covered = effectiveDepartmentIds(value, stations).length;
-  const linked = new Set(uniqueDepts(stations).map((d) => d.id));
-  const unlinked = departments.filter((d) => !linked.has(d.id) && canGiveDepartment(grantable, d.id));
+  const covered = effectivePairs(value, stations).length;
 
   // Ticks given by someone with wider access: the server keeps them; show them read-only
   const lockedNames = [
     ...areas.filter((a) => areaSet.has(a.id) && !canGiveArea(grantable, a.id)).map((a) => `${a.name} (whole area)`),
     ...stations.filter((s) => stationSet.has(s.id) && !canGiveStation(grantable, s.id)).map((s) => `${s.name} (whole station)`),
-    ...uniqueDepts(stations).filter((d) => deptSet.has(d.id) && !canGiveDepartment(grantable, d.id)).map((d) => d.name),
+    ...stations.flatMap((st) => st.departments
+      .filter((d) => pairSet.has(pairKey(st.id, d.id)) && !canGivePair(grantable, st.id, d.id))
+      .map((d) => `${d.name} at ${st.code || st.name}`)),
   ];
 
   return (
@@ -76,7 +76,7 @@ export function ScopeTreePicker({
 
       {!value.manageAll && (
         <div className="border border-border rounded-lg divide-y divide-border max-h-80 overflow-y-auto" data-testid="scope-tree">
-          {visibleAreas.length === 0 && unlinked.length === 0 && <p className="p-3 text-sm text-muted-foreground">Nothing available to give.</p>}
+          {visibleAreas.length === 0 && <p className="p-3 text-sm text-muted-foreground">Nothing available to give.</p>}
           {visibleAreas.map((area) => {
             const areaTicked = areaSet.has(area.id);
             const open = openAreas.has(area.id);
@@ -107,7 +107,7 @@ export function ScopeTreePicker({
                     {areaStations.map((st) => {
                       const stTicked = areaTicked || stationSet.has(st.id);
                       const stOpen = openStations.has(st.id);
-                      const depts = st.departments.filter((d) => stTicked || canGiveDepartment(grantable, d.id));
+                      const depts = st.departments.filter((d) => stTicked || canGivePair(grantable, st.id, d.id));
                       return (
                         <div key={st.id} className="py-1">
                           <div className="flex items-center gap-2">
@@ -137,9 +137,12 @@ export function ScopeTreePicker({
                                   <input
                                     type="checkbox"
                                     aria-label={`Department ${d.name} at ${st.name}`}
-                                    checked={stTicked || deptSet.has(d.id)}
-                                    disabled={stTicked || !canGiveDepartment(grantable, d.id)}
-                                    onChange={(e) => emit({ ...value, departmentIds: e.target.checked ? [...value.departmentIds, d.id] : value.departmentIds.filter((x) => x !== d.id) })}
+                                    checked={stTicked || pairSet.has(pairKey(st.id, d.id))}
+                                    disabled={stTicked || !canGivePair(grantable, st.id, d.id)}
+                                    onChange={(e) => {
+                                      const k = pairKey(st.id, d.id);
+                                      emit({ ...value, pairs: e.target.checked ? [...value.pairs, k] : value.pairs.filter((x) => x !== k) });
+                                    }}
                                     className="w-4 h-4 accent-blue-600"
                                   />
                                   <span className="text-foreground">{d.name}</span>
@@ -155,30 +158,11 @@ export function ScopeTreePicker({
               </div>
             );
           })}
-          {unlinked.length > 0 && (
-            <div className="px-3 py-2">
-              <p className="text-xs font-semibold text-muted-foreground mb-1">Departments not linked to a station</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
-                {unlinked.map((d) => (
-                  <label key={d.id} className="flex items-center gap-2 text-sm cursor-pointer">
-                    <input
-                      type="checkbox"
-                      aria-label={`Department ${d.name}`}
-                      checked={deptSet.has(d.id)}
-                      onChange={(e) => emit({ ...value, departmentIds: e.target.checked ? [...value.departmentIds, d.id] : value.departmentIds.filter((x) => x !== d.id) })}
-                      className="w-4 h-4 accent-blue-600"
-                    />
-                    <span className="text-foreground">{d.name}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       )}
 
       <p className="text-xs text-muted-foreground mt-2" data-testid="scope-summary">
-        {value.manageAll ? "Covers everything." : `Covers ${covered} department${covered === 1 ? "" : "s"}.`}
+        {value.manageAll ? "Covers everything." : `Covers ${covered} department${covered === 1 ? "" : "s"} (counted per station).`}
       </p>
       {lockedNames.length > 0 && !value.manageAll && (
         <p className="text-xs text-amber-700 mt-1">
@@ -187,10 +171,4 @@ export function ScopeTreePicker({
       )}
     </fieldset>
   );
-}
-
-function uniqueDepts(stations: Station[]) {
-  const m = new Map<number, { id: number; name: string }>();
-  stations.forEach((st) => st.departments.forEach((d) => m.set(d.id, d)));
-  return [...m.values()];
 }
