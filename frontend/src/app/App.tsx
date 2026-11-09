@@ -12,6 +12,8 @@ import { RolesPage } from "./pages/RolesPage";
 import { RoleDetailPage } from "./pages/RoleDetailPage";
 import { OrganizationPage } from "./pages/OrganizationPage";
 import { OrgDetailPage } from "./pages/OrgDetailPage";
+import { RolesAndApprovalsPage } from "./pages/RolesAndApprovalsPage";
+import { ApprovalsInboxPage } from "./pages/ApprovalsInboxPage";
 import { TaskDetailPage } from "./pages/TaskDetailPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { ProjectDetailPage } from "./pages/ProjectDetailPage";
@@ -109,6 +111,7 @@ function AppContent() {
                   <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
                   <Route path="/subtasks/:subtaskId" element={<SubtaskDetailPage />} />
                   <Route path="/projects" element={<ProjectsPage />} />
+                  <Route path="/approvals" element={<ApprovalsInboxPage />} />
                   <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
                   <Route
                     path="/users"
@@ -134,7 +137,7 @@ function AppContent() {
                     path="/roles"
                     element={
                       permissions.includes("role:manage") ? (
-                        <RolesPage />
+                        <RolesAndApprovalsPage />
                       ) : (
                         <Navigate to="/tasks" replace />
                       )

@@ -275,3 +275,34 @@ def meeting_cancelled_email(meeting: ZoomMeeting) -> tuple[str, str]:
         _meeting_link(meeting),
     )
     return subject, body
+
+
+# Approval email templates (Phase B)
+
+def _esc(s) -> str:
+    import html
+    return html.escape(str(s or ""))
+
+
+def approval_requested_email(project_id: int, project_name: str, type_name: str, by: str, amount: float | None, reason: str) -> tuple[str, str]:
+    subject = f"Approval needed: {type_name} for {project_name}"
+    lines = [f"Requested by: {_esc(by)}"]
+    if amount is not None:
+        lines.append(f"Amount: PKR {amount:,.2f}")
+    lines.append(f"Reason: {_esc(reason)[:500]}")
+    body = _wrap("Approval needed", f"A <b>{_esc(type_name)}</b> approval is waiting for your decision.", _esc(project_name),
+                 f"{settings.FRONTEND_URL}/approvals", lines)
+    return subject, body
+
+
+def approval_decided_email(project_id: int, project_name: str, type_name: str, label: str, by: str, amount: float | None,
+                           comment: str | None) -> tuple[str, str]:
+    subject = f"{type_name} {label}: {project_name}"
+    lines = [f"Decided by: {_esc(by)}"]
+    if amount is not None:
+        lines.append(f"Approved amount: PKR {amount:,.2f}")
+    if comment:
+        lines.append(f"Comment: {_esc(comment)[:500]}")
+    body = _wrap(f"{_esc(type_name)} {label}", f"Your <b>{_esc(type_name)}</b> request was {label}.", _esc(project_name),
+                 f"{settings.FRONTEND_URL}/projects/{project_id}", lines)
+    return subject, body

@@ -19,6 +19,8 @@ import { PriBadge } from "../components/PriBadge";
 import { DatePicker } from "../components/DatePicker";
 import { useErrorPopup } from "../utils/notify";
 import { MultiSelect, FilterChips } from "../components/MultiSelect";
+import { RequiredApprovalsPicker } from "../components/RequiredApprovalsPicker";
+import { ApprovalType, getApprovalTypes } from "../api/approvals";
 
 const PROJECT_STATUSES: ProjectStatus[] = ["Planning", "Active", "Pending Approval", "Done", "Archived"];
 const PRIORITIES: Priority[] = ["Low", "Medium", "High"];
@@ -79,6 +81,7 @@ interface PForm {
   color: string;
   leadId: string;
   teamUserIds: number[];
+  approvalTypeIds: number[];
 }
 
 function fmtDate(d: string) {
@@ -118,6 +121,8 @@ export function ProjectsPage() {
   const actionError: string | null = null;
   const error = actionError || (projectsQ.error ? projectsQ.error.message || "Failed to load projects." : null);
 
+  const approvalTypesQ = useCachedQuery<ApprovalType[]>(["approval-types"], getApprovalTypes, EMPTY, { staleTime: FRESH.NORMAL });
+  const approvalTypes = approvalTypesQ.data.filter((t) => t.isActive);
   const [searchQuery, setSearchQuery] = useState("");
   // Each list filter can hold several choices (any of them matches); empty = all
   const [filterStatus, setFilterStatus] = useState<string[]>([]);
@@ -171,6 +176,7 @@ export function ProjectsPage() {
     color: "blue",
     leadId: "",
     teamUserIds: [],
+    approvalTypeIds: [],
   });
 
   const filteredProjects = projects.filter((project) => {
@@ -210,6 +216,7 @@ export function ProjectsPage() {
       color: "blue",
       leadId: "",
       teamUserIds: [],
+      approvalTypeIds: [],
     });
     setWizardStep(1);
     setTeamSearch("");
@@ -266,6 +273,7 @@ export function ProjectsPage() {
         color: form.color,
         leadId: form.leadId ? Number(form.leadId) : undefined,
         teamUserIds: form.teamUserIds,
+        approvalTypeIds: form.approvalTypeIds,
       });
       setProjects((prev) => [...prev, newProject]);
       setShowNew(false);
@@ -593,6 +601,8 @@ export function ProjectsPage() {
                 })}
                 allowedPairs={allowedPairs}
               />
+              <RequiredApprovalsPicker types={approvalTypes} value={form.approvalTypeIds}
+                onChange={(ids) => setForm((f) => ({ ...f, approvalTypeIds: ids }))} />
               <div className="flex flex-col gap-2">
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                   Project Color
@@ -705,6 +715,10 @@ export function ProjectsPage() {
                 <div>
                   <span className="text-xs text-muted-foreground uppercase tracking-wider">Divisions</span>
                   <p className="text-sm text-foreground mt-1">{divisions.filter((d) => form.divisionIds.includes(d.id)).map((d) => d.name).join(", ") || "None"}</p>
+                </div>
+                <div>
+                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Required approvals</span>
+                  <p className="text-sm text-foreground mt-1" data-testid="review-approvals">{approvalTypes.filter((t) => t.mandatory || form.approvalTypeIds.includes(t.id)).map((t) => t.name).join(", ") || "None"}</p>
                 </div>
                 <div>
                   <span className="text-xs text-muted-foreground uppercase tracking-wider">Departments</span>

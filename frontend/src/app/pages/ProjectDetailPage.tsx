@@ -17,6 +17,7 @@ import { MeetingsTab } from "./project-detail/MeetingsTab";
 import { TeamTab } from "./project-detail/TeamTab";
 import { TimelineTab } from "./project-detail/TimelineTab";
 import { FilesTab } from "./project-detail/FilesTab";
+import { ApprovalsTab } from "./project-detail/ApprovalsTab";
 import { ActivityTab } from "./project-detail/ActivityTab";
 import { SettingsTab } from "./project-detail/SettingsTab";
 import { ScheduleMeetingDialog } from "./project-detail/ScheduleMeetingDialog";
@@ -328,6 +329,7 @@ export function ProjectDetailPage() {
   const tabs = [
     { id: "overview", label: "Overview" },
     { id: "tasks", label: "Tasks" },
+    { id: "approvals", label: "Approvals" },
     { id: "meetings", label: "Meetings" },
     { id: "team", label: "Team" },
     { id: "timeline", label: "Timeline" },
@@ -376,7 +378,7 @@ export function ProjectDetailPage() {
           </div>
           <div>
             <dt className="text-xs text-muted-foreground uppercase tracking-wider">Departments</dt>
-            <dd className="text-foreground">{projectDepts.map((d) => d.name).join(", ") || "—"}</dd>
+            <dd className="text-foreground">{(project.departmentNames?.length ? project.departmentNames : projectDepts.map((d) => d.name)).join(", ") || "—"}</dd>
           </div>
           <div>
             <dt className="text-xs text-muted-foreground uppercase tracking-wider">Divisions</dt>
@@ -426,6 +428,8 @@ export function ProjectDetailPage() {
           onCreateTask={handleCreateTask}
         />
       )}
+
+      {activeTab === "approvals" && <ApprovalsTab projectId={project.id} canEdit={canManage} />}
 
       {activeTab === "meetings" && (
         <MeetingsTab

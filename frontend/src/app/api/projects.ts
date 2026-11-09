@@ -23,6 +23,7 @@ function mapProject(p: any): Project {
     dueDate: p.due_date ? toDatetimeLocalValue(p.due_date) : "",
     createdAt: p.created_at ? p.created_at.slice(0, 10) : "",
     departmentIds: p.department_ids || [],
+    departmentNames: (p.departments || []).map((d: any) => d.name),
     stationIds: p.station_ids || [],
     stations: Array.isArray(p.stations) ? p.stations.map((st: any) => ({ id: st.id, name: st.name, code: st.code, areaId: st.area_id })) : [],
     divisionIds: p.division_ids || [],
@@ -63,6 +64,7 @@ export async function createProject(input: {
   color?: string;
   leadId?: number;
   teamUserIds?: number[];
+  approvalTypeIds?: number[];
 }): Promise<Project> {
   const payload: any = {
     name: input.name,
@@ -77,6 +79,7 @@ export async function createProject(input: {
   if (input.color !== undefined) payload.color = input.color;
   if (input.leadId !== undefined) payload.lead_id = input.leadId;
   if (input.teamUserIds !== undefined) payload.team_user_ids = input.teamUserIds;
+  if (input.approvalTypeIds !== undefined) payload.approval_type_ids = input.approvalTypeIds;
   const data = await apiFetch("/projects", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -92,6 +95,7 @@ export async function updateProject(id: number, input: Partial<{
   departmentIds: number[];
   stationIds: number[];
   divisionIds: number[];
+  approvalTypeIds: number[];
 }>): Promise<Project> {
   const payload: any = {};
   if (input.name !== undefined) payload.name = input.name;
@@ -101,6 +105,7 @@ export async function updateProject(id: number, input: Partial<{
   if (input.departmentIds !== undefined) payload.department_ids = input.departmentIds;
   if (input.stationIds !== undefined) payload.station_ids = input.stationIds;
   if (input.divisionIds !== undefined) payload.division_ids = input.divisionIds;
+  if (input.approvalTypeIds !== undefined) payload.approval_type_ids = input.approvalTypeIds;
   const data = await apiFetch(`/projects/${id}`, {
     method: "PATCH",
     body: JSON.stringify(payload),

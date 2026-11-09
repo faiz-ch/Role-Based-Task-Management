@@ -18,3 +18,4 @@ from app.models.report import Report
 from app.models.activity_log import ActivityLog
 from app.models.comment import Comment
 from app.models.zoom_meeting import ZoomMeeting, ZoomMeetingInvitee, ZoomMeetingParticipant, ZoomMeetingRecording
+from app.models.approval import ApprovalType, ProjectApproval, ApprovalEvent, approval_type_role, approval_type_user

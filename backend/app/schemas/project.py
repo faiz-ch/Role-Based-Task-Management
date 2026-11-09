@@ -32,6 +32,7 @@ class ProjectCreate(BaseModel):
     station_ids: List[int] = Field(..., min_length=1, description="At least one station is required")
     department_ids: List[int] = Field(..., min_length=1, description="At least one department is required")
     division_ids: List[int] = []
+    approval_type_ids: List[int] = []  # approvals this project needs (mandatory ones are added anyway)
     lead_id: int | None = None
     team_user_ids: List[int] | None = None
 
@@ -65,6 +66,7 @@ class ProjectOut(BaseModel):
     created_at: datetime
     completed_at: datetime | None
     department_ids: List[int]
+    departments: List[ProjectDivisionOut] = []  # id + name (shown to everyone who can see the project)
     station_ids: List[int] = []
     stations: List[ProjectStationOut] = []
     division_ids: List[int] = []
@@ -98,6 +100,7 @@ class ProjectUpdate(BaseModel):
     station_ids: List[int] | None = None
     department_ids: List[int] | None = None
     division_ids: List[int] | None = None
+    approval_type_ids: List[int] | None = None  # None = leave unchanged
 
 
 class ProjectRejectRequest(BaseModel):

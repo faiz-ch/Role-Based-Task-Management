@@ -10,7 +10,7 @@ import { PermDef } from "../types";
 const MODULE_INFO: Record<string, { label: string; description: string }> = {
   organization: { label: "Organization", description: "Manage areas, stations, departments and divisions" },
   project: { label: "Projects", description: "View and manage projects, teams, meetings and files" },
-  role: { label: "Roles", description: "Create and edit roles and their permissions" },
+  role: { label: "Roles & Approvals", description: "Create and edit roles, and set up approval types and who approves them" },
   task: { label: "Tasks", description: "Create and manage tasks" },
   user: { label: "Users", description: "View, create and edit user accounts" },
 };

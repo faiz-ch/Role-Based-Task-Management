@@ -11,7 +11,10 @@ import {
   Bell,
   FolderKanban,
   UserCircle,
+  Stamp,
 } from "lucide-react";
+import { useCachedQuery, FRESH } from "../api/queries";
+import { getApprovalsMe } from "../api/approvals";
 import { Page } from "../types";
 import { useAuth } from "../context/AuthContext";
 import { InstitutionsFooter } from "./InstitutionsFooter";
@@ -23,12 +26,15 @@ const NAV: {
   label: string;
   Icon: React.ElementType;
   perm: string | string[] | null;
+  /** shown only to people who approve something */
+  approverOnly?: boolean;
 }[] = [
   { id: "dashboard", label: "Dashboard", Icon: LayoutDashboard, perm: null },
   { id: "projects", label: "Projects", Icon: FolderKanban, perm: null },
   { id: "tasks", label: "Tasks", Icon: CheckSquare, perm: null },
+  { id: "approvals", label: "Approvals", Icon: Stamp, perm: null, approverOnly: true },
   { id: "users", label: "Users", Icon: Users, perm: "user:manage" },
-  { id: "roles", label: "Roles", Icon: Shield, perm: "role:manage" },
+  { id: "roles", label: "Roles & Approvals", Icon: Shield, perm: "role:manage" },
   { id: "organization", label: "Organization", Icon: Building2, perm: "organization:manage" },
 ];
 
@@ -75,6 +81,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [profileOpen, setProfileOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const headerHidden = useHideOnScroll(scrollRef, location.pathname, !!currentUser);
+  // Approvals waiting for me (menu item + count); refreshed after every save
+  const approvalsMeQ = useCachedQuery<{ isApprover: boolean; pendingCount: number } | null>(
+    ["approvals", "me", currentUser?.id ?? 0], getApprovalsMe, null, { enabled: !!currentUser, staleTime: FRESH.LIVE });
 
   // Derive current page from pathname
   const page: Page = (() => {
@@ -84,6 +93,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     if (path.startsWith("/tasks") || path.startsWith("/subtasks")) return "tasks";
     if (path.startsWith("/users")) return "users";
     if (path.startsWith("/roles")) return "roles";
+    if (path.startsWith("/approvals")) return "approvals";
     if (path.startsWith("/organization") || path.startsWith("/departments")) return "organization";
     return "tasks"; // default
   })();
@@ -98,9 +108,15 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   if (!currentUser) return <>{children}</>;
 
+  const isApprover = !!approvalsMeQ.data?.isApprover;
+  const pendingApprovals = approvalsMeQ.data?.pendingCount ?? 0;
   const visNav = NAV.filter(
-    (n) => n.perm === null || (Array.isArray(n.perm) ? n.perm.some(p => permissions.includes(p)) : permissions.includes(n.perm))
+    (n) => (!n.approverOnly || isApprover) &&
+      (n.perm === null || (Array.isArray(n.perm) ? n.perm.some(p => permissions.includes(p)) : permissions.includes(n.perm)))
   );
+  const badge = (id: Page) => id === "approvals" && pendingApprovals > 0
+    ? <span className="rlk-nav__badge" aria-label={`${pendingApprovals} waiting`}>{pendingApprovals > 99 ? "99+" : pendingApprovals}</span>
+    : null;
   const me = initials(currentUser.name);
   const roleName = currentUser.role?.name ?? "No role";
 
@@ -132,6 +148,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
               >
                 <Icon size={18} aria-hidden="true" />
                 {!collapsed && <span>{label}</span>}
+                {badge(id)}
               </button>
             ))}
           </div>
@@ -214,6 +231,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 >
                   <Icon size={16} aria-hidden="true" />
                   {label}
+                  {badge(id)}
                 </button>
               ))}
             </div>

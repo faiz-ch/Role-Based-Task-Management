@@ -1,7 +1,7 @@
 export type Status = "To Do" | "Review" | "Done" | "Reschedule";
 export type Priority = "Low" | "Medium" | "High";
 export type ProjectStatus = "Planning" | "Active" | "Pending Approval" | "Done" | "Archived";
-export type Page = "login" | "register" | "dashboard" | "tasks" | "taskDetail" | "users" | "roles" | "departments" | "organization" | "projects" | "projectDetail";
+export type Page = "login" | "register" | "dashboard" | "tasks" | "taskDetail" | "users" | "roles" | "departments" | "organization" | "projects" | "projectDetail" | "approvals";
 
 export interface Department {
   id: number;
@@ -119,6 +119,8 @@ export interface Project {
   dueDate: string;
   createdAt: string;
   departmentIds: number[];
+  /** department names, sent with the project (people who cannot list departments still see them) */
+  departmentNames: string[];
   stationIds: number[];
   stations: (OrgRef & { areaId: number })[];
   divisionIds: number[];

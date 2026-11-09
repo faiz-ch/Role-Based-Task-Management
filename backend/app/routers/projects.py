@@ -76,6 +76,9 @@ async def create_project(
                 detail="Start date cannot be before today"
             )
 
+    from app.routers.approvals import validate_type_ids
+    await validate_type_ids(db, payload.approval_type_ids)
+
     # Create project
     project = Project(
         name=payload.name,
@@ -94,6 +97,9 @@ async def create_project(
 
     # Insert department / station / division associations
     await _write_project_org(db, project.id, stations, departments, divisions)
+    # Approvals the project needs (+ every mandatory one)
+    from app.routers.approvals import set_project_approvals
+    await set_project_approvals(db, project.id, payload.approval_type_ids, current_user, creating=True)
     await db.commit()
     await db.refresh(project)
 
@@ -331,6 +337,10 @@ async def update_project(
         # Only what is NEW has to be inside my scope (others may have added wider things)
         _check_pairs_in_scope(current_user, pairs - project_pairs(project))
         await _write_project_org(db, project_id, stations, departments, divisions, replace=True)
+
+    if payload.approval_type_ids is not None:
+        from app.routers.approvals import set_project_approvals
+        await set_project_approvals(db, project_id, payload.approval_type_ids, current_user)
 
     await db.commit()
     await db.refresh(project)
@@ -930,6 +940,7 @@ def _project_to_out(project: Project) -> ProjectOut:
         created_at=project.created_at,
         completed_at=project.completed_at,
         department_ids=[d.id for d in project.departments],
+        departments=[ProjectDivisionOut(id=d.id, name=d.name) for d in sorted(project.departments, key=lambda x: x.name)],
         station_ids=[st.id for st in project.stations],
         stations=[ProjectStationOut(id=st.id, name=st.name, code=st.code, area_id=st.area_id) for st in project.stations],
         division_ids=[dv.id for dv in project.divisions],

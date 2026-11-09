@@ -14,7 +14,7 @@ import app.models  # noqa: F401 — registers all models with Base.metadata
 from app.config import settings
 from app.database import engine, Base, get_db
 from app.seed import seed_permissions
-from app.routers import auth, users, roles, tasks, dashboard, departments, categories, projects, subtasks, milestones, attachments, zoom_meetings, zoom_webhook, organization
+from app.routers import auth, users, roles, tasks, dashboard, departments, categories, projects, subtasks, milestones, attachments, zoom_meetings, zoom_webhook, organization, approvals
 
 
 @asynccontextmanager
@@ -26,6 +26,7 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await seed_permissions()
+    await approvals.ensure_builtin_types()
     yield
     # (nothing needed on shutdown for now)
 
@@ -58,6 +59,7 @@ app.include_router(attachments.router)
 app.include_router(dashboard.router)
 app.include_router(departments.router)
 app.include_router(organization.router)
+app.include_router(approvals.router)
 app.include_router(categories.router)
 app.include_router(zoom_meetings.router)
 app.include_router(zoom_webhook.router)

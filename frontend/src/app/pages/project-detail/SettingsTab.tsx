@@ -12,6 +12,8 @@ import { useAuth } from "../../context/AuthContext";
 import { managesAllDepartments } from "../../utils/roleAccess";
 import { grantableFor } from "../../utils/orgScope";
 import { notifyError } from "../../utils/notify";
+import { RequiredApprovalsPicker } from "../../components/RequiredApprovalsPicker";
+import { ApprovalType, ProjectApproval, getApprovalTypes, getProjectApprovals } from "../../api/approvals";
 
 interface SettingsTabProps {
   project: Project;
@@ -31,6 +33,7 @@ interface EditForm {
   departmentIds: number[];
   stationIds: number[];
   divisionIds: number[];
+  approvalTypeIds: number[];
 }
 
 function fmtDate(d: string) {
@@ -65,8 +68,11 @@ export function SettingsTab({
     departmentIds: [],
     stationIds: [],
     divisionIds: [],
+    approvalTypeIds: [],
   });
   const { currentUser } = useAuth();
+  const approvalTypes = useCachedQuery<ApprovalType[]>(["approval-types"], getApprovalTypes, EMPTY, { staleTime: FRESH.NORMAL }).data;
+  const projectApprovals = useCachedQuery<ProjectApproval[]>([...qk.project(project.id), "approvals"], () => getProjectApprovals(project.id), EMPTY, { staleTime: FRESH.LIVE }).data;
   const areas = useCachedQuery<Area[]>(qk.areas, getAreas, EMPTY, { staleTime: FRESH.RARE }).data;
   const stations = useCachedQuery<Station[]>(qk.stations, () => getStations(), EMPTY, { staleTime: FRESH.RARE }).data;
   const divisions = useCachedQuery<Division[]>(qk.divisions, getDivisions, EMPTY, { staleTime: FRESH.RARE }).data;
@@ -131,6 +137,7 @@ export function SettingsTab({
       departmentIds: project.departmentIds,
       stationIds: project.stationIds,
       divisionIds: project.divisionIds,
+      approvalTypeIds: projectApprovals.map((a) => a.type.id),
     });
     setShowEditProject(true);
   }
@@ -343,6 +350,9 @@ export function SettingsTab({
               onChange={(v) => setEditForm((f) => ({ ...f, ...v }))}
               allowedPairs={allowedPairs}
             />
+            <RequiredApprovalsPicker types={approvalTypes} value={editForm.approvalTypeIds}
+              onChange={(ids) => setEditForm((f) => ({ ...f, approvalTypeIds: ids }))}
+              lockedIds={projectApprovals.filter((a) => a.status !== "Not requested").map((a) => a.type.id)} />
           </div>
           <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-border">
             <button

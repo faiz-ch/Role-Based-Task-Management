@@ -12,7 +12,7 @@ import { PermissionModulePicker, hasModule } from "../components/PermissionModul
 import { RoleChecklist } from "../components/RoleChecklist";
 import { useErrorPopup } from "../utils/notify";
 
-export function RolesPage() {
+export function RolesPage({ embedded = false }: { embedded?: boolean } = {}) {
   const navigate = useNavigate();
   // Shared store: instant when already loaded, refreshed after every save
   const rolesQ = useCachedQuery<Role[]>(qk.roles, getRoles, EMPTY, { staleTime: FRESH.RARE });
@@ -146,12 +146,14 @@ export function RolesPage() {
   }
 
   return (
-    <div className="p-6">
+    <div className={embedded ? "" : "p-6"}>
       {/* Page Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-foreground">Roles</h1>
-        <p className="text-sm text-muted-foreground">Manage roles and their permissions</p>
-      </div>
+      {!embedded && (
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold text-foreground">Roles</h1>
+          <p className="text-sm text-muted-foreground">Manage roles and their permissions</p>
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm">
