@@ -3,10 +3,13 @@ import { Filter, X } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { useCachedQuery, qk, FRESH } from "../api/queries";
 import { getDashboardFilterOptions, DashboardFilterOptions, DashboardParams } from "../api/dashboard";
+import { MultiSelect, FilterChips, idsToValues, valuesToIds } from "./MultiSelect";
 
 /**
  * Dashboard filters: [Area] [Station] [Division] [Department] [Project] [Time period] [Clear]
  * (Area / Station / Division appear only when the person has more than one to choose from.)
+ * Area, Station, Division, Department and Project are searchable and allow several choices
+ * (any of the chosen matches); different filters combine. Time period is a single choice.
  *
  * - Options come from GET /dashboard/filter-options, so each person only sees
  *   departments / projects they are already allowed to see. The server also
@@ -20,17 +23,17 @@ import { getDashboardFilterOptions, DashboardFilterOptions, DashboardParams } fr
 export type Period = "all" | "week" | "month" | "overdue" | "custom";
 
 export interface DashFilters {
-  areaId: number | null;
-  stationId: number | null;
-  divisionId: number | null;
-  departmentId: number | null;
-  projectId: number | null;
+  areaIds: number[];
+  stationIds: number[];
+  divisionIds: number[];
+  departmentIds: number[];
+  projectIds: number[];
   period: Period;
   from: string; // YYYY-MM-DD (custom only)
   to: string;   // YYYY-MM-DD (custom only)
 }
 
-const DEFAULT_FILTERS: DashFilters = { areaId: null, stationId: null, divisionId: null, departmentId: null, projectId: null, period: "all", from: "", to: "" };
+const DEFAULT_FILTERS: DashFilters = { areaIds: [], stationIds: [], divisionIds: [], departmentIds: [], projectIds: [], period: "all", from: "", to: "" };
 
 const PERIOD_OPTIONS: { value: Period; label: string }[] = [
   { value: "all", label: "Any time" },
@@ -48,7 +51,16 @@ function readStored(userId: number | undefined): DashFilters {
   try {
     const raw = localStorage.getItem(storageKey(userId));
     if (!raw) return DEFAULT_FILTERS;
-    return { ...DEFAULT_FILTERS, ...JSON.parse(raw) };
+    const v = JSON.parse(raw) || {};
+    // older saved choice (one of each) → lists
+    const list = (many: unknown, one: unknown) =>
+      Array.isArray(many) ? many.filter((x) => typeof x === "number") : typeof one === "number" ? [one] : [];
+    return {
+      areaIds: list(v.areaIds, v.areaId), stationIds: list(v.stationIds, v.stationId), divisionIds: list(v.divisionIds, v.divisionId),
+      departmentIds: list(v.departmentIds, v.departmentId), projectIds: list(v.projectIds, v.projectId),
+      period: PERIOD_OPTIONS.some((o) => o.value === v.period) ? v.period : "all",
+      from: typeof v.from === "string" ? v.from : "", to: typeof v.to === "string" ? v.to : "",
+    };
   } catch {
     return DEFAULT_FILTERS;
   }
@@ -78,11 +90,11 @@ function parseDay(value: string): Date | null {
 /** Turn the UI choice into the query the server understands. */
 export function filtersToParams(f: DashFilters): DashboardParams {
   const params: DashboardParams = {};
-  if (f.areaId != null) params.area_id = f.areaId;
-  if (f.stationId != null) params.station_id = f.stationId;
-  if (f.divisionId != null) params.division_id = f.divisionId;
-  if (f.departmentId != null) params.department_id = f.departmentId;
-  if (f.projectId != null) params.project_id = f.projectId;
+  if (f.areaIds.length) params.area_id = f.areaIds;
+  if (f.stationIds.length) params.station_id = f.stationIds;
+  if (f.divisionIds.length) params.division_id = f.divisionIds;
+  if (f.departmentIds.length) params.department_id = f.departmentIds;
+  if (f.projectIds.length) params.project_id = f.projectIds;
   const today = new Date();
   if (f.period === "week") {
     const mondayOffset = (today.getDay() + 6) % 7; // Monday = start of week
@@ -105,7 +117,7 @@ export function filtersToParams(f: DashFilters): DashboardParams {
 }
 
 export function isFiltered(f: DashFilters): boolean {
-  return f.areaId != null || f.stationId != null || f.divisionId != null || f.departmentId != null || f.projectId != null || f.period !== "all";
+  return f.areaIds.length > 0 || f.stationIds.length > 0 || f.divisionIds.length > 0 || f.departmentIds.length > 0 || f.projectIds.length > 0 || f.period !== "all";
 }
 
 /**
@@ -135,23 +147,27 @@ export function useDashboardFilters() {
   // Drop a saved department / project the person can no longer see (avoids "Not allowed")
   useEffect(() => {
     if (!options) return;
-    let next = filters;
-    if (next.departmentId != null && !options.departments.some((d) => d.id === next.departmentId)) {
-      next = { ...next, departmentId: null };
-    }
-    if (next.projectId != null && !options.projects.some((p) => p.id === next.projectId)) {
-      next = { ...next, projectId: null };
-    }
-    if (next.areaId != null && !(options.areas ?? []).some((a) => a.id === next.areaId)) next = { ...next, areaId: null };
-    if (next.stationId != null && !(options.stations ?? []).some((s) => s.id === next.stationId)) next = { ...next, stationId: null };
-    if (next.divisionId != null && !(options.divisions ?? []).some((d) => d.id === next.divisionId)) next = { ...next, divisionId: null };
-    if (next !== filters) setFilters(next);
+    const keep = (ids: number[], list: { id: number }[] | undefined) => {
+      const ok = new Set((list ?? []).map((x) => x.id));
+      return ids.filter((id) => ok.has(id));
+    };
+    const next: DashFilters = {
+      ...filters,
+      departmentIds: keep(filters.departmentIds, options.departments),
+      projectIds: keep(filters.projectIds, options.projects),
+      areaIds: keep(filters.areaIds, options.areas),
+      stationIds: keep(filters.stationIds, options.stations),
+      divisionIds: keep(filters.divisionIds, options.divisions),
+    };
+    const same = (["departmentIds", "projectIds", "areaIds", "stationIds", "divisionIds"] as const)
+      .every((k) => next[k].length === filters[k].length);
+    if (!same) setFilters(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [options]);
 
   // Don't send filters until we know they are allowed (prevents a 403 flash)
-  const ready = options !== null || (filters.departmentId == null && filters.projectId == null
-    && filters.areaId == null && filters.stationId == null && filters.divisionId == null);
+  const ready = options !== null || (filters.departmentIds.length === 0 && filters.projectIds.length === 0
+    && filters.areaIds.length === 0 && filters.stationIds.length === 0 && filters.divisionIds.length === 0);
   const params = useMemo(() => filtersToParams(filters), [filters]);
 
   return { filters, setFilters, params, options, ready, isFiltered: isFiltered(filters) };
@@ -173,24 +189,38 @@ export function DashboardFilters({
 
   const areas = options.areas ?? [], stations = options.stations ?? [], divisions = options.divisions ?? [];
   const stationArea = new Map(stations.map((s) => [s.id, s.area_id]));
-  const stationChoices = filters.areaId == null ? stations : stations.filter((s) => s.area_id === filters.areaId);
+  const stationChoices = filters.areaIds.length === 0 ? stations : stations.filter((s) => filters.areaIds.includes(s.area_id));
+  const has = (list: number[], id: number) => list.length === 0 || list.includes(id);
 
-  // Project list follows the chosen area / station / division / department
+  // Project list follows the chosen areas / stations / divisions / departments
   const fits = (p: DashboardFilterOptions["projects"][number], f: DashFilters) =>
-    (f.departmentId == null || p.department_ids.includes(f.departmentId)) &&
-    (f.stationId == null || (p.station_ids ?? []).includes(f.stationId)) &&
-    (f.areaId == null || (p.station_ids ?? []).some((s) => stationArea.get(s) === f.areaId)) &&
-    (f.divisionId == null || (p.division_ids ?? []).includes(f.divisionId));
+    (f.departmentIds.length === 0 || p.department_ids.some((d) => f.departmentIds.includes(d))) &&
+    (f.stationIds.length === 0 || (p.station_ids ?? []).some((s) => f.stationIds.includes(s))) &&
+    (f.areaIds.length === 0 || (p.station_ids ?? []).some((s) => has(f.areaIds, stationArea.get(s) ?? -1))) &&
+    (f.divisionIds.length === 0 || (p.division_ids ?? []).some((d) => f.divisionIds.includes(d)));
   const projectChoices = options.projects.filter((p) => fits(p, filters));
 
-  // keep the chosen project only if it still fits the other filters
+  // keep only chosen projects that still fit the other filters
   function change(next: DashFilters) {
-    const keep = next.projectId != null && options!.projects.some((p) => p.id === next.projectId && fits(p, next));
-    setFilters({ ...next, projectId: keep ? next.projectId : null });
+    setFilters({ ...next, projectIds: next.projectIds.filter((id) => options!.projects.some((p) => p.id === id && fits(p, next))) });
   }
-  function changeDepartment(value: string) {
-    change({ ...filters, departmentId: value ? Number(value) : null });
+  function changeAreas(areaIds: number[]) {
+    // drop stations outside the chosen areas
+    const stationIds = areaIds.length === 0 ? filters.stationIds : filters.stationIds.filter((sid) => areaIds.includes(stationArea.get(sid) ?? -1));
+    change({ ...filters, areaIds, stationIds });
   }
+
+  const name = (list: { id: number; name: string; code?: string | null }[], id: number) => {
+    const x = list.find((i) => i.id === id);
+    return x ? (x.code || x.name) : String(id);
+  };
+  const chips = [
+    ...filters.areaIds.map((id) => ({ key: `a${id}`, label: name(areas, id), onRemove: () => changeAreas(filters.areaIds.filter((x) => x !== id)) })),
+    ...filters.stationIds.map((id) => ({ key: `s${id}`, label: name(stations, id), onRemove: () => change({ ...filters, stationIds: filters.stationIds.filter((x) => x !== id) }) })),
+    ...filters.divisionIds.map((id) => ({ key: `v${id}`, label: name(divisions, id), onRemove: () => change({ ...filters, divisionIds: filters.divisionIds.filter((x) => x !== id) }) })),
+    ...filters.departmentIds.map((id) => ({ key: `d${id}`, label: name(options.departments, id), onRemove: () => change({ ...filters, departmentIds: filters.departmentIds.filter((x) => x !== id) }) })),
+    ...filters.projectIds.map((id) => ({ key: `p${id}`, label: name(options.projects, id), onRemove: () => setFilters({ ...filters, projectIds: filters.projectIds.filter((x) => x !== id) }) })),
+  ];
 
   return (
     <section aria-label="Filters" className="rlk-panel rlk-filters" data-testid="dashboard-filters">
@@ -200,71 +230,47 @@ export function DashboardFilters({
       </div>
 
       {isManager && areas.length > 1 && (
-        <label className="rlk-filters__field">
+        <div className="rlk-filters__field">
           <span>Area</span>
-          <select aria-label="Area filter" value={filters.areaId ?? ""}
-            onChange={(e) => { const areaId = e.target.value ? Number(e.target.value) : null;
-              const keepSt = filters.stationId != null && (areaId == null || stationArea.get(filters.stationId) === areaId);
-              change({ ...filters, areaId, stationId: keepSt ? filters.stationId : null }); }}>
-            <option value="">All areas</option>
-            {areas.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </select>
-        </label>
+          <MultiSelect label="Area filter" placeholder="All areas" noun="areas"
+            options={areas.map((a) => ({ value: String(a.id), label: a.name }))}
+            values={idsToValues(filters.areaIds)} onChange={(v) => changeAreas(valuesToIds(v))} />
+        </div>
       )}
 
       {isManager && stations.length > 1 && (
-        <label className="rlk-filters__field">
+        <div className="rlk-filters__field">
           <span>Station</span>
-          <select aria-label="Station filter" value={filters.stationId ?? ""}
-            onChange={(e) => change({ ...filters, stationId: e.target.value ? Number(e.target.value) : null })}>
-            <option value="">All stations</option>
-            {stationChoices.map((s) => <option key={s.id} value={s.id}>{s.code || s.name}</option>)}
-          </select>
-        </label>
+          <MultiSelect label="Station filter" placeholder="All stations" noun="stations"
+            options={stationChoices.map((s) => ({ value: String(s.id), label: s.code || s.name, hint: s.code ? s.name : null }))}
+            values={idsToValues(filters.stationIds)} onChange={(v) => change({ ...filters, stationIds: valuesToIds(v) })} />
+        </div>
       )}
 
       {isManager && divisions.length > 0 && (
-        <label className="rlk-filters__field">
+        <div className="rlk-filters__field">
           <span>Division</span>
-          <select aria-label="Division filter" value={filters.divisionId ?? ""}
-            onChange={(e) => change({ ...filters, divisionId: e.target.value ? Number(e.target.value) : null })}>
-            <option value="">All divisions</option>
-            {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
-        </label>
+          <MultiSelect label="Division filter" placeholder="All divisions" noun="divisions"
+            options={divisions.map((d) => ({ value: String(d.id), label: d.name }))}
+            values={idsToValues(filters.divisionIds)} onChange={(v) => change({ ...filters, divisionIds: valuesToIds(v) })} />
+        </div>
       )}
 
       {isManager && (
-        <label className="rlk-filters__field rlk-filters__dept">
+        <div className="rlk-filters__field rlk-filters__dept">
           <span>Department</span>
-          <select
-            aria-label="Department filter"
-            
-            value={filters.departmentId ?? ""}
-            onChange={(e) => changeDepartment(e.target.value)}
-          >
-            <option value="">All my departments</option>
-            {options.departments.map((d) => (
-              <option key={d.id} value={d.id}>{d.name}</option>
-            ))}
-          </select>
-        </label>
+          <MultiSelect label="Department filter" placeholder="All my departments" noun="departments"
+            options={options.departments.map((d) => ({ value: String(d.id), label: d.name }))}
+            values={idsToValues(filters.departmentIds)} onChange={(v) => change({ ...filters, departmentIds: valuesToIds(v) })} />
+        </div>
       )}
 
-      <label className="rlk-filters__field rlk-filters__proj">
+      <div className="rlk-filters__field rlk-filters__proj">
         <span>Project</span>
-        <select
-          aria-label="Project filter"
-          
-          value={filters.projectId ?? ""}
-          onChange={(e) => setFilters({ ...filters, projectId: e.target.value ? Number(e.target.value) : null })}
-        >
-          <option value="">All projects</option>
-          {projectChoices.map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
-      </label>
+        <MultiSelect label="Project filter" placeholder="All projects" noun="projects"
+          options={projectChoices.map((p) => ({ value: String(p.id), label: p.name }))}
+          values={idsToValues(filters.projectIds)} onChange={(v) => setFilters({ ...filters, projectIds: valuesToIds(v) })} />
+      </div>
 
       <label className="rlk-filters__field rlk-filters__time">
         <span>Time period</span>
@@ -318,6 +324,8 @@ export function DashboardFilters({
       )}
 
       {updating && <span className="rlk-filters__busy">Updating…</span>}
+
+      <FilterChips chips={chips} />
     </section>
   );
 }

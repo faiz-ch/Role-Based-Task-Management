@@ -51,11 +51,12 @@ export interface DashboardSummary {
 
 /** Filters sent to every dashboard address (see backend/app/routers/dashboard.py). */
 export interface DashboardParams {
-  area_id?: number;
-  station_id?: number;
-  division_id?: number;
-  department_id?: number;
-  project_id?: number;
+  /** each may hold several ids (sent as ?station_id=1&station_id=2) */
+  area_id?: number[];
+  station_id?: number[];
+  division_id?: number[];
+  department_id?: number[];
+  project_id?: number[];
   due_from?: string; // ISO date-time
   due_to?: string;   // ISO date-time
   overdue?: boolean;
@@ -72,11 +73,9 @@ export interface DashboardFilterOptions {
 
 function toQuery(params: DashboardParams = {}): string {
   const q = new URLSearchParams();
-  if (params.area_id != null) q.set("area_id", String(params.area_id));
-  if (params.station_id != null) q.set("station_id", String(params.station_id));
-  if (params.division_id != null) q.set("division_id", String(params.division_id));
-  if (params.department_id != null) q.set("department_id", String(params.department_id));
-  if (params.project_id != null) q.set("project_id", String(params.project_id));
+  for (const key of ["area_id", "station_id", "division_id", "department_id", "project_id"] as const) {
+    for (const id of params[key] ?? []) q.append(key, String(id));
+  }
   if (params.due_from) q.set("due_from", params.due_from);
   if (params.due_to) q.set("due_to", params.due_to);
   if (params.overdue) q.set("overdue", "true");

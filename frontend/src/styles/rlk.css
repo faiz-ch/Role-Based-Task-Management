@@ -350,3 +350,50 @@
 .rlk-orgtab:hover { color: var(--rlk-ink); }
 .rlk-orgtab[aria-selected="true"] { color: var(--rlk-ink); font-weight: 800; border-bottom-color: var(--rlk-gold-line); }
 .rlk-orgtab:focus-visible { outline: 2px solid var(--rlk-gold-line); outline-offset: -2px; }
+
+/* ---------------------------------------------------------------- multi-select dropdown (filters) */
+.rlk-ms { position: relative; min-width: 0; }
+.rlk-ms__btn {
+  width: 100%; min-width: 150px; height: 42px; box-sizing: border-box; display: flex; align-items: center; gap: 8px;
+  padding: 0 10px 0 12px; border: 1px solid #D9D4C7; border-radius: 10px; background: #fff; cursor: pointer;
+  font: 400 14px var(--font-ui); color: var(--rlk-ink); text-align: left;
+}
+.rlk-ms__btn:focus-visible { outline: 2px solid var(--rlk-gold-line); outline-offset: 1px; }
+.rlk-ms__btn--on { border-color: var(--rlk-gold-line); background: #FFFCF4; }
+.rlk-ms__summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rlk-ms__count { flex: none; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--rlk-ink); color: #fff; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.rlk-ms__chev { flex: none; color: var(--rlk-muted); }
+.rlk-ms__panel {
+  position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; width: 280px; max-width: calc(100vw - 24px);
+  background: #fff; border: 1px solid var(--rlk-line); border-radius: 12px; box-shadow: 0 12px 32px rgba(21,23,28,.16);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.rlk-ms__panel--right { left: auto; right: 0; }
+.rlk-ms__search { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--rlk-track); color: var(--rlk-muted); }
+.rlk-ms__search input { flex: 1; min-width: 0; height: 32px !important; border: 0 !important; padding: 0 !important; outline: none !important; font: 400 14px var(--font-ui); color: var(--rlk-ink); background: transparent; }
+.rlk-ms__search button { border: 0; background: none; color: var(--rlk-muted); cursor: pointer; display: inline-flex; padding: 2px; }
+.rlk-ms__list { max-height: 260px; overflow-y: auto; padding: 4px; }
+.rlk-ms__opt { display: flex; align-items: flex-start; gap: 9px; padding: 8px 8px; border-radius: 8px; cursor: pointer; font-size: 14px; color: var(--rlk-ink); }
+.rlk-ms__opt:hover { background: var(--rlk-track); }
+.rlk-ms__opt input { width: 16px !important; height: 16px !important; margin-top: 2px; padding: 0 !important; accent-color: var(--rlk-gold-line); flex: none; }
+.rlk-ms__optlabel { min-width: 0; line-height: 1.35; }
+.rlk-ms__optlabel small { display: block; font-size: 11.5px; color: var(--rlk-muted); }
+.rlk-ms__empty { padding: 12px; font-size: 13px; color: var(--rlk-muted); }
+.rlk-ms__foot { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--rlk-track); }
+.rlk-ms__foot button { height: 32px; padding: 0 10px; border: 1px solid #D9D4C7; border-radius: 8px; background: #fff; font: 600 12.5px var(--font-ui); color: var(--rlk-ink); cursor: pointer; }
+.rlk-ms__foot button:disabled { opacity: .45; cursor: default; }
+.rlk-ms__foot .rlk-ms__done { margin-left: auto; background: var(--rlk-ink); border-color: var(--rlk-ink); color: #fff; }
+/* compact version (Projects page filter bar) */
+.rlk-ms--compact .rlk-ms__btn { height: 38px; min-width: 0; border-color: var(--color-border, #E5E7EB); border-radius: 8px; font-size: 14px; }
+.rlk-ms--compact .rlk-ms__btn--on { border-color: var(--rlk-gold-line); }
+
+.rlk-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; }
+.rlk-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; border-radius: 999px; background: var(--rlk-sand); border: 1px solid var(--rlk-sand-line); font-size: 12.5px; font-weight: 600; color: var(--rlk-ink); }
+.rlk-chip button { border: 0; background: none; display: inline-flex; padding: 3px; border-radius: 999px; color: var(--rlk-gold-deep); cursor: pointer; }
+.rlk-chip button:hover { background: rgba(138,106,31,.12); }
+.rlk-chips__all { border: 0; background: none; font-size: 12.5px; font-weight: 600; color: var(--rlk-gold-deep); text-decoration: underline; cursor: pointer; padding: 3px 6px; }
+
+@media (max-width: 899.98px) {
+  .rlk-filters .rlk-ms__btn { min-width: 0; height: 46px; font-size: 16px; }
+  .rlk-filters .rlk-chips { grid-column: 1 / -1; }
+}

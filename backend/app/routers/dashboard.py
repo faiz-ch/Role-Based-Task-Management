@@ -10,8 +10,11 @@ WHO sees WHAT
 
 FILTERS (all optional, on every endpoint) — they can only NARROW what the person is
 already allowed to see; a department or project outside their view is refused (403).
-  department_id   only projects of that department (and their tasks / subtasks)
-  project_id      only that project
+  department_id   only projects of those departments (and their tasks / subtasks)
+  project_id      only those projects
+  area_id / station_id / division_id   only projects at those areas / stations / divisions
+  Each can be given several times (?station_id=1&station_id=2): any of them matches.
+  Different filters combine (station AND division ...).
   due_from/due_to only items due in that window (ISO date-times; the browser sends
                   them already converted from the user's local "this week / month")
   overdue         only items past their due date and not finished
@@ -20,7 +23,7 @@ Speed: the database pre-selects candidate rows (scope, filters, dates) so we no 
 load every task in the system; the existing can_view_task / can_view_subtask checks
 still make the final decision, so the visibility rules are unchanged.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -75,18 +78,18 @@ async def user_is_manager(db: AsyncSession, current_user: User) -> bool:
 # ---------------------------------------------------------------------------
 @dataclass
 class DashFilter:
-    department_id: int | None = None
-    project_id: int | None = None
+    department_ids: list[int] = field(default_factory=list)
+    project_ids: list[int] = field(default_factory=list)
     due_from: datetime | None = None
     due_to: datetime | None = None
     overdue: bool = False
-    area_id: int | None = None
-    station_id: int | None = None
-    division_id: int | None = None
+    area_ids: list[int] = field(default_factory=list)
+    station_ids: list[int] = field(default_factory=list)
+    division_ids: list[int] = field(default_factory=list)
 
     @property
     def narrows_projects(self) -> bool:
-        return any(x is not None for x in (self.department_id, self.project_id, self.area_id, self.station_id, self.division_id))
+        return any((self.department_ids, self.project_ids, self.area_ids, self.station_ids, self.division_ids))
 
 
 def _aware(dt: datetime | None) -> datetime | None:
@@ -96,38 +99,42 @@ def _aware(dt: datetime | None) -> datetime | None:
 
 
 def dash_filter(
-    department_id: int | None = Query(None),
-    project_id: int | None = Query(None),
+    department_id: list[int] | None = Query(None),
+    project_id: list[int] | None = Query(None),
     due_from: datetime | None = Query(None),
     due_to: datetime | None = Query(None),
     overdue: bool = Query(False),
-    area_id: int | None = Query(None),
-    station_id: int | None = Query(None),
-    division_id: int | None = Query(None),
+    area_id: list[int] | None = Query(None),
+    station_id: list[int] | None = Query(None),
+    division_id: list[int] | None = Query(None),
 ) -> DashFilter:
-    f = DashFilter(department_id, project_id, _aware(due_from), _aware(due_to), overdue, area_id, station_id, division_id)
+    uniq = lambda xs: sorted(set(xs or []))
+    if any(len(xs or []) > 500 for xs in (department_id, project_id, area_id, station_id, division_id)):
+        raise HTTPException(status_code=400, detail="Too many filter values")
+    f = DashFilter(uniq(department_id), uniq(project_id), _aware(due_from), _aware(due_to), overdue,
+                   uniq(area_id), uniq(station_id), uniq(division_id))
     if f.due_from and f.due_to and f.due_from > f.due_to:
         raise HTTPException(status_code=400, detail="'From' date must be before 'To' date")
     return f
 
 
-def _project_ids_in_department(department_id: int):
-    return select(project_department.c.project_id).where(project_department.c.department_id == department_id)
+def _project_ids_in_departments(department_ids: list[int]):
+    return select(project_department.c.project_id).where(project_department.c.department_id.in_(department_ids))
 
 
 def _org_project_ids(f: DashFilter) -> list:
     """Sub-queries of project ids for the Area / Station / Division filters."""
     out = []
-    if f.station_id is not None:
-        out.append(select(project_station.c.project_id).where(project_station.c.station_id == f.station_id))
-    if f.area_id is not None:
+    if f.station_ids:
+        out.append(select(project_station.c.project_id).where(project_station.c.station_id.in_(f.station_ids)))
+    if f.area_ids:
         out.append(
             select(project_station.c.project_id)
             .join(Station, Station.id == project_station.c.station_id)
-            .where(Station.area_id == f.area_id)
+            .where(Station.area_id.in_(f.area_ids))
         )
-    if f.division_id is not None:
-        out.append(select(project_division.c.project_id).where(project_division.c.division_id == f.division_id))
+    if f.division_ids:
+        out.append(select(project_division.c.project_id).where(project_division.c.division_id.in_(f.division_ids)))
     return out
 
 
@@ -147,10 +154,10 @@ def _date_conditions(column, status_column, done_values, f: DashFilter, now: dat
 def _task_filter_conditions(f: DashFilter, now: datetime) -> list:
     """Conditions on Task for the filters (also used for subtasks via their parent task)."""
     conds = []
-    if f.project_id is not None:
-        conds.append(Task.project_id == f.project_id)
-    if f.department_id is not None:
-        conds.append(Task.project_id.in_(_project_ids_in_department(f.department_id)))
+    if f.project_ids:
+        conds.append(Task.project_id.in_(f.project_ids))
+    if f.department_ids:
+        conds.append(Task.project_id.in_(_project_ids_in_departments(f.department_ids)))
     for sub in _org_project_ids(f):
         conds.append(Task.project_id.in_(sub))
     return conds
@@ -376,10 +383,10 @@ async def get_manager_projects(db: AsyncSession, current_user: User, f: DashFilt
     f = f or DashFilter()
     now = datetime.now(timezone.utc)
     conds = [_manager_project_condition(current_user)]
-    if f.project_id is not None:
-        conds.append(Project.id == f.project_id)
-    if f.department_id is not None:
-        conds.append(Project.id.in_(_project_ids_in_department(f.department_id)))
+    if f.project_ids:
+        conds.append(Project.id.in_(f.project_ids))
+    if f.department_ids:
+        conds.append(Project.id.in_(_project_ids_in_departments(f.department_ids)))
     for sub in _org_project_ids(f):
         conds.append(Project.id.in_(sub))
     conds += _date_conditions(Project.due_date, Project.status, list(FINISHED_PROJECT_STATUSES), f, now)
@@ -453,13 +460,12 @@ async def _validate_filter(db: AsyncSession, current_user: User, is_manager: boo
     if not f.narrows_projects:
         return
     options = await _filter_options(db, current_user, is_manager)
-    if f.department_id is not None and f.department_id not in {d["id"] for d in options["departments"]}:
-        raise HTTPException(status_code=403, detail="Not allowed: that department is outside your dashboard view")
-    for key, val, label in (("areas", f.area_id, "area"), ("stations", f.station_id, "station"), ("divisions", f.division_id, "division")):
-        if val is not None and val not in {x["id"] for x in options[key]}:
-            raise HTTPException(status_code=403, detail=f"Not allowed: that {label} is outside your dashboard view")
-    if f.project_id is not None and f.project_id not in {p["id"] for p in options["projects"]}:
-        raise HTTPException(status_code=403, detail="Not allowed: that project is outside your dashboard view")
+    for key, vals, label in (("departments", f.department_ids, "department"), ("areas", f.area_ids, "area"),
+                             ("stations", f.station_ids, "station"), ("divisions", f.division_ids, "division"),
+                             ("projects", f.project_ids, "project")):
+        allowed = {x["id"] for x in options[key]}
+        if any(v not in allowed for v in vals):
+            raise HTTPException(status_code=403, detail=f"Not allowed: a chosen {label} is outside your dashboard view")
 
 
 @router.get("/filter-options")

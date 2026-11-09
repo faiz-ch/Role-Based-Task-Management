@@ -309,6 +309,12 @@ async def delete_division(division_id: int, db: AsyncSession = Depends(get_db), 
     n = await _people_count(db, User.division_id == div.id)
     if n:
         raise HTTPException(status_code=400, detail=f"{n} person(s) are in '{div.name}'. Change their division first.")
+    from app.models.project import project_division
+    used = (await db.execute(
+        select(func.count()).select_from(project_division).where(project_division.c.division_id == div.id)
+    )).scalar() or 0
+    if used:
+        raise HTTPException(status_code=400, detail=f"{used} project(s) belong to '{div.name}'. Remove it from those projects first.")
     name = div.name
     await db.delete(div)
     await log_activity(db, user.id, "division_deleted", "division", division_id, detail=f"Deleted division '{name}'")

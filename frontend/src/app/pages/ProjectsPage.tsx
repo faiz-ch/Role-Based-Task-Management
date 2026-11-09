@@ -18,8 +18,9 @@ import { FldSelect } from "../components/FldSelect";
 import { PriBadge } from "../components/PriBadge";
 import { DatePicker } from "../components/DatePicker";
 import { useErrorPopup } from "../utils/notify";
+import { MultiSelect, FilterChips } from "../components/MultiSelect";
 
-const PROJECT_STATUSES: ProjectStatus[] = ["Planning", "Active", "Done", "Archived"];
+const PROJECT_STATUSES: ProjectStatus[] = ["Planning", "Active", "Pending Approval", "Done", "Archived"];
 const PRIORITIES: Priority[] = ["Low", "Medium", "High"];
 
 const COLOR_SWATCHES = [
@@ -38,6 +39,10 @@ const PROJECT_STATUS_STYLE: Record<ProjectStatus, { badge: string; dot: string }
   Active: {
     badge: "bg-blue-50 text-blue-700 border-blue-200",
     dot: "bg-blue-500",
+  },
+  "Pending Approval": {
+    badge: "bg-amber-50 text-amber-700 border-amber-200",
+    dot: "bg-amber-500",
   },
   Done: {
     badge: "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -114,19 +119,21 @@ export function ProjectsPage() {
   const error = actionError || (projectsQ.error ? projectsQ.error.message || "Failed to load projects." : null);
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [filterStatus, setFilterStatus] = useState<string>("");
-  const [fArea, setFArea] = useState("");
-  const [fStation, setFStation] = useState("");
-  const [fDept, setFDept] = useState("");
-  const [fDivision, setFDivision] = useState("");
-  const [fPriority, setFPriority] = useState("");
-  const [fLead, setFLead] = useState("");
+  // Each list filter can hold several choices (any of them matches); empty = all
+  const [filterStatus, setFilterStatus] = useState<string[]>([]);
+  const [fArea, setFArea] = useState<string[]>([]);
+  const [fStation, setFStation] = useState<string[]>([]);
+  const [fDept, setFDept] = useState<string[]>([]);
+  const [fDivision, setFDivision] = useState<string[]>([]);
+  const [fPriority, setFPriority] = useState<string[]>([]);
+  const [fLead, setFLead] = useState<string[]>([]);
   const [fDueFrom, setFDueFrom] = useState("");
   const [fDueTo, setFDueTo] = useState("");
-  const filtersOn = !!(searchQuery || filterStatus || fArea || fStation || fDept || fDivision || fPriority || fLead || fDueFrom || fDueTo);
+  const filtersOn = !!(searchQuery || filterStatus.length || fArea.length || fStation.length || fDept.length || fDivision.length
+    || fPriority.length || fLead.length || fDueFrom || fDueTo);
   function clearFilters() {
-    setSearchQuery(""); setFilterStatus(""); setFArea(""); setFStation(""); setFDept(""); setFDivision("");
-    setFPriority(""); setFLead(""); setFDueFrom(""); setFDueTo("");
+    setSearchQuery(""); setFilterStatus([]); setFArea([]); setFStation([]); setFDept([]); setFDivision([]);
+    setFPriority([]); setFLead([]); setFDueFrom(""); setFDueTo("");
   }
   // Filter lists come from the projects I can see
   const seenStations = [...new Map(projects.flatMap((p) => p.stations).map((s) => [s.id, s])).values()].sort((a, b) => a.name.localeCompare(b.name));
@@ -135,6 +142,17 @@ export function ProjectsPage() {
   const seenDivisions = [...new Map(projects.flatMap((p) => p.divisions).map((d) => [d.id, d])).values()].sort((a, b) => a.name.localeCompare(b.name));
   const seenDeptIds = new Set(projects.flatMap((p) => p.departmentIds));
   const seenLeads = [...new Map(projects.filter((p) => p.lead).map((p) => [p.lead!.id, p.lead!])).values()].sort((a, b) => a.name.localeCompare(b.name));
+  const chipsFor = (vals: string[], set: (fn: (cur: string[]) => string[]) => void, labelOf: (v: string) => string, prefix: string) =>
+    vals.map((v) => ({ key: prefix + v, label: labelOf(v), onRemove: () => set((cur) => cur.filter((x) => x !== v)) }));
+  const projectChips = [
+    ...chipsFor(fArea, setFArea, (v) => seenAreas.find((a) => String(a.id) === v)?.name ?? v, "a"),
+    ...chipsFor(fStation, setFStation, (v) => { const st = seenStations.find((x) => String(x.id) === v); return st ? (st.code || st.name) : v; }, "s"),
+    ...chipsFor(fDept, setFDept, (v) => departments.find((d) => String(d.id) === v)?.name ?? v, "d"),
+    ...chipsFor(fDivision, setFDivision, (v) => v === "none" ? "No division" : seenDivisions.find((d) => String(d.id) === v)?.name ?? v, "v"),
+    ...chipsFor(filterStatus, setFilterStatus, (v) => v, "t"),
+    ...chipsFor(fPriority, setFPriority, (v) => `${v} priority`, "p"),
+    ...chipsFor(fLead, setFLead, (v) => v === "none" ? "No lead yet" : `Lead: ${seenLeads.find((l) => String(l.id) === v)?.name ?? v}`, "l"),
+  ];
 
   const [showNew, setShowNew] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -156,13 +174,14 @@ export function ProjectsPage() {
   });
 
   const filteredProjects = projects.filter((project) => {
-    if (filterStatus && project.status !== filterStatus) return false;
-    if (fArea && !project.stations.some((s) => s.areaId === Number(fArea))) return false;
-    if (fStation && !project.stationIds.includes(Number(fStation))) return false;
-    if (fDept && !project.departmentIds.includes(Number(fDept))) return false;
-    if (fDivision && !(fDivision === "none" ? project.divisionIds.length === 0 : project.divisionIds.includes(Number(fDivision)))) return false;
-    if (fPriority && project.priority !== fPriority) return false;
-    if (fLead && !(fLead === "none" ? !project.leadId : project.leadId === Number(fLead))) return false;
+    if (filterStatus.length && !filterStatus.includes(project.status)) return false;
+    if (fArea.length && !project.stations.some((s) => fArea.includes(String(s.areaId)))) return false;
+    if (fStation.length && !project.stationIds.some((id) => fStation.includes(String(id)))) return false;
+    if (fDept.length && !project.departmentIds.some((id) => fDept.includes(String(id)))) return false;
+    if (fDivision.length && !((fDivision.includes("none") && project.divisionIds.length === 0)
+      || project.divisionIds.some((id) => fDivision.includes(String(id))))) return false;
+    if (fPriority.length && !fPriority.includes(project.priority)) return false;
+    if (fLead.length && !((fLead.includes("none") && !project.leadId) || (project.leadId != null && fLead.includes(String(project.leadId))))) return false;
     const due = project.dueDate ? project.dueDate.slice(0, 10) : "";
     if (fDueFrom && (!due || due < fDueFrom)) return false;
     if (fDueTo && (!due || due > fDueTo)) return false;
@@ -336,37 +355,32 @@ export function ProjectsPage() {
           )}
           <span className="text-xs text-muted-foreground" data-testid="projects-count">Showing {filteredProjects.length} of {projects.length}</span>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-9 gap-2 pt-1">
-          <select aria-label="Filter by area" value={fArea} onChange={(e) => { setFArea(e.target.value); setFStation(""); }} className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground">
-            <option value="">All areas</option>
-            {seenAreas.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </select>
-          <select aria-label="Filter by station" value={fStation} onChange={(e) => setFStation(e.target.value)} className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground">
-            <option value="">All stations</option>
-            {seenStations.filter((s) => !fArea || s.areaId === Number(fArea)).map((s) => <option key={s.id} value={s.id}>{s.code || s.name}</option>)}
-          </select>
-          <select aria-label="Filter by department" value={fDept} onChange={(e) => setFDept(e.target.value)} className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground">
-            <option value="">All departments</option>
-            {departments.filter((d) => seenDeptIds.has(d.id)).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
-          <select aria-label="Filter by division" value={fDivision} onChange={(e) => setFDivision(e.target.value)} className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground">
-            <option value="">All divisions</option>
-            <option value="none">No division</option>
-            {seenDivisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
-          <select aria-label="Filter by status" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground">
-            <option value="">All statuses</option>
-            {PROJECT_STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
-          </select>
-          <select aria-label="Filter by priority" value={fPriority} onChange={(e) => setFPriority(e.target.value)} className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground">
-            <option value="">All priorities</option>
-            {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
-          </select>
-          <select aria-label="Filter by lead" value={fLead} onChange={(e) => setFLead(e.target.value)} className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground">
-            <option value="">All leads</option>
-            <option value="none">No lead yet</option>
-            {seenLeads.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-          </select>
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-5 gap-2 pt-1">
+          <MultiSelect className="rlk-ms--compact" label="Filter by area" placeholder="All areas" noun="areas"
+            options={seenAreas.map((a) => ({ value: String(a.id), label: a.name }))}
+            values={fArea} onChange={(v) => {
+              setFArea(v);
+              // drop stations outside the chosen areas
+              if (v.length) setFStation((cur) => cur.filter((sid) => v.includes(String(seenStations.find((st) => String(st.id) === sid)?.areaId))));
+            }} />
+          <MultiSelect className="rlk-ms--compact" label="Filter by station" placeholder="All stations" noun="stations"
+            options={seenStations.filter((s) => !fArea.length || fArea.includes(String(s.areaId))).map((s) => ({ value: String(s.id), label: s.code || s.name, hint: s.code ? s.name : null }))}
+            values={fStation} onChange={setFStation} />
+          <MultiSelect className="rlk-ms--compact" label="Filter by department" placeholder="All departments" noun="departments"
+            options={departments.filter((d) => seenDeptIds.has(d.id)).map((d) => ({ value: String(d.id), label: d.name }))}
+            values={fDept} onChange={setFDept} />
+          <MultiSelect className="rlk-ms--compact" label="Filter by division" placeholder="All divisions" noun="divisions"
+            options={[{ value: "none", label: "No division" }, ...seenDivisions.map((d) => ({ value: String(d.id), label: d.name }))]}
+            values={fDivision} onChange={setFDivision} />
+          <MultiSelect className="rlk-ms--compact" label="Filter by status" placeholder="All statuses" noun="statuses"
+            options={PROJECT_STATUSES.map((st) => ({ value: st, label: st }))}
+            values={filterStatus} onChange={setFilterStatus} />
+          <MultiSelect className="rlk-ms--compact" label="Filter by priority" placeholder="All priorities" noun="priorities"
+            options={PRIORITIES.map((p) => ({ value: p, label: p }))}
+            values={fPriority} onChange={setFPriority} />
+          <MultiSelect className="rlk-ms--compact" label="Filter by lead" placeholder="All leads" noun="leads"
+            options={[{ value: "none", label: "No lead yet" }, ...seenLeads.map((l) => ({ value: String(l.id), label: l.name }))]}
+            values={fLead} onChange={setFLead} />
           <label className="relative flex flex-col">
             <span className="absolute -top-2 left-2 px-1 bg-white text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Due from</span>
             <input type="date" aria-label="Due from" value={fDueFrom} onChange={(e) => setFDueFrom(e.target.value)} className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground" />
@@ -376,6 +390,7 @@ export function ProjectsPage() {
             <input type="date" aria-label="Due to" value={fDueTo} onChange={(e) => setFDueTo(e.target.value)} className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground" />
           </label>
         </div>
+        <FilterChips chips={projectChips} />
       </div>
 
       {/* Project list */}

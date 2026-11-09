@@ -1,8 +1,8 @@
 import React, { useState } from "react";
 import { useParams, useNavigate } from "react-router";
 import { ArrowLeft, AlertTriangle, Video } from "lucide-react";
-import { Project, UserType, Department, Task, Subtask, Milestone, Attachment } from "../types";
-import { getProject, updateProjectTeam, getProjectCandidates, updateProject, deleteProject, sendProjectForApproval, approveProject, rejectProject, closeProject, reopenProject, getProjectMilestones, createMilestone, updateMilestone, deleteMilestone, getProjectAttachments, uploadProjectAttachment, deleteAttachment, getAttachmentDownloadUrl, getProjectActivity } from "../api/projects";
+import { Project, UserType, Department, Task, Subtask, Attachment } from "../types";
+import { getProject, updateProjectTeam, getProjectCandidates, updateProject, deleteProject, sendProjectForApproval, approveProject, rejectProject, closeProject, reopenProject, getProjectAttachments, uploadProjectAttachment, deleteAttachment, getAttachmentDownloadUrl, getProjectActivity } from "../api/projects";
 import { getTasks, createTask, updateTaskTeam } from "../api/tasks";
 import { getDepartments } from "../api/departments";
 import { useCachedQuery, qk, FRESH, EMPTY } from "../api/queries";
@@ -13,7 +13,6 @@ import { StatusBadge } from "../components/StatusBadge";
 import { PriBadge } from "../components/PriBadge";
 import { OverviewTab } from "./project-detail/OverviewTab";
 import { TasksTab } from "./project-detail/TasksTab";
-import { MilestonesTab } from "./project-detail/MilestonesTab";
 import { MeetingsTab } from "./project-detail/MeetingsTab";
 import { TeamTab } from "./project-detail/TeamTab";
 import { TimelineTab } from "./project-detail/TimelineTab";
@@ -85,7 +84,6 @@ export function ProjectDetailPage() {
   const departmentsQ = useCachedQuery<Department[]>(qk.departments, getDepartments, EMPTY, { staleTime: FRESH.RARE });
   const candidatesQ = useCachedQuery<UserType[]>([...qk.project(pid), "candidates"], () => getProjectCandidates(pid), EMPTY, { enabled: hasId });
   const reportsQ = useCachedQuery<Report[]>([...qk.project(pid), "reports"], () => getProjectReports(pid), EMPTY, { enabled: hasId });
-  const milestonesQ = useCachedQuery<Milestone[]>([...qk.project(pid), "milestones"], () => getProjectMilestones(pid), EMPTY, { enabled: hasId });
   const attachmentsQ = useCachedQuery<Attachment[]>([...qk.project(pid), "attachments"], () => getProjectAttachments(pid), EMPTY, { enabled: hasId });
   const activityQ = useCachedQuery<any[]>([...qk.project(pid), "activity"], () => getProjectActivity(pid), EMPTY, { enabled: hasId, staleTime: FRESH.LIVE });
 
@@ -98,8 +96,6 @@ export function ProjectDetailPage() {
   const departments = departmentsQ.data;
   const reports = reportsQ.data;
   const setReports = reportsQ.setData;
-  const milestones = milestonesQ.data;
-  const setMilestones = milestonesQ.setData;
   const attachments = attachmentsQ.data;
   const setAttachments = attachmentsQ.setData;
   const activity = activityQ.data;
@@ -263,40 +259,6 @@ export function ProjectDetailPage() {
     }
   }
 
-  async function handleCreateMilestone(milestoneData: any) {
-    if (!project) return;
-    try {
-      setError(null);
-      const newMilestone = await createMilestone(project.id, milestoneData);
-      setMilestones((prev) => [...prev, newMilestone]);
-    } catch (err: any) {
-      setError(err?.message || "Failed to create milestone");
-      throw err;
-    }
-  }
-
-  async function handleUpdateMilestone(milestoneId: number, milestoneData: any) {
-    try {
-      setError(null);
-      const updated = await updateMilestone(milestoneId, milestoneData);
-      setMilestones((prev) => prev.map((m) => m.id === milestoneId ? updated : m));
-    } catch (err: any) {
-      setError(err?.message || "Failed to update milestone");
-      throw err;
-    }
-  }
-
-  async function handleDeleteMilestone(milestoneId: number) {
-    try {
-      setError(null);
-      await deleteMilestone(milestoneId);
-      setMilestones((prev) => prev.filter((m) => m.id !== milestoneId));
-    } catch (err: any) {
-      setError(err?.message || "Failed to delete milestone");
-      throw err;
-    }
-  }
-
   async function handleUploadAttachment(file: File) {
     if (!project) return;
     try {
@@ -366,7 +328,6 @@ export function ProjectDetailPage() {
   const tabs = [
     { id: "overview", label: "Overview" },
     { id: "tasks", label: "Tasks" },
-    { id: "milestones", label: "Milestones" },
     { id: "meetings", label: "Meetings" },
     { id: "team", label: "Team" },
     { id: "timeline", label: "Timeline" },
@@ -463,16 +424,6 @@ export function ProjectDetailPage() {
           tasks={tasks} 
           teamMembers={teamMembers}
           onCreateTask={handleCreateTask}
-        />
-      )}
-
-      {activeTab === "milestones" && (
-        <MilestonesTab
-          project={project}
-          milestones={milestones}
-          onCreateMilestone={handleCreateMilestone}
-          onUpdateMilestone={handleUpdateMilestone}
-          onDeleteMilestone={handleDeleteMilestone}
         />
       )}
 

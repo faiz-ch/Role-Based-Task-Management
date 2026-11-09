@@ -11,6 +11,7 @@ import { UsersPage } from "./pages/UsersPage";
 import { RolesPage } from "./pages/RolesPage";
 import { RoleDetailPage } from "./pages/RoleDetailPage";
 import { OrganizationPage } from "./pages/OrganizationPage";
+import { OrgDetailPage } from "./pages/OrgDetailPage";
 import { TaskDetailPage } from "./pages/TaskDetailPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { ProjectDetailPage } from "./pages/ProjectDetailPage";
@@ -154,6 +155,36 @@ function AppContent() {
                     element={
                       permissions.includes("organization:manage") ? (
                         <OrganizationPage />
+                      ) : (
+                        <Navigate to="/tasks" replace />
+                      )
+                    }
+                  />
+                  <Route
+                    path="/organization/areas/:id"
+                    element={
+                      permissions.includes("organization:manage") ? (
+                        <OrgDetailPage kind="areas" key="areas" />
+                      ) : (
+                        <Navigate to="/tasks" replace />
+                      )
+                    }
+                  />
+                  <Route
+                    path="/organization/stations/:id"
+                    element={
+                      permissions.includes("organization:manage") ? (
+                        <OrgDetailPage kind="stations" key="stations" />
+                      ) : (
+                        <Navigate to="/tasks" replace />
+                      )
+                    }
+                  />
+                  <Route
+                    path="/organization/divisions/:id"
+                    element={
+                      permissions.includes("organization:manage") ? (
+                        <OrgDetailPage kind="divisions" key="divisions" />
                       ) : (
                         <Navigate to="/tasks" replace />
                       )
