@@ -18,6 +18,8 @@ import { TeamTab } from "./project-detail/TeamTab";
 import { TimelineTab } from "./project-detail/TimelineTab";
 import { FilesTab } from "./project-detail/FilesTab";
 import { ApprovalsTab } from "./project-detail/ApprovalsTab";
+import { BudgetTab } from "./project-detail/BudgetTab";
+import { ProjectBudget, getProjectBudget } from "../api/budget";
 import { ActivityTab } from "./project-detail/ActivityTab";
 import { SettingsTab } from "./project-detail/SettingsTab";
 import { ScheduleMeetingDialog } from "./project-detail/ScheduleMeetingDialog";
@@ -86,6 +88,7 @@ export function ProjectDetailPage() {
   const candidatesQ = useCachedQuery<UserType[]>([...qk.project(pid), "candidates"], () => getProjectCandidates(pid), EMPTY, { enabled: hasId });
   const reportsQ = useCachedQuery<Report[]>([...qk.project(pid), "reports"], () => getProjectReports(pid), EMPTY, { enabled: hasId });
   const attachmentsQ = useCachedQuery<Attachment[]>([...qk.project(pid), "attachments"], () => getProjectAttachments(pid), EMPTY, { enabled: hasId });
+  const budgetQ = useCachedQuery<ProjectBudget | null>([...qk.project(pid), "budget"], () => getProjectBudget(pid), null, { enabled: hasId, staleTime: FRESH.LIVE });
   const activityQ = useCachedQuery<any[]>([...qk.project(pid), "activity"], () => getProjectActivity(pid), EMPTY, { enabled: hasId, staleTime: FRESH.LIVE });
 
   const project = projectQ.data;
@@ -330,6 +333,7 @@ export function ProjectDetailPage() {
     { id: "overview", label: "Overview" },
     { id: "tasks", label: "Tasks" },
     { id: "approvals", label: "Approvals" },
+    ...(budgetQ.data?.enabled ? [{ id: "budget", label: "Budget" }] : []),
     { id: "meetings", label: "Meetings" },
     { id: "team", label: "Team" },
     { id: "timeline", label: "Timeline" },
@@ -430,6 +434,7 @@ export function ProjectDetailPage() {
       )}
 
       {activeTab === "approvals" && <ApprovalsTab projectId={project.id} canEdit={canManage} />}
+      {activeTab === "budget" && budgetQ.data?.enabled && <BudgetTab budget={budgetQ.data} />}
 
       {activeTab === "meetings" && (
         <MeetingsTab

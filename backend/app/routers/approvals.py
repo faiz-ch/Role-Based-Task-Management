@@ -54,6 +54,7 @@ from app.schemas.approval import (
     MAX_AMOUNT, ApprovalEventOut, ApprovalsMe, ApprovalTypeIn, ApprovalTypeOut, ApprovalTypeUpdate, ApproverOptions,
     DecisionIn, PersonRef, ProjectApprovalOut, ProjectApprovalsSet, RoleRef,
 )
+from app.models.budget import BUDGET_INCREASE_KEY
 from app.services.activity_log import log_activity
 from app.services.email import send_email
 from app.services import email_templates
@@ -96,6 +97,16 @@ async def ensure_builtin_types() -> None:
             db.add(ApprovalType(key=BUDGET_KEY, name=name, requires_amount=True,
                                 description="Money for the project. Once approved, the project budget can be split among tasks."))
             await db.commit()
+        # Internal type for extra money on an approved budget. It has no approvers of its
+        # own: Budget's approvers decide it. Not shown in the type list or the project form.
+        inc = (await db.execute(select(ApprovalType).where(ApprovalType.key == BUDGET_INCREASE_KEY))).scalar_one_or_none()
+        if inc is None:
+            name = "Budget increase"
+            if (await db.execute(select(ApprovalType.id).where(func.lower(ApprovalType.name) == name.lower()))).first():
+                name = "Budget increase (built-in)"
+            db.add(ApprovalType(key=BUDGET_INCREASE_KEY, name=name, requires_amount=True,
+                                description="Extra money on top of the approved project budget."))
+            await db.commit()
 
 
 async def _get_type(db: AsyncSession, type_id: int) -> ApprovalType:
@@ -112,6 +123,11 @@ async def _usage(db: AsyncSession) -> dict[int, int]:
 
 async def _eligible_approvers(db: AsyncSession, t: ApprovalType) -> list[User]:
     """Active people who may decide this type (roles' members + named people)."""
+    if t.key == BUDGET_INCREASE_KEY:
+        # Budget increases are decided by Budget's approvers
+        budget = (await db.execute(select(ApprovalType).where(ApprovalType.key == BUDGET_KEY))).scalar_one_or_none()
+        if budget is not None:
+            t = budget
     role_ids = [r.id for r in t.roles]
     user_ids = [u.id for u in t.users]
     if not role_ids and not user_ids:
@@ -157,6 +173,14 @@ def _can_edit_project(user: User, project: Project) -> bool:
     return has_permission(user, "project:manage") and project_in_scope(user, project)
 
 
+def _open_for(pa: ProjectApproval) -> set[str]:
+    """Statuses from which a request can be sent. A Budget increase can be asked for again
+    after it was approved (each approval adds to the project budget)."""
+    if pa.approval_type.key == BUDGET_INCREASE_KEY:
+        return OPEN | {ApprovalStatus.APPROVED.value}
+    return OPEN
+
+
 def _can_request(user: User, project: Project) -> bool:
     return project.lead_id == user.id or _can_edit_project(user, project)
 
@@ -175,7 +199,7 @@ async def _pa_out(db: AsyncSession, pa: ProjectApproval, user: User, project: Pr
         deciders = [u for u in await _eligible_approvers(db, pa.approval_type)]
         fallback = not deciders
     can_decide = pa.status == ApprovalStatus.PENDING.value and user.id != pa.requested_by and any(u.id == user.id for u in deciders)
-    can_request = bool(project) and pa.status in OPEN and pa.approval_type.is_active and _can_request(user, project)
+    can_request = bool(project) and pa.status in _open_for(pa) and pa.approval_type.is_active and _can_request(user, project)
     return ProjectApprovalOut(
         id=pa.id, project_id=pa.project_id, project_name=project_name or (project.name if project else None),
         type=_type_out(pa.approval_type), status=pa.status,
@@ -224,6 +248,7 @@ async def _name_taken(db: AsyncSession, name: str, exclude: int | None) -> bool:
 async def list_types(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     types = (await db.execute(select(ApprovalType).order_by(ApprovalType.key.is_(None), ApprovalType.name))).scalars().all()
     usage = await _usage(db)
+    types = [t for t in types if t.key != BUDGET_INCREASE_KEY]  # internal
     if not has_permission(user, MANAGE):
         types = [t for t in types if t.is_active]
     return [_type_out(t, usage.get(t.id, 0)) for t in types]
@@ -311,7 +336,7 @@ async def validate_type_ids(db: AsyncSession, type_ids: list[int]) -> None:
     """Check chosen approval types before a project is created."""
     if not type_ids:
         return
-    rows = (await db.execute(select(ApprovalType).where(ApprovalType.id.in_(set(type_ids))))).scalars().all()
+    rows = (await db.execute(select(ApprovalType).where(ApprovalType.id.in_(set(type_ids)), ApprovalType.key.is_distinct_from(BUDGET_INCREASE_KEY)))).scalars().all()
     if len(rows) != len(set(type_ids)):
         raise HTTPException(status_code=400, detail="One of the chosen approvals does not exist")
     for t in rows:
@@ -323,13 +348,14 @@ async def set_project_approvals(db: AsyncSession, project_id: int, type_ids: lis
                                 creating: bool = False) -> None:
     """Make the project's approvals match `type_ids` (+ every mandatory type).
     Called by project create / update and by PUT /projects/{id}/approvals. Does not commit."""
-    types = {t.id: t for t in (await db.execute(select(ApprovalType))).scalars().all()}
+    types = {t.id: t for t in (await db.execute(select(ApprovalType))).scalars().all() if t.key != BUDGET_INCREASE_KEY}
     wanted = set(type_ids or [])
     unknown = wanted - set(types)
     if unknown:
         raise HTTPException(status_code=400, detail="One of the chosen approvals does not exist")
     existing = {pa.approval_type_id: pa for pa in (await db.execute(
-        select(ProjectApproval).where(ProjectApproval.project_id == project_id))).scalars().all()}
+        select(ProjectApproval).where(ProjectApproval.project_id == project_id))).scalars().all()
+        if pa.approval_type_id in types}  # the internal Budget increase is left alone
     inactive_new = [types[i].name for i in wanted if not types[i].is_active and i not in existing]
     if inactive_new:
         raise HTTPException(status_code=400, detail=f"'{inactive_new[0]}' is inactive and cannot be added")
@@ -353,9 +379,9 @@ async def set_project_approvals(db: AsyncSession, project_id: int, type_ids: lis
 @router.get("/projects/{project_id}/approvals", response_model=list[ProjectApprovalOut])
 async def project_approvals(project_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     project = await _load_project(db, project_id)
-    rows = (await db.execute(
+    rows = [pa for pa in (await db.execute(
         select(ProjectApproval).where(ProjectApproval.project_id == project_id).order_by(ProjectApproval.id)
-    )).scalars().all()
+    )).scalars().all() if pa.approval_type.key != BUDGET_INCREASE_KEY]  # increases live on the Budget tab
     if not can_view_project(user, project):
         # approvers may open the requests sent to them
         mine = []
@@ -411,7 +437,14 @@ async def request_approval(
         raise HTTPException(status_code=403, detail="Only the project lead or a manager of this project can ask for approval")
     if not t.is_active:
         raise HTTPException(status_code=400, detail=f"'{t.name}' is inactive")
-    if pa.status not in OPEN:
+    if t.key == BUDGET_INCREASE_KEY:
+        budget = (await db.execute(
+            select(ProjectApproval).join(ApprovalType, ApprovalType.id == ProjectApproval.approval_type_id)
+            .where(ProjectApproval.project_id == project.id, ApprovalType.key == BUDGET_KEY)
+        )).scalar_one_or_none()
+        if budget is None or budget.status != ApprovalStatus.APPROVED.value:
+            raise HTTPException(status_code=400, detail="The project budget must be approved before asking for more")
+    if pa.status not in _open_for(pa):
         raise HTTPException(status_code=400, detail=f"'{t.name}' is {pa.status.lower()}; it cannot be requested again now")
     reason = (reason or "").strip()
     if not reason:

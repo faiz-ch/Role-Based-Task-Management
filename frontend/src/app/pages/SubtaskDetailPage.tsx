@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { SubtaskBudgetLine } from "../components/BudgetParts";
 import { useParams, useNavigate } from "react-router";
 import { ArrowLeft, AlertTriangle, Plus, Image, FileText, X, Trash2, Paperclip, MessageCircle } from "lucide-react";
 import { Subtask, UserType, Task, Project, Department } from "../types";
@@ -413,6 +414,8 @@ export function SubtaskDetailPage() {
               </div>
             )}
           </div>
+
+          <SubtaskBudgetLine subtaskId={sid} />
 
           {/* Description */}
           {subtask.description ? (

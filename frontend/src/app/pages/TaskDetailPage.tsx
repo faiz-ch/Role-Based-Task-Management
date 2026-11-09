@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { TaskBudgetPanel } from "../components/BudgetParts";
 import { useParams, useNavigate } from "react-router";
 import { ArrowLeft, AlertTriangle, Plus, Image, FileText, X, Trash2, Users, Edit2, Paperclip, MessageCircle, MoreVertical, ChevronRight, Calendar, User, Clock, BarChart3, Download } from "lucide-react";
 import { Task, UserType, Department, Project, Subtask } from "../types";
@@ -682,6 +683,7 @@ export function TaskDetailPage() {
       <div className="p-6">
         {activeTab === "overview" && (
           <div className="space-y-6">
+            <TaskBudgetPanel taskId={tid} />
             {/* Description */}
             <div className="bg-white rounded-xl border border-border p-6">
               <h2 className="text-lg font-semibold text-foreground mb-4">Description</h2>

@@ -57,6 +57,24 @@ function getActivityIcon(action: string) {
   return "bg-gray-500";
 }
 
+const ACTION_TEXT: Record<string, string> = {
+  approval_added: "Approval added",
+  approval_removed: "Approval removed",
+  approval_requested: "Approval requested",
+  approval_approved: "Approved",
+  approval_rejected: "Rejected",
+  approval_sent_back: "Sent back",
+  budget_allocated: "Budget set",
+};
+
+/** "approval_requested" + "Budget: PKR 500,000.00" -> "Approval requested — Budget: PKR 500,000.00" */
+function describe(act: any): string {
+  if (act.description) return act.description;
+  const action = String(act.action || "");
+  const label = ACTION_TEXT[action] ?? (action.charAt(0).toUpperCase() + action.slice(1).replace(/_/g, " "));
+  return act.detail ? `${label} — ${act.detail}` : label;
+}
+
 export function ActivityTab({ activity }: ActivityTabProps) {
   if (activity.length === 0) {
     return (
@@ -107,7 +125,7 @@ export function ActivityTab({ activity }: ActivityTabProps) {
                 <div key={act.id} className="flex items-start gap-3">
                   <div className={`w-2 h-2 rounded-full ${getActivityIcon(act.action || act.description)} mt-2 flex-shrink-0`} />
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-foreground">{act.description || act.action}</p>
+                    <p className="text-sm text-foreground">{describe(act)}</p>
                     {act.user_name && (
                       <p className="text-xs text-muted-foreground mt-1">
                         by {act.user_name}

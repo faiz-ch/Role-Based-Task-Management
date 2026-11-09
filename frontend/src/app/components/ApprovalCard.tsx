@@ -38,7 +38,7 @@ async function openAttachment(id: number) {
 
 // ---------------------------------------------------------------- request dialog
 function RequestDialog({ a, onClose }: { a: ProjectApproval; onClose: () => void }) {
-  const again = a.status !== "Not requested";
+  const again = a.status !== "Not requested" && a.status !== "Approved";
   const [amount, setAmount] = useState(a.amount != null ? String(a.amount) : "");
   const [reason, setReason] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -193,7 +193,7 @@ export function ApprovalCard({ a, showProject = false }: { a: ProjectApproval; s
 
       <div className="flex flex-wrap items-center gap-2">
         {a.canRequest && (
-          <button className={primaryBtn} onClick={() => setDialog("request")}><Send size={14} /> {a.status === "Not requested" ? "Request" : "Ask again"}</button>
+          <button className={primaryBtn} onClick={() => setDialog("request")}><Send size={14} /> {a.type.key === "budget_increase" ? (a.status === "Not requested" || a.status === "Approved" ? "Request increase" : "Ask again") : a.status === "Not requested" ? "Request" : "Ask again"}</button>
         )}
         {a.canDecide && (
           <>
