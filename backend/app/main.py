@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.models  # noqa: F401 — registers all models with Base.metadata
 from app.config import settings
+from app.schema_upgrades import run_upgrades
 from app.database import engine, Base, get_db
 from app.seed import seed_permissions
 from app.routers import auth, users, roles, tasks, dashboard, departments, categories, projects, subtasks, milestones, attachments, zoom_meetings, zoom_webhook, organization, approvals, budget
@@ -25,6 +26,7 @@ async def lifespan(app: FastAPI):
     # and for this stage of the project.
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await run_upgrades(conn)
     await seed_permissions()
     await approvals.ensure_builtin_types()
     yield

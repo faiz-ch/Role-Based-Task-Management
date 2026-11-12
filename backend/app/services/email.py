@@ -43,7 +43,7 @@ async def send_email(to: str, subject: str, html_body: str) -> None:
             port=settings.SMTP_PORT,
             username=settings.EMAIL_ADDRESS,
             password=settings.EMAIL_PASSWORD,
-            start_tls=True,
+            start_tls=settings.SMTP_STARTTLS,
         )
     except Exception:
         logger.exception("Failed to send email to %s", to)

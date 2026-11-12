@@ -28,7 +28,7 @@ from app.models.report import Report
 from app.models.attachment import Attachment
 from app.models.activity_log import ActivityLog
 from app.models.comment import Comment
-from app.schemas.user import UserOut, UserUpdate, AssignRoleRequest, AssignDepartmentRequest, UserCreate, PerformanceCategoryOut, UserPerformanceOut, ChangePasswordRequest
+from app.schemas.user import UserOut, UserUpdate, AssignRoleRequest, AssignDepartmentRequest, UserCreate, PerformanceCategoryOut, UserPerformanceOut, ChangePasswordRequest, clean_designation
 from app.services import notification_dispatch
 from app.services.activity_log import log_activity
 from app.schemas.activity_log import ActivityLogOut
@@ -91,6 +91,13 @@ async def _validate_department_ids(db: AsyncSession, dept_ids: list[int]) -> Non
 # ---------------------------------------------------------------------------
 # Employee code and placement (where the person works)
 # ---------------------------------------------------------------------------
+def _designation(v):
+    try:
+        return clean_designation(v)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 async def _check_code_unique(db: AsyncSession, code: str, exclude_user_id: int | None = None) -> None:
     q = select(User.id).where(User.employee_code == code)
     if exclude_user_id is not None:
@@ -437,6 +444,7 @@ async def create_user(
         hashed_password=hash_password(payload.password),
         employee_code=payload.employee_code,
         joining_date=payload.joining_date,
+        designation=_designation(payload.designation),
         role_id=payload.role_id,
         area_id=payload.area_id,
         station_id=payload.station_id,
@@ -624,6 +632,9 @@ async def update_user(
         changed_fields.append("email")
     if payload.password is not None:
         user.hashed_password = hash_password(payload.password)
+        if user.id != current_user.id:
+            # an administrator set a new password: sign the person out everywhere
+            user.token_version = (user.token_version or 0) + 1
     if payload.is_active is not None:
         user.is_active = payload.is_active
         changed_fields.append("is_active")
@@ -640,6 +651,9 @@ async def update_user(
         user.employee_code = payload.employee_code
         changed_fields.append("employee_code")
 
+    if "designation" in sent and _designation(payload.designation) != user.designation:
+        user.designation = _designation(payload.designation)
+        changed_fields.append("designation")
     if "joining_date" in sent and payload.joining_date != user.joining_date:
         user.joining_date = payload.joining_date
         changed_fields.append("joining_date")

@@ -306,3 +306,36 @@ def approval_decided_email(project_id: int, project_name: str, type_name: str, l
     body = _wrap(f"{_esc(type_name)} {label}", f"Your <b>{_esc(type_name)}</b> request was {label}.", _esc(project_name),
                  f"{settings.FRONTEND_URL}/projects/{project_id}", lines)
     return subject, body
+
+
+# Password reset email templates
+
+def password_reset_code_email(name: str, code: str, minutes: int) -> tuple[str, str]:
+    subject = f"Your password reset code: {code}"
+    body = f"""
+    <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+        <h2 style="color: #1e293b;">Reset your password</h2>
+        <p style="color: #334155; font-size: 14px;">Hello {_esc(name)}, use this code to choose a new password for RLKG PMS:</p>
+        <p style="font-size: 32px; font-weight: 700; letter-spacing: 8px; color: #0f172a; background: #f8fafc;
+                  border-radius: 8px; padding: 16px; text-align: center; margin: 16px 0;">{code}</p>
+        <p style="color: #64748b; font-size: 13px;">It expires in {minutes} minutes and works once.
+           If you did not ask for this, ignore this email; your password stays the same.</p>
+        <p style="color: #64748b; font-size: 13px;">Never share this code with anyone, including IT staff.</p>
+    </div>
+    """
+    return subject, body
+
+
+def password_changed_email(name: str, how: str) -> tuple[str, str]:
+    subject = "Your RLKG PMS password was changed"
+    body = f"""
+    <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+        <h2 style="color: #1e293b;">Password changed</h2>
+        <p style="color: #334155; font-size: 14px;">Hello {_esc(name)}, your password was just changed ({_esc(how)}).
+           You have been signed out on your other devices.</p>
+        <p style="color: #b91c1c; font-size: 13px;">If this was not you, contact your administrator straight away.</p>
+        <a href="{settings.FRONTEND_URL}/login" style="display: inline-block; background: #3b82f6; color: white;
+           padding: 10px 20px; border-radius: 8px; text-decoration: none; font-size: 14px;">Sign in</a>
+    </div>
+    """
+    return subject, body

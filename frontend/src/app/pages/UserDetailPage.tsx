@@ -102,6 +102,7 @@ export function UserDetailPage() {
     email: "",
     employeeCode: "",
     joiningDate: "",
+    designation: "",
     placement: EMPTY_PLACEMENT as PlacementValue,
     roleId: "" as string,
     managerId: "" as string,
@@ -124,6 +125,7 @@ export function UserDetailPage() {
       email: user.email,
       employeeCode: user.employeeCode ?? "",
       joiningDate: user.joiningDate ?? "",
+      designation: user.designation ?? "",
       placement: placementOf(user),
       roleId: user.role?.id?.toString() || "",
       managerId: user.manager?.id?.toString() || "",
@@ -212,6 +214,7 @@ export function UserDetailPage() {
         updateData.employee_code = code || null;
       }
       if (editForm.joiningDate !== (user.joiningDate ?? "")) updateData.joining_date = editForm.joiningDate || null;
+      if (editForm.designation.trim() !== (user.designation ?? "")) updateData.designation = editForm.designation.trim() || null;
       const pl = editForm.placement, was = placementOf(user);
       if (pl.areaId !== was.areaId || pl.stationId !== was.stationId || pl.departmentId !== was.departmentId) {
         if (!placementComplete(pl) && !targetIsAdmin) {
@@ -478,6 +481,10 @@ export function UserDetailPage() {
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Employee Code</p>
                 <p className="text-sm text-foreground font-mono">{user.employeeCode || "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Designation</p>
+                <p className="text-sm text-foreground" data-testid="detail-designation">{user.designation || "—"}</p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Joining Date</p>
@@ -794,6 +801,14 @@ export function UserDetailPage() {
                   type="date"
                   value={editForm.joiningDate}
                   onChange={(e) => setEditForm({ ...editForm, joiningDate: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-foreground"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label htmlFor="eu-designation" className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Designation</label>
+                <input id="eu-designation" maxLength={120} placeholder="e.g. Assistant Manager HR"
+                  value={editForm.designation}
+                  onChange={(e) => setEditForm({ ...editForm, designation: e.target.value })}
                   className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-foreground"
                 />
               </div>

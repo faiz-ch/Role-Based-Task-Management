@@ -117,6 +117,9 @@ async def get_current_user(
 
     if user is None or not user.is_active:
         raise credentials_error
+    # Signed out by a password reset / admin password change (tokens from before carry an older number)
+    if int(payload.get("ver", 0)) != (user.token_version or 0):
+        raise credentials_error
 
     return user
 

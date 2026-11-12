@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     GOTENBERG_URL: str = "http://localhost:3000"
     SMTP_HOST: str = "smtp.gmail.com"
     SMTP_PORT: int = 587
+    SMTP_STARTTLS: bool = True
+    RESET_REQUESTS_PER_IP: int = 20  # forgot/reset password requests per network address per 15 minutes  # Gmail / Hostinger need it; only a local test mail server turns it off
     EMAIL_ADDRESS: str = ""
     EMAIL_PASSWORD: str = ""
     EMAIL_REPLY_TO: str = ""

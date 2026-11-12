@@ -99,6 +99,7 @@ class UserOut(BaseModel):
     is_active: bool
     employee_code: str | None = None
     joining_date: date | None = None
+    designation: str | None = None  # job title, separate from the role
     role: RoleBrief | None = None
     # Placement (where the person works)
     area: OrgBrief | None = None
@@ -135,6 +136,7 @@ class UserUpdate(BaseModel):
     is_active: bool | None = None
     employee_code: str | None = None
     joining_date: date | None = None
+    designation: str | None = None  # job title, separate from the role
     area_id: int | None = None
     station_id: int | None = None
     department_id: int | None = None
@@ -173,6 +175,7 @@ class UserCreate(BaseModel):
     password: str
     employee_code: str
     joining_date: date | None = None
+    designation: str | None = None  # job title, separate from the role
     role_id: int | None = None
     # Placement: Area, Station and Department are required; Division is optional
     area_id: int
@@ -227,3 +230,13 @@ class ChangePasswordRequest(BaseModel):
         if len(v) < 8:
             raise ValueError("New password must be at least 8 characters")
         return v
+
+
+def clean_designation(v):
+    """Trim; empty -> None; at most 120 characters."""
+    if v is None:
+        return None
+    v = " ".join(str(v).split())
+    if len(v) > 120:
+        raise ValueError("Designation is too long (120 characters at most)")
+    return v or None

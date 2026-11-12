@@ -67,6 +67,12 @@ class User(Base):
     # Numbers only, unique. Required for every new user; only the main Admin may be without one.
     employee_code = Column(String(20), unique=True, index=True, nullable=True)
     joining_date = Column(Date, nullable=True)
+    # Job title shown on the profile (e.g. "Assistant Manager HR"); separate from the role,
+    # which decides permissions.
+    designation = Column(String(120), nullable=True)
+    # Written into every sign-in token. Raising it (password reset / admin password change)
+    # signs the person out everywhere: older tokens carry the old number and are refused.
+    token_version = Column(Integer, nullable=False, default=0, server_default="0")
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

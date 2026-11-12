@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from "react";
+import { Link, useLocation } from "react-router";
 import { useAuth } from "../context/AuthContext";
 import { AuthLayout } from "../components/AuthLayout";
 import { notifyError } from "../utils/notify";
 
 export function LoginPage() {
   const { login, loading, error } = useAuth();
-  const [email, setEmail] = useState("");
+  const location = useLocation();
+  const [email, setEmail] = useState(((location.state as { email?: string } | null)?.email) || "");
   const [password, setPassword] = useState("");
   const [localError, setLocalError] = useState("");
 
@@ -46,7 +48,10 @@ export function LoginPage() {
           />
         </div>
         <div className="rlk-field">
-          <label htmlFor="login-password">Password</label>
+          <div className="rlk-field__row">
+            <label htmlFor="login-password">Password</label>
+            <Link to="/forgot-password" state={{ email: email.trim() }} className="rlk-link">Forgot password?</Link>
+          </div>
           <input
             id="login-password"
             type="password"

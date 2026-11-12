@@ -96,6 +96,7 @@ export function UsersPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [createCode, setCreateCode] = useState("");
   const [createJoining, setCreateJoining] = useState("");
+  const [createDesignation, setCreateDesignation] = useState("");
   const [createPlacement, setCreatePlacement] = useState<PlacementValue>(EMPTY_PLACEMENT);
   const [createRole, setCreateRole] = useState<string>("");
   const [createActive, setCreateActive] = useState(true);
@@ -162,7 +163,8 @@ export function UsersPage() {
       q === "" ||
       user.name.toLowerCase().includes(q) ||
       user.email.toLowerCase().includes(q) ||
-      (user.employeeCode ?? "").includes(q);
+      (user.employeeCode ?? "").includes(q) ||
+      (user.designation ?? "").toLowerCase().includes(q);
     const matchesPlace =
       (filterArea === "all" || user.area?.id === Number(filterArea)) &&
       (filterStation === "all" || user.station?.id === Number(filterStation)) &&
@@ -231,6 +233,7 @@ export function UsersPage() {
         password: createPassword,
         employee_code: createCode.trim(),
         joining_date: createJoining || null,
+        designation: createDesignation.trim() || null,
         role_id: roleId,
         area_id: createPlacement.areaId,
         station_id: createPlacement.stationId,
@@ -275,6 +278,7 @@ export function UsersPage() {
     setShowPassword(false);
     setCreateCode("");
     setCreateJoining("");
+    setCreateDesignation("");
     setCreatePlacement(EMPTY_PLACEMENT);
     setCreateRole("");
     setCreateActive(true);
@@ -540,7 +544,10 @@ export function UsersPage() {
                         />
                       ) : null}
                       <Av name={user.name} className={user.hasAvatar ? 'hidden' : ''} />
-                      <span className="text-sm font-medium text-foreground">{user.name}</span>
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium text-foreground">{user.name}</span>
+                        {user.designation && <span className="block text-xs text-muted-foreground" data-testid="user-designation">{user.designation}</span>}
+                      </span>
                     </div>
                   </td>
                   <td className="px-4 py-3 text-sm text-muted-foreground">{user.email}</td>
@@ -688,6 +695,15 @@ export function UsersPage() {
               onChange={(e) => setCreateName(e.target.value)}
               required
             />
+            <div>
+              <label htmlFor="cu-designation" className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                Designation
+              </label>
+              <input id="cu-designation" maxLength={120} placeholder="e.g. Assistant Manager HR (optional)"
+                value={createDesignation} onChange={(e) => setCreateDesignation(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-foreground" />
+              <p className="text-xs text-muted-foreground mt-1">Job title shown on the profile. The role (below) decides what the person can do.</p>
+            </div>
 
             <FldInput
               label="Email Address"

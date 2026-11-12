@@ -12,6 +12,7 @@ import { RolesPage } from "./pages/RolesPage";
 import { RoleDetailPage } from "./pages/RoleDetailPage";
 import { OrganizationPage } from "./pages/OrganizationPage";
 import { OrgDetailPage } from "./pages/OrgDetailPage";
+import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { RolesAndApprovalsPage } from "./pages/RolesAndApprovalsPage";
 import { ApprovalsInboxPage } from "./pages/ApprovalsInboxPage";
 import { TaskDetailPage } from "./pages/TaskDetailPage";
@@ -83,6 +84,14 @@ function AppContent() {
         element={
           <PublicRoute>
             <LoginPage />
+          </PublicRoute>
+        }
+      />
+      <Route
+        path="/forgot-password"
+        element={
+          <PublicRoute>
+            <ForgotPasswordPage />
           </PublicRoute>
         }
       />

@@ -42,17 +42,18 @@ def _create_token(data: dict, expires_delta: timedelta, token_type: str) -> str:
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
-def create_access_token(user_id: int) -> str:
+def create_access_token(user_id: int, version: int = 0) -> str:
+    # "ver" = the user's token_version; raising it on the user cancels this token
     return _create_token(
-        {"sub": str(user_id)},
+        {"sub": str(user_id), "ver": version},
         timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
         token_type="access",
     )
 
 
-def create_refresh_token(user_id: int) -> str:
+def create_refresh_token(user_id: int, version: int = 0) -> str:
     return _create_token(
-        {"sub": str(user_id)},
+        {"sub": str(user_id), "ver": version},
         timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
         token_type="refresh",
     )

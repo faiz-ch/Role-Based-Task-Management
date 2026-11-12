@@ -46,6 +46,7 @@ export function mapUser(u: any): UserType {
     active: u.is_active,
     employeeCode: u.employee_code ?? null,
     joiningDate: u.joining_date ?? null,
+    designation: u.designation ?? null,
     role: u.role ? mapRole(u.role) : null,
     area: u.area ? { id: u.area.id, name: u.area.name, code: u.area.code } : null,
     station: u.station ? { id: u.station.id, name: u.station.name, code: u.station.code, areaId: u.station.area_id } : null,
@@ -77,6 +78,7 @@ export function mapUser(u: any): UserType {
 export type PlacementFields = {
   employee_code?: string | null;
   joining_date?: string | null;
+  designation?: string | null;
   area_id?: number | null;
   station_id?: number | null;
   division_id?: number | null;
@@ -88,7 +90,7 @@ export type PlacementFields = {
 
 function pickPlacement(data: PlacementFields): any {
   const out: any = {};
-  for (const k of ["employee_code", "joining_date", "area_id", "station_id", "division_id", "managed_area_ids", "managed_station_ids"] as const) {
+  for (const k of ["employee_code", "joining_date", "designation", "area_id", "station_id", "division_id", "managed_area_ids", "managed_station_ids"] as const) {
     if (data[k] !== undefined) out[k] = data[k];
   }
   if (data.managed_pairs !== undefined) {

@@ -99,6 +99,7 @@ export function ProfileDialog({ onClose }: { onClose: () => void }) {
     ["Full Name", u.name],
     ["Email", u.email],
     ["Employee Code", u.employeeCode ? <span className="font-mono">{u.employeeCode}</span> : "—"],
+    ["Designation", u.designation || "—"],
     ["Role", u.role?.name || "No role"],
     ["Joining Date", fmt(u.joiningDate)],
     ["Area", u.area?.name || "—"],

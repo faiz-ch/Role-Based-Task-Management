@@ -83,6 +83,8 @@ export interface UserType {
   active: boolean; // maps to backend's `is_active`
   employeeCode: string | null;
   joiningDate: string | null; // YYYY-MM-DD
+  /** job title (e.g. "Assistant Manager HR"); separate from the role */
+  designation: string | null;
   role: Role | null;
   // Placement: where the person works (one per person)
   area: OrgRef | null;
