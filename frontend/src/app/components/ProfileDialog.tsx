@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { X, Camera, Trash2, KeyRound, Eye, EyeOff } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import { API_BASE_URL } from "../api/client";
+import { getAvatarUrl } from "../api/users";
 import { uploadAvatar, deleteAvatar, changeMyPassword } from "../api/users";
 import { notifyError, notifySuccess } from "../utils/notify";
 import { describeScope } from "../utils/orgScope";
@@ -25,7 +25,6 @@ function initials(name: string) {
  */
 export function ProfileDialog({ onClose }: { onClose: () => void }) {
   const { currentUser, setCurrentUser } = useAuth();
-  const [photoKey, setPhotoKey] = useState(() => Date.now());
   const [busyPhoto, setBusyPhoto] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -56,7 +55,6 @@ export function ProfileDialog({ onClose }: { onClose: () => void }) {
     setBusyPhoto(true);
     try {
       setCurrentUser(await uploadAvatar(u.id, file));
-      setPhotoKey(Date.now());
       notifySuccess("Profile photo updated");
     } catch (err: any) {
       notifyError(err?.message || "Could not upload the photo.");
@@ -131,7 +129,7 @@ export function ProfileDialog({ onClose }: { onClose: () => void }) {
             <div className="p-6 md:border-r border-border flex flex-col items-center gap-4 bg-[#FAF8F3]">
               <div className="w-40 h-40 rounded-full overflow-hidden ring-4 ring-[#C9A24B]/40 bg-[#15171C] flex items-center justify-center">
                 {u.hasAvatar ? (
-                  <img src={`${API_BASE_URL}/users/${u.id}/avatar?v=${photoKey}`} alt="Your profile photo" className="w-full h-full object-cover" />
+                  <img src={getAvatarUrl(u.id, u.avatarVersion)} alt="Your profile photo" className="w-full h-full object-cover" />
                 ) : (
                   <span className="text-5xl font-bold text-[#C9A24B]" aria-hidden="true">{initials(u.name)}</span>
                 )}

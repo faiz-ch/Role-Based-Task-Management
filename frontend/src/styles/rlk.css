@@ -414,3 +414,7 @@
 .rlk-link:hover { text-decoration: underline; }
 .rlk-link:disabled { opacity: .5; cursor: default; }
 .rlk-field input.rlk-codeinput { font-size: 22px; letter-spacing: 8px; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* Profile photos in the menu: a thin gold ring so a dark photo still stands out on the dark sidebar */
+.rlk-avatar--ring { box-shadow: 0 0 0 2px var(--rlk-gold); }
+.rlk-avatar-btn:focus-visible { outline: 2px solid var(--rlk-gold); outline-offset: 3px; }

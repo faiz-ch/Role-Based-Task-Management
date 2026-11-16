@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { useParams, useNavigate, Link } from "react-router";
+import { useParams, useNavigate, useLocation, Link } from "react-router";
+import { UserAvatar, PhotoViewer } from "../components/UserAvatar";
 import { Edit2, Trash2, MoreVertical, AlertTriangle, User, Briefcase, BarChart3, Clock, CheckCircle2, XCircle, Activity, Upload } from "lucide-react";
 import { UserType, Role, Department, UserPerformance, Area, Station, Division } from "../types";
 import { getUser, getUserPerformance, getUserActivity, updateUser, deleteUser, assignRole, uploadAvatar, deleteAvatar, getAvatarUrl } from "../api/users";
@@ -61,7 +62,11 @@ function placementOf(u: UserType): PlacementValue {
 export function UserDetailPage() {
   const { userId } = useParams<{ userId: string }>();
   const navigate = useNavigate();
-  const { currentUser } = useAuth();
+  const location = useLocation();
+  // Back to the Users list exactly as it was (filters, search, page), when we came from there
+  const backTo: string = (location.state as { back?: string } | null)?.back?.startsWith("/users") ? (location.state as { back: string }).back : "/users";
+  const [viewPhoto, setViewPhoto] = useState(false);
+  const { currentUser, setCurrentUser } = useAuth();
   const uid = Number(userId);
   const hasId = !!userId && !Number.isNaN(uid);
 
@@ -81,6 +86,13 @@ export function UserDetailPage() {
 
   const user = userQ.data;
   const setUser = userQ.setData;
+  // Changing your own photo here also updates the menu and top bar straight away
+  React.useEffect(() => {
+    if (user && currentUser && user.id === currentUser.id &&
+        (user.hasAvatar !== currentUser.hasAvatar || (user.avatarVersion ?? null) !== (currentUser.avatarVersion ?? null))) {
+      setCurrentUser({ ...currentUser, hasAvatar: user.hasAvatar, avatarVersion: user.avatarVersion ?? null });
+    }
+  }, [user?.id, user?.hasAvatar, user?.avatarVersion]); // eslint-disable-line react-hooks/exhaustive-deps
   const performance = performanceQ.data;
   const activity = activityQ.data;
   const departments = departmentsQ.data;
@@ -302,7 +314,7 @@ export function UserDetailPage() {
     try {
       setError(null);
       await deleteUser(user.id);
-      navigate("/users");
+      navigate(backTo);
     } catch (err: any) {
       setError(err?.message || "Failed to delete user.");
     }
@@ -368,7 +380,7 @@ export function UserDetailPage() {
       {/* Header */}
       <div>
         <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
-          <Link to="/users" className="hover:text-foreground transition-colors">
+          <Link to={backTo} className="hover:text-foreground transition-colors">
             Users
           </Link>
           <span>/</span>
@@ -377,20 +389,8 @@ export function UserDetailPage() {
 
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-4">
-            {user.hasAvatar ? (
-              <img
-                src={getAvatarUrl(user.id)}
-                alt={user.name}
-                className="w-12 h-12 rounded-lg object-cover flex-shrink-0"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = 'none';
-                  (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
-                }}
-              />
-            ) : null}
-            <div className={`w-12 h-12 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center font-semibold text-lg flex-shrink-0 ${user.hasAvatar ? 'hidden' : ''}`}>
-              {getInitials(user.name)}
-            </div>
+            <UserAvatar user={user} size={96} onOpen={() => setViewPhoto(true)} className="ring-4 ring-white shadow-md" />
+            {viewPhoto && user.hasAvatar && <PhotoViewer user={user} onClose={() => setViewPhoto(false)} />}
             <div>
               <h1 className="text-2xl font-bold text-foreground">{user.name}</h1>
               {user.active ? (
@@ -933,9 +933,9 @@ export function UserDetailPage() {
               ) : user.hasAvatar ? (
                 <div className="flex items-center gap-4">
                   <img
-                    src={getAvatarUrl(user.id)}
+                    src={getAvatarUrl(user.id, user.avatarVersion)}
                     alt="Current avatar"
-                    className="w-16 h-16 rounded-lg object-cover"
+                    className="w-20 h-20 rounded-full object-cover"
                   />
                   <div className="flex gap-2">
                     <label htmlFor="edit-avatar-upload" className="cursor-pointer">

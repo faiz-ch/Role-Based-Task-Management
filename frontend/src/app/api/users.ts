@@ -71,6 +71,7 @@ export function mapUser(u: any): UserType {
     createdAt: u.created_at,
     manager: u.manager ? { id: u.manager.id, name: u.manager.name, email: u.manager.email } : null,
     hasAvatar: u.has_avatar || false,
+    avatarVersion: u.avatar_version ?? null,
   };
 }
 
@@ -237,8 +238,8 @@ export async function assignDepartment(userId: number, departmentId: number | nu
   return mapUser(res);
 }
 
-export function getAvatarUrl(userId: number): string {
-  return `${API_BASE_URL}/users/${userId}/avatar`;
+export function getAvatarUrl(userId: number, version?: string | null): string {
+  return `${API_BASE_URL}/users/${userId}/avatar${version ? `?v=${encodeURIComponent(version)}` : ""}`;
 }
 
 export async function uploadAvatar(userId: number, file: File): Promise<UserType> {

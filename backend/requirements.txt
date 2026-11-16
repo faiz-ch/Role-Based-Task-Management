@@ -12,4 +12,4 @@ python-multipart
 httpx
 aiosmtplib
 alembic
-psycopg2-binary
+psycopg2-binaryPillow

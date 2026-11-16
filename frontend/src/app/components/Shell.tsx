@@ -20,6 +20,7 @@ import { useAuth } from "../context/AuthContext";
 import { InstitutionsFooter } from "./InstitutionsFooter";
 import { toast } from "sonner";
 import { ProfileDialog } from "./ProfileDialog";
+import { UserAvatar } from "./UserAvatar";
 
 const NAV: {
   id: Page;
@@ -37,11 +38,6 @@ const NAV: {
   { id: "roles", label: "Roles & Approvals", Icon: Shield, perm: "role:manage" },
   { id: "organization", label: "Organization", Icon: Building2, perm: "organization:manage" },
 ];
-
-function initials(name: string) {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase() || "?";
-}
 
 /** Mobile header: hides while scrolling down, comes back as soon as you scroll up. */
 function useHideOnScroll(scrollRef: React.RefObject<HTMLElement | null>, resetKey: string, enabled: boolean) {
@@ -117,7 +113,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const badge = (id: Page) => id === "approvals" && pendingApprovals > 0
     ? <span className="rlk-nav__badge" aria-label={`${pendingApprovals} waiting`}>{pendingApprovals > 99 ? "99+" : pendingApprovals}</span>
     : null;
-  const me = initials(currentUser.name);
   const roleName = currentUser.role?.name ?? "No role";
 
   return (
@@ -155,7 +150,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </div>
         <div className="rlk-me">
           <button type="button" className="rlk-me__open" onClick={() => setProfileOpen(true)} aria-label="Open my profile" title="My Profile">
-            <span className="rlk-initials rlk-initials--gold" aria-hidden="true">{me}</span>
+            <UserAvatar user={currentUser} size={36} tone="gold" className="rlk-avatar--ring" />
             {!collapsed && (
               <span className="rlk-me__text">
                 <span className="rlk-me__name">{currentUser.name}</span>
@@ -187,7 +182,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <Bell size={19} aria-hidden="true" />
             </button>
             <button type="button" className="rlk-topbar__me" onClick={() => setProfileOpen(true)} aria-label="My Profile" title="My Profile">
-              <span className="rlk-initials rlk-initials--ink" aria-hidden="true">{me}</span>
+              <UserAvatar user={currentUser} size={34} tone="ink" />
               <span>{currentUser.name}</span>
             </button>
           </div>
@@ -216,7 +211,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   onClick={() => setMenuOpen((o) => !o)}
                   className="rlk-iconbtn"
                 >
-                  <span className="rlk-initials rlk-initials--gold" style={{ width: 34, height: 34 }}>{me}</span>
+                  <UserAvatar user={currentUser} size={34} tone="gold" className="rlk-avatar--ring" />
                 </button>
               </div>
             </div>
@@ -237,9 +232,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </div>
             {menuOpen && (
               <div className="rlk-menu" role="menu">
-                <div className="rlk-menu__who">
-                  <div style={{ fontSize: 14, fontWeight: 800 }}>{currentUser.name}</div>
-                  <div style={{ fontSize: 12.5, color: "var(--rlk-muted)" }}>{roleName}</div>
+                <div className="rlk-menu__who" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <UserAvatar user={currentUser} size={40} tone="ink" />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 800 }}>{currentUser.name}</div>
+                    <div style={{ fontSize: 12.5, color: "var(--rlk-muted)" }}>{roleName}</div>
+                  </div>
                 </div>
                 <button type="button" role="menuitem" className="rlk-menu__btn" onClick={() => { setMenuOpen(false); setProfileOpen(true); }}>
                   <UserCircle size={16} aria-hidden="true" /> My Profile

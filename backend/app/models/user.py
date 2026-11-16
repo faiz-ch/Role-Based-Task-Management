@@ -4,6 +4,8 @@ than many-to-many). role_id can be null temporarily (e.g. a brand new
 user before an admin assigns them a role). Similarly, department_id
 is optional for organizational grouping.
 """
+import os
+
 from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, Date, func, Table, false
 from sqlalchemy.orm import relationship
 
@@ -122,6 +124,13 @@ class User(Base):
     @property
     def has_avatar(self) -> bool:
         return self.avatar_path is not None
+
+    @property
+    def avatar_version(self) -> str | None:
+        """Changes with every new photo (part of its random file name), so browsers fetch the new one at once."""
+        if not self.avatar_path:
+            return None
+        return os.path.splitext(os.path.basename(self.avatar_path))[0][:12]
 
     # A user can have created many tasks, and separately, been assigned many tasks.
     # foreign_keys= is needed here because Task has TWO foreign keys pointing

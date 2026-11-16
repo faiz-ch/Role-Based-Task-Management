@@ -105,6 +105,8 @@ export interface UserType {
   createdAt: string;
   manager: { id: number; name: string; email: string } | null;
   hasAvatar: boolean;
+  /** changes with every new photo; added to the photo address so browsers show the new one at once */
+  avatarVersion?: string | null;
 }
 
 export interface Project {

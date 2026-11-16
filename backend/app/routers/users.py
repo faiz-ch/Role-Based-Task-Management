@@ -31,6 +31,7 @@ from app.models.comment import Comment
 from app.schemas.user import UserOut, UserUpdate, AssignRoleRequest, AssignDepartmentRequest, UserCreate, PerformanceCategoryOut, UserPerformanceOut, ChangePasswordRequest, clean_designation
 from app.services import notification_dispatch
 from app.services.activity_log import log_activity
+from app.services.avatar_image import make_avatar, BadImage
 from app.schemas.activity_log import ActivityLogOut
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -1099,15 +1100,18 @@ async def upload_avatar(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
+    try:
+        content = make_avatar(content)  # right way up, square, 512 px, JPEG
+    except BadImage as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     # Delete old avatar file if one exists, before saving the new one
     if user.avatar_path and os.path.exists(user.avatar_path):
         os.remove(user.avatar_path)
 
     avatar_dir = os.path.join(UPLOAD_DIR, "avatars", str(user_id))
     os.makedirs(avatar_dir, exist_ok=True)
-    ext = file.filename.split(".")[-1] if "." in file.filename else "jpg"
-    stored_name = f"{uuid.uuid4().hex}.{ext}"
-    stored_path = os.path.join(avatar_dir, stored_name)
+    stored_path = os.path.join(avatar_dir, f"{uuid.uuid4().hex}.jpg")
 
     with open(stored_path, "wb") as f:
         f.write(content)
@@ -1153,10 +1157,14 @@ async def delete_avatar(
 @router.get("/{user_id}/avatar")
 async def get_avatar(
     user_id: int,
+    v: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     user_result = await db.execute(select(User).where(User.id == user_id))
     user = user_result.scalar_one_or_none()
     if user is None or not user.avatar_path or not os.path.exists(user.avatar_path):
         raise HTTPException(status_code=404, detail="No avatar found")
-    return FileResponse(user.avatar_path)
+    # With ?v=<avatar_version> the address changes whenever the photo changes, so the browser may keep it for a long time.
+    # Without it, the browser must check every time (old links still show the newest photo).
+    cache = "public, max-age=31536000, immutable" if v and v == user.avatar_version else "no-cache"
+    return FileResponse(user.avatar_path, headers={"Cache-Control": cache})

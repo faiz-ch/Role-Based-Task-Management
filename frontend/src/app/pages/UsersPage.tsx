@@ -1,16 +1,18 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { Edit2, AlertTriangle, Plus, Trash2, Search, Eye, EyeOff, RefreshCw, Upload } from "lucide-react";
 import { UserType, Role, Department, Area, Station, Division } from "../types";
 import { getUsers, createUser, deleteUser, uploadAvatar } from "../api/users";
 import { getRoles, getAssignableRoles } from "../api/roles";
 import { useCachedQuery, qk, FRESH, EMPTY } from "../api/queries";
 import { getDepartments } from "../api/departments";
-import { Av } from "../components/Av";
+import { UserAvatar } from "../components/UserAvatar";
+import { Pager, PAGE_SIZES } from "../components/Pager";
+import { MultiSelect, FilterChips } from "../components/MultiSelect";
 import { Dlg } from "../components/Dlg";
 import { FldInput } from "../components/FldInput";
 import { FldSelect } from "../components/FldSelect";
 import { useAuth } from "../context/AuthContext";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams, useLocation, Link } from "react-router";
 import { ScopeTreePicker } from "../components/ScopeTreePicker";
 import { PlacementPicker, PlacementValue, EMPTY_PLACEMENT, placementComplete } from "../components/PlacementPicker";
 import { getAreas, getStations, getDivisions } from "../api/organization";
@@ -28,6 +30,19 @@ function fmtDate(d: string) {
     year: "numeric",
   });
 }
+
+const ROWS_KEY = "rlk.users.rowsPerPage";
+function storedRows(): number {
+  try {
+    const n = Number(localStorage.getItem(ROWS_KEY));
+    return PAGE_SIZES.includes(n) ? n : 10;
+  } catch {
+    return 10;
+  }
+}
+
+/** Clicks on these parts of a row do their own job and must not open the user's page. */
+const ROW_CLICK_IGNORE = "input, button, a, label, select, textarea, [data-no-row-click]";
 
 function generatePassword(length: number = 12): string {
   const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
@@ -63,30 +78,45 @@ export function UsersPage() {
   
   const canManage = permissions.includes("user:manage");
 
-  // Filter states
-  const [searchQuery, setSearchQuery] = useState("");
-  const [filterDepartment, setFilterDepartment] = useState<string>("all");
-  const [filterRole, setFilterRole] = useState<string>("all");
-  const [filterStatus, setFilterStatus] = useState<string>("all");
-  const [filterArea, setFilterArea] = useState<string>("all");
-  const [filterStation, setFilterStation] = useState<string>("all");
-  const [filterDivision, setFilterDivision] = useState<string>("all");
-  const [filterJoinedFrom, setFilterJoinedFrom] = useState("");
-  const [filterJoinedTo, setFilterJoinedTo] = useState("");
-  const filtersActive = [filterDepartment, filterRole, filterStatus, filterArea, filterStation, filterDivision].some((f) => f !== "all")
+  // Filters, search, page and rows per page are kept in the address (e.g. /users?station=3,7&page=2),
+  // so Back from a user's page returns to the same view, and the link can be shared.
+  const location = useLocation();
+  const [params, setParams] = useSearchParams();
+  const listParam = (k: string) => (params.get(k) || "").split(",").filter(Boolean);
+  const searchQuery = params.get("q") || "";
+  const fArea = listParam("area"), fStation = listParam("station"), fDept = listParam("dept");
+  const fDivision = listParam("division"), fRole = listParam("role"), fStatus = listParam("status");
+  const filterJoinedFrom = params.get("from") || "", filterJoinedTo = params.get("to") || "";
+  /** Change some address values in one go. Any filter change goes back to page 1. */
+  function setParam(changes: Record<string, string | string[] | null>, keepPage = false) {
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      for (const [k, v] of Object.entries(changes)) {
+        const val = Array.isArray(v) ? v.join(",") : v;
+        if (val) next.set(k, val); else next.delete(k);
+      }
+      if (!keepPage) next.delete("page");
+      return next;
+    }, { replace: true });
+  }
+  const filtersActive = [fArea, fStation, fDept, fDivision, fRole, fStatus].some((f) => f.length > 0)
     || !!filterJoinedFrom || !!filterJoinedTo || !!searchQuery;
   function clearFilters() {
-    setSearchQuery(""); setFilterDepartment("all"); setFilterRole("all"); setFilterStatus("all");
-    setFilterArea("all"); setFilterStation("all"); setFilterDivision("all"); setFilterJoinedFrom(""); setFilterJoinedTo("");
-    setCurrentPage(1);
+    setParam({ q: null, area: null, station: null, dept: null, division: null, role: null, status: null, from: null, to: null });
   }
 
   // Selection state
   const [selectedUserIds, setSelectedUserIds] = useState<Set<number>>(new Set());
 
-  // Pagination state
-  const [currentPage, setCurrentPage] = useState(1);
-  const usersPerPage = 10;
+  // Pagination: rows per page from the address, else the last choice on this browser, else 10
+  const rowsParam = Number(params.get("rows"));
+  const usersPerPage = PAGE_SIZES.includes(rowsParam) ? rowsParam : storedRows();
+  const pageParam = Math.max(1, Math.floor(Number(params.get("page")) || 1));
+  function setCurrentPage(p: number) { setParam({ page: p > 1 ? String(p) : null }, true); }
+  function setRowsPerPage(n: number) {
+    try { localStorage.setItem(ROWS_KEY, String(n)); } catch { /* private window: just not remembered */ }
+    setParam({ rows: String(n) });
+  }
 
   // Create dialog state
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -156,6 +186,9 @@ export function UsersPage() {
     );
   }
 
+  // Nothing chosen = everyone; "none" matches people with no value there
+  const inList = (list: string[], id?: number | null) =>
+    list.length === 0 || (id == null ? list.includes("none") : list.includes(String(id)));
   // Filter users based on search and filters
   const filteredUsers = users.filter((user) => {
     const q = searchQuery.trim().toLowerCase();
@@ -165,32 +198,20 @@ export function UsersPage() {
       user.email.toLowerCase().includes(q) ||
       (user.employeeCode ?? "").includes(q) ||
       (user.designation ?? "").toLowerCase().includes(q);
-    const matchesPlace =
-      (filterArea === "all" || user.area?.id === Number(filterArea)) &&
-      (filterStation === "all" || user.station?.id === Number(filterStation)) &&
-      (filterDivision === "all" || (filterDivision === "none" ? !user.division : user.division?.id === Number(filterDivision)));
+    const matchesPlace = inList(fArea, user.area?.id) && inList(fStation, user.station?.id) && inList(fDivision, user.division?.id);
     const matchesJoined =
       (!filterJoinedFrom || (!!user.joiningDate && user.joiningDate >= filterJoinedFrom)) &&
       (!filterJoinedTo || (!!user.joiningDate && user.joiningDate <= filterJoinedTo));
-    
-    const matchesDepartment = 
-      filterDepartment === "all" || 
-      user.department?.id === Number(filterDepartment);
-    
-    const matchesRole = 
-      filterRole === "all" || 
-      user.role?.id === Number(filterRole);
-    
-    const matchesStatus = 
-      filterStatus === "all" || 
-      (filterStatus === "active" && user.active) ||
-      (filterStatus === "inactive" && !user.active);
+    const matchesDepartment = inList(fDept, user.department?.id);
+    const matchesRole = inList(fRole, user.role?.id);
+    const matchesStatus = fStatus.length === 0 || fStatus.includes(user.active ? "active" : "inactive");
     
     return matchesSearch && matchesDepartment && matchesRole && matchesStatus && matchesPlace && matchesJoined;
   });
 
   // Pagination
-  const totalPages = Math.ceil(filteredUsers.length / usersPerPage);
+  const totalPages = Math.max(1, Math.ceil(filteredUsers.length / usersPerPage));
+  const currentPage = Math.min(pageParam, totalPages); // e.g. a shared link to page 9 of a now-shorter list
   const paginatedUsers = filteredUsers.slice(
     (currentPage - 1) * usersPerPage,
     currentPage * usersPerPage
@@ -320,6 +341,63 @@ export function UsersPage() {
     }
   }
 
+  // ---- Filter choices. Area narrows Station; Station (or Area) narrows Department.
+  const stationOptionsFor = (areaVals: string[]) => stations.filter((st) => !areaVals.length || areaVals.includes(String(st.area.id)));
+  function deptIdsFor(areaVals: string[], stationVals: string[]): Set<number> | null {
+    const pool = stationVals.length ? stations.filter((st) => stationVals.includes(String(st.id)))
+      : areaVals.length ? stationOptionsFor(areaVals) : null;
+    return pool ? new Set(pool.flatMap((st) => st.departments.map((d) => d.id))) : null;
+  }
+  const keepDepts = (ids: Set<number> | null) => fDept.filter((v) => v === "none" || !ids || ids.has(Number(v)));
+  function changeArea(v: string[]) {
+    const keptStations = fStation.filter((sid) => stationOptionsFor(v).some((st) => String(st.id) === sid));
+    setParam({ area: v, station: keptStations, dept: keepDepts(deptIdsFor(v, keptStations)) });
+  }
+  function changeStation(v: string[]) {
+    setParam({ station: v, dept: keepDepts(deptIdsFor(fArea, v)) });
+  }
+  const visibleDeptIds = deptIdsFor(fArea, fStation);
+  const areaOptions = areas.map((a) => ({ value: String(a.id), label: a.name }));
+  const stationOptions = stationOptionsFor(fArea).map((st) => ({ value: String(st.id), label: st.code || st.name, hint: st.code ? st.name : null }));
+  const deptOptions = [{ value: "none", label: "No department" },
+    ...departments.filter((d) => !visibleDeptIds || visibleDeptIds.has(d.id)).map((d) => ({ value: String(d.id), label: d.name }))];
+  const divisionOptions = [{ value: "none", label: "No division" }, ...divisions.map((d) => ({ value: String(d.id), label: d.name }))];
+  const roleOptions = [{ value: "none", label: "No role" }, ...roles.map((r) => ({ value: String(r.id), label: r.name }))];
+  const statusOptions = [{ value: "active", label: "Active" }, { value: "inactive", label: "Inactive" }];
+
+  // Removable chips for everything chosen
+  const chipsFor = (key: string, what: string, vals: string[], opts: { value: string; label: string }[]) =>
+    vals.map((v) => ({
+      key: `${key}-${v}`,
+      label: `${what}: ${opts.find((o) => o.value === v)?.label ?? v}`,
+      onRemove: () => {
+        const rest = vals.filter((x) => x !== v);
+        if (key === "area") changeArea(rest); else if (key === "station") changeStation(rest); else setParam({ [key]: rest });
+      },
+    }));
+  const allStationOptions = stations.map((st) => ({ value: String(st.id), label: st.code || st.name }));
+  const allDeptOptions = [{ value: "none", label: "No department" }, ...departments.map((d) => ({ value: String(d.id), label: d.name }))];
+  const chips = [
+    ...chipsFor("area", "Area", fArea, areaOptions),
+    ...chipsFor("station", "Station", fStation, allStationOptions),
+    ...chipsFor("dept", "Department", fDept, allDeptOptions),
+    ...chipsFor("division", "Division", fDivision, divisionOptions),
+    ...chipsFor("role", "Role", fRole, roleOptions),
+    ...chipsFor("status", "Status", fStatus, statusOptions),
+    ...(filterJoinedFrom ? [{ key: "from", label: `Joined from: ${fmtDate(filterJoinedFrom)}`, onRemove: () => setParam({ from: null }) }] : []),
+    ...(filterJoinedTo ? [{ key: "to", label: `Joined to: ${fmtDate(filterJoinedTo)}`, onRemove: () => setParam({ to: null }) }] : []),
+  ];
+
+  // Opening a user: keep this list's address so their page can bring you back to the same view
+  const tableRef = useRef<HTMLDivElement>(null);
+  const backState = { back: `/users${location.search}` };
+  function openUser(id: number) { navigate(`/users/${id}`, { state: backState }); }
+  function onRowClick(e: React.MouseEvent, id: number) {
+    if ((e.target as HTMLElement).closest(ROW_CLICK_IGNORE)) return;   // checkbox, buttons, links
+    if (window.getSelection()?.toString()) return;                      // the person is selecting text to copy
+    openUser(id);
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -394,7 +472,7 @@ export function UsersPage() {
               aria-label="Search users"
               placeholder="Search by name, email or employee code..."
               value={searchQuery}
-              onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
+              onChange={(e) => setParam({ q: e.target.value || null })}
               className="w-full pl-10 pr-4 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-foreground"
             />
           </div>
@@ -413,82 +491,38 @@ export function UsersPage() {
             </button>
           )}
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3" onChange={() => setCurrentPage(1)}>
-          <FldSelect
-            label="Area"
-            aria-label="Filter by area"
-            options={[{ value: "all", label: "All Areas" }, ...areas.map((a) => ({ value: a.id.toString(), label: a.name }))]}
-            value={filterArea}
-            onChange={(e) => { setFilterArea(e.target.value); setFilterStation("all"); }}
-          />
-          <FldSelect
-            label="Station"
-            aria-label="Filter by station"
-            options={[
-              { value: "all", label: "All Stations" },
-              ...stations.filter((st) => filterArea === "all" || st.area.id === Number(filterArea)).map((st) => ({ value: st.id.toString(), label: st.code || st.name })),
-            ]}
-            value={filterStation}
-            onChange={(e) => setFilterStation(e.target.value)}
-          />
-          <FldSelect
-            label="Department"
-            aria-label="Filter by department"
-            options={[
-              { value: "all", label: "All Departments" },
-              ...departments
-                .filter((d) => filterStation === "all" || stations.find((st) => st.id === Number(filterStation))?.departments.some((x) => x.id === d.id))
-                .map((d) => ({ value: d.id.toString(), label: d.name })),
-            ]}
-            value={filterDepartment}
-            onChange={(e) => setFilterDepartment(e.target.value)}
-          />
-          <FldSelect
-            label="Division"
-            aria-label="Filter by division"
-            options={[{ value: "all", label: "All" }, { value: "none", label: "No division" }, ...divisions.map((d) => ({ value: d.id.toString(), label: d.name }))]}
-            value={filterDivision}
-            onChange={(e) => setFilterDivision(e.target.value)}
-          />
-          <FldSelect
-            label="Role"
-            aria-label="Filter by role"
-            options={[
-              { value: "all", label: "All Roles" },
-              ...roles.map((r) => ({ value: r.id.toString(), label: r.name })),
-            ]}
-            value={filterRole}
-            onChange={(e) => setFilterRole(e.target.value)}
-          />
-          <FldSelect
-            label="Status"
-            aria-label="Filter by status"
-            options={[
-              { value: "all", label: "All" },
-              { value: "active", label: "Active" },
-              { value: "inactive", label: "Inactive" },
-            ]}
-            value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
-          />
-          <label className="flex flex-col gap-1.5">
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Joined from</span>
-            <input type="date" aria-label="Joined from" value={filterJoinedFrom} onChange={(e) => setFilterJoinedFrom(e.target.value)}
-              className="px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground" />
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2 pt-1">
+          <MultiSelect className="rlk-ms--compact" label="Filter by area" placeholder="All areas" noun="areas"
+            options={areaOptions} values={fArea} onChange={changeArea} />
+          <MultiSelect className="rlk-ms--compact" label="Filter by station" placeholder="All stations" noun="stations"
+            options={stationOptions} values={fStation} onChange={changeStation} />
+          <MultiSelect className="rlk-ms--compact" label="Filter by department" placeholder="All departments" noun="departments"
+            options={deptOptions} values={fDept} onChange={(v) => setParam({ dept: v })} />
+          <MultiSelect className="rlk-ms--compact" label="Filter by division" placeholder="All divisions" noun="divisions"
+            options={divisionOptions} values={fDivision} onChange={(v) => setParam({ division: v })} />
+          <MultiSelect className="rlk-ms--compact" label="Filter by role" placeholder="All roles" noun="roles"
+            options={roleOptions} values={fRole} onChange={(v) => setParam({ role: v })} />
+          <MultiSelect className="rlk-ms--compact" label="Filter by status" placeholder="All statuses" noun="statuses"
+            options={statusOptions} values={fStatus} onChange={(v) => setParam({ status: v })} />
+          <label className="relative flex flex-col">
+            <span className="absolute -top-2 left-2 px-1 bg-white text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Joined from</span>
+            <input type="date" aria-label="Joined from" value={filterJoinedFrom} onChange={(e) => setParam({ from: e.target.value || null })}
+              className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground" />
           </label>
-          <label className="flex flex-col gap-1.5">
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Joined to</span>
-            <input type="date" aria-label="Joined to" value={filterJoinedTo} onChange={(e) => setFilterJoinedTo(e.target.value)}
-              className="px-3 py-2 text-sm border border-border rounded-lg bg-white text-foreground" />
+          <label className="relative flex flex-col">
+            <span className="absolute -top-2 left-2 px-1 bg-white text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Joined to</span>
+            <input type="date" aria-label="Joined to" value={filterJoinedTo} onChange={(e) => setParam({ to: e.target.value || null })}
+              className="px-3 py-2 text-sm border border-border rounded-lg bg-white focus:outline-none focus:border-blue-400 text-foreground" />
           </label>
         </div>
+        <FilterChips chips={chips} />
         <p className="text-xs text-muted-foreground" data-testid="users-count">
-          Showing {filteredUsers.length} of {users.length} users
+          {filtersActive ? `${filteredUsers.length.toLocaleString("en-US")} of ${users.length.toLocaleString("en-US")} users match` : `${users.length.toLocaleString("en-US")} users`}
         </p>
       </div>
 
       {/* Users Table */}
-      <div className="bg-white rounded-xl border border-border overflow-hidden">
+      <div ref={tableRef} className="scroll-mt-24 bg-white rounded-xl border border-border overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -513,39 +547,28 @@ export function UsersPage() {
             </thead>
             <tbody>
               {paginatedUsers.map((user) => (
-                <tr 
-                  key={user.id} 
-                  className="border-b border-border hover:bg-muted/20 cursor-pointer"
-                  onClick={() => navigate(`/users/${user.id}`)}
+                <tr
+                  key={user.id}
+                  className={`border-b border-border hover:bg-muted/20 cursor-pointer ${selectedUserIds.has(user.id) ? "bg-blue-50/50" : ""}`}
+                  onClick={(e) => onRowClick(e, user.id)}
+                  data-testid="user-row"
                 >
-                  <td className="px-4 py-3">
+                  {/* The whole cell ticks the box (an easier target) and never opens the user */}
+                  <td className="px-4 py-3 cursor-default" data-no-row-click onClick={(e) => { if (e.target === e.currentTarget) toggleUserSelection(user.id); }}>
                     <input
                       type="checkbox"
+                      aria-label={`Select ${user.name}`}
                       checked={selectedUserIds.has(user.id)}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        toggleUserSelection(user.id);
-                      }}
-                      className="w-4 h-4 accent-blue-600"
+                      onChange={() => toggleUserSelection(user.id)}
+                      className="w-4 h-4 accent-blue-600 cursor-pointer"
                     />
                   </td>
                   <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{user.employeeCode || "—"}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
-                      {user.hasAvatar ? (
-                        <img
-                          src={`${import.meta.env.VITE_API_BASE_URL || "http://localhost:8000"}/users/${user.id}/avatar`}
-                          alt={user.name}
-                          className="w-8 h-8 rounded-full object-cover"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).style.display = 'none';
-                            (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
-                          }}
-                        />
-                      ) : null}
-                      <Av name={user.name} className={user.hasAvatar ? 'hidden' : ''} />
+                      <UserAvatar user={user} size={40} />
                       <span className="min-w-0">
-                        <span className="block text-sm font-medium text-foreground">{user.name}</span>
+                        <Link to={`/users/${user.id}`} state={backState} className="block text-sm font-medium text-foreground hover:text-blue-600 hover:underline">{user.name}</Link>
                         {user.designation && <span className="block text-xs text-muted-foreground" data-testid="user-designation">{user.designation}</span>}
                       </span>
                     </div>
@@ -581,10 +604,7 @@ export function UsersPage() {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigate(`/users/${user.id}`);
-                        }}
+                        onClick={() => openUser(user.id)}
                         className="p-1.5 hover:bg-muted rounded-lg transition-colors cursor-pointer"
                         title="Edit"
                       >
@@ -592,10 +612,7 @@ export function UsersPage() {
                       </button>
                       {canManage && (
                         <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDeleteConfirmUser(user);
-                          }}
+                          onClick={() => setDeleteConfirmUser(user)}
                           className="p-1.5 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
                           title="Delete"
                         >
@@ -618,27 +635,14 @@ export function UsersPage() {
         </div>
 
         {/* Pagination */}
-        {filteredUsers.length > usersPerPage && (
-          <div className="px-4 py-4 border-t border-border flex items-center justify-between">
-            <span className="text-xs text-muted-foreground">
-              Showing {(currentPage - 1) * usersPerPage + 1} to {Math.min(currentPage * usersPerPage, filteredUsers.length)} of {filteredUsers.length} users
-            </span>
-            <div className="flex gap-1">
-              {Array.from({ length: totalPages }).map((_, i) => (
-                <button
-                  key={i}
-                  onClick={() => setCurrentPage(i + 1)}
-                  className={`w-8 h-8 text-sm font-medium rounded-lg transition-colors cursor-pointer ${
-                    currentPage === i + 1
-                      ? "bg-blue-500 text-white"
-                      : "text-muted-foreground hover:bg-muted"
-                  }`}
-                >
-                  {i + 1}
-                </button>
-              ))}
-            </div>
-          </div>
+        {filteredUsers.length > 0 && (
+          <Pager page={currentPage} pageSize={usersPerPage} total={filteredUsers.length} noun="users"
+            onPage={(p) => {
+              setCurrentPage(p);
+              // bring the top of the table back into view if it scrolled away
+              const el = tableRef.current;
+              if (el && el.getBoundingClientRect().top < 0) el.scrollIntoView({ block: "start" });
+            }} onPageSize={setRowsPerPage} />
         )}
       </div>
 
